@@ -12762,7 +12762,7 @@ Reglas:
 - Responde SOLO con el JSON, sin texto adicional, sin backticks`
     });
 
-    const response = await fetch('/.netlify/functions/claude-proxy', {
+    const response = await fetch('https://textilescirculares.netlify.app/.netlify/functions/claude-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
