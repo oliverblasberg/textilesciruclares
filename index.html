@@ -12691,7 +12691,7 @@ async function escanearPL() {
 
     status.textContent = 'Extrayendo texto del documento...';
 
-    const pageTexts = [];
+    let fullText = '';
     for (const f of Array.from(files)) {
       if (f.type === 'application/pdf') {
         const arrayBuffer = await f.arrayBuffer();
@@ -12699,71 +12699,81 @@ async function escanearPL() {
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
         status.textContent = `PDF cargado — ${pdf.numPages} páginas. Extrayendo texto...`;
-        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-          const page    = await pdf.getPage(pageNum);
+        for (let p = 1; p <= pdf.numPages; p++) {
+          const page    = await pdf.getPage(p);
           const content = await page.getTextContent();
-          const pageText = content.items.map(item => item.str).join(' ');
-          pageTexts.push(pageText);
+          fullText += content.items.map(i => i.str).join(' ') + '\n';
         }
       } else {
-        // Image — treat as single page
-        const base64 = await new Promise((res, rej) => {
-          const r = new FileReader();
-          r.onload = () => res(r.result.split(',')[1]);
-          r.onerror = rej;
-          r.readAsDataURL(f);
-        });
-        pageTexts.push({ isImage: true, data: base64, mediaType: f.type });
+        fullText += `[IMAGEN: ${f.name}]`;
       }
     }
 
-    status.textContent = 'Enviando a Claude página por página...';
+    status.textContent = 'Enviando a Claude Haiku (una sola llamada)...';
 
-    const promptSuffix = `
-Extrae la información en JSON:
+    const prompt = `Eres un experto extrayendo datos de Packing Lists de KEER AMERICA CORPORATION.
+
+El texto del documento es:
+${fullText}
+
+Las columnas del detalle SIEMPRE aparecen en este orden fijo:
+ITEM | PROD_NAME | TYPE | PCK# | NET_WEIGHT | GROSS_WEIGHT | Lot number | Pkgs qty | Date Packed | Week Number
+
+Los pesos vienen en LBS. Conviértelos a KG dividiendo entre 2.20462 (3 decimales).
+
+Extrae en JSON exactamente así:
 {
-  "no_invoice": "Contract NO (null si no aparece)",
-  "no_packing_list": "Packing List NO (null si no aparece)",
-  "no_po": "PO number solo dígitos (null si no aparece)",
-  "lotes": [{"lote": "lot number exacto", "cajas": [{"no_caja": "PCK# exacto", "conos": 36, "peso_neto_lbs": 251.26, "peso_bruto_lbs": 264.93, "peso_neto_kg": 113.97, "peso_bruto_kg": 120.17, "semana": 48}]}]
-}
-Reglas: agrupar por Lot number, no_caja=PCK# exacto, conos=Pkgs qty, peso_neto_lbs y peso_bruto_lbs=valores originales en LBS, pesos LBS÷2.20462=KG 3 decimales, semana=Week Number. Si la página no tiene cajas retorna {"lotes":[]}. Solo JSON, sin texto extra.`;
-
-    const allLotes = {};
-    let headerData = {};
-
-    for (let i = 0; i < pageTexts.length; i++) {
-      status.textContent = `Analizando página ${i + 1} de ${pageTexts.length}...`;
-      try {
-        const r = await fetch('https://textilescirculares.netlify.app/.netlify/functions/claude-proxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 4000,
-            messages: [{ role: 'user', content: `PACKING LIST PÁGINA ${i+1}:\n${pageTexts[i]}\n${promptSuffix}` }]
-          })
-        });
-        const data = await r.json();
-        const text = data.content?.find(b => b.type === 'text')?.text || data.content?.[0]?.text || '';
-        if (!text) continue;
-        const parsed = JSON.parse(text.replace(/```json|```/g,'').trim());
-        if (parsed.no_invoice)      headerData.no_invoice      = parsed.no_invoice;
-        if (parsed.no_packing_list) headerData.no_packing_list = parsed.no_packing_list;
-        if (parsed.no_po)           headerData.no_po           = parsed.no_po;
-        for (const lote of parsed.lotes || []) {
-          if (!lote.lote || !lote.cajas?.length) continue;
-          if (!allLotes[lote.lote]) allLotes[lote.lote] = [];
-          allLotes[lote.lote].push(...lote.cajas);
+  "no_invoice": "Contract NO",
+  "no_packing_list": "Packing List NO",
+  "no_po": "PO solo dígitos",
+  "lotes": [
+    {
+      "lote": "Lot number exacto",
+      "cajas": [
+        {
+          "no_caja": "PCK# exacto",
+          "conos": 36,
+          "peso_neto_lbs": 251.26,
+          "peso_bruto_lbs": 264.93,
+          "peso_neto_kg": 113.970,
+          "peso_bruto_kg": 120.167,
+          "semana": 48
         }
-      } catch(e) { console.log(`Page ${i+1} error:`, e.message); }
+      ]
+    }
+  ]
+}
+
+Agrupa las cajas por "Lot number". Incluye TODAS las cajas del documento.
+Responde SOLO con el JSON, sin texto adicional, sin backticks.`;
+
+    const response = await fetch('https://textilescirculares.netlify.app/.netlify/functions/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 8000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    const data = await response.json();
+    const text = data.content?.find(b => b.type === 'text')?.text || data.content?.[0]?.text || '';
+    if (!text) throw new Error('Respuesta vacía. Status: ' + response.status + '\n' + JSON.stringify(data).substring(0,200));
+
+    status.textContent = 'Procesando respuesta...';
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text.replace(/```json|```/g,'').trim());
+    } catch {
+      throw new Error('No se pudo interpretar la respuesta:\n' + text.substring(0,300));
     }
 
-    const lotesArray = Object.entries(allLotes).map(([lote, cajas]) => ({ lote, cajas }));
-    if (!lotesArray.length) throw new Error('No se encontraron datos de cajas.');
-    const parsed = { ...headerData, lotes: lotesArray };
+    const lotesArray = parsed.lotes || [];
+    if (!lotesArray.length) throw new Error('No se encontraron cajas en el documento.');
 
-    // Fill header fields
+        // Fill header fields
     if (parsed.no_invoice)      document.getElementById('pl-envio-input').value    = parsed.no_invoice;
     if (parsed.no_packing_list) document.getElementById('pl-packing-input').value  = parsed.no_packing_list;
     if (parsed.no_po)           document.getElementById('pl-po-input').value        = parsed.no_po;
