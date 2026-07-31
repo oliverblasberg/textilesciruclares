@@ -12746,7 +12746,14 @@ Reglas IMPORTANTES:
     });
 
     const data = await response.json();
-    const text = data.content?.find(b => b.type === 'text')?.text || '';
+    console.log('Claude response:', JSON.stringify(data).substring(0, 500));
+    const text = (data.content?.find(b => b.type === 'text')?.text) || 
+                 (data.content?.[0]?.text) || 
+                 JSON.stringify(data);
+
+    if (!text || text === 'undefined') {
+      throw new Error('Respuesta vacía de Claude. Status: ' + response.status + '\nData: ' + JSON.stringify(data).substring(0, 300));
+    }
 
     status.textContent = 'Procesando respuesta...';
 
