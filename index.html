@@ -3729,7 +3729,12 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closePLModal()">Cancelar</button>
-      <button class="btn btn-primary" onclick="confirmPL()">✓ Confirmar PL</button>
+      <button class="btn btn-primary" onclick="guardarPLBorrador()" style="background:#7C3AED;border-color:#7C3AED">
+        💾 Guardar PL
+      </button>
+      <button class="btn btn-primary" onclick="confirmarRecepcionPL()" id="btn-confirmar-recepcion-pl" style="display:none">
+        ✓ Confirmar Recepción
+      </button>
     </div>
   </div>
 </div>
@@ -12842,6 +12847,114 @@ function renderPLMultiLote(lotes) {
   calcPLTotales();
 }
 
+// Store PL draft data in memory (keyed by productoId)
+const _plDraftData = {};
+
+function guardarPLBorrador() {
+  const productoId = document.getElementById('pl-producto-id').value;
+  const cajas = [];
+
+  document.querySelectorAll('#pl-cajas-tbody tr').forEach(tr => {
+    const n  = tr.id.replace('pl-caja-row-','');
+    const pn = parseFloat(document.getElementById(`pl-caja-${n}-pn`)?.value)||0;
+    const pb = parseFloat(document.getElementById(`pl-caja-${n}-pb`)?.value)||0;
+    const co = parseFloat(document.getElementById(`pl-caja-${n}-conos`)?.value)||0;
+    if (pn > 0 || co > 0) {
+      cajas.push({
+        no_caja:  document.getElementById(`pl-caja-${n}-num`)?.value || String(n),
+        lote:     document.getElementById(`pl-caja-${n}-lote`)?.value || '',
+        conos:    co,
+        pb,
+        pn,
+        semana:   parseInt(document.getElementById(`pl-caja-${n}-semana`)?.value)||null,
+        recibido: document.getElementById(`pl-caja-${n}-recibido`)?.checked || false,
+        rowId:    n,
+      });
+    }
+  });
+
+  if (!cajas.length) { toast('Ingresa al menos una caja','error'); return; }
+
+  // Save draft
+  _plDraftData[productoId] = {
+    packing_num: document.getElementById('pl-packing-input').value.trim(),
+    lote:        document.getElementById('pl-lote-input').value.trim(),
+    poliza:      document.getElementById('pl-poliza-input').value.trim(),
+    no_invoice:  document.getElementById('pl-envio-input').value.trim(),
+    no_po:       document.getElementById('pl-po-input')?.value.trim()||'',
+    cajas,
+    savedAt: new Date().toISOString(),
+  };
+
+  // Update main card fields
+  const d = _plDraftData[productoId];
+  if (d.packing_num) { const el = document.getElementById(`rec-packing-${productoId}`); if(el) el.value = d.packing_num; }
+  if (d.lote)        { const el = document.getElementById(`rec-lote-${productoId}`);    if(el) el.value = d.lote; }
+  if (d.poliza)      { const el = document.getElementById(`rec-poliza-${productoId}`);  if(el) el.value = d.poliza; }
+
+  // Show summary and reveal Confirmar Recepcion button
+  const totalCajas = cajas.length;
+  const totalPN    = cajas.reduce((s,c)=>s+c.pn, 0);
+  const marcadas   = cajas.filter(c=>c.recibido).length;
+
+  const resumen = document.getElementById(`pl-resumen-${productoId}`);
+  if (resumen) resumen.textContent = `${totalCajas} cajas · ${totalPN.toFixed(3)} kg · ${marcadas} confirmadas`;
+
+  document.getElementById('btn-confirmar-recepcion-pl').style.display = '';
+
+  toast(`PL guardado — ${totalCajas} cajas. Marca los rollos recibidos y confirma.`);
+}
+
+function confirmarRecepcionPL() {
+  const productoId = document.getElementById('pl-producto-id').value;
+  const draft = _plDraftData[productoId];
+  if (!draft) { toast('Primero guarda el PL','error'); return; }
+
+  // Re-read checkboxes (user may have changed them after saving)
+  document.querySelectorAll('#pl-cajas-tbody tr').forEach(tr => {
+    const n = tr.id.replace('pl-caja-row-','');
+    const caja = draft.cajas.find(c => c.rowId === n);
+    if (caja) caja.recibido = document.getElementById(`pl-caja-${n}-recibido`)?.checked || false;
+  });
+
+  const recibidas    = draft.cajas.filter(c => c.recibido);
+  const noRecibidas  = draft.cajas.filter(c => !c.recibido);
+  const totalPN      = recibidas.reduce((s,c)=>s+c.pn, 0);
+  const totalConos   = recibidas.reduce((s,c)=>s+c.conos, 0);
+
+  if (!recibidas.length) { toast('Marca al menos una caja como recibida','error'); return; }
+
+  if (noRecibidas.length > 0) {
+    const ok = confirm(`⚠️ ${noRecibidas.length} caja(s) sin confirmar quedarán como NO RECIBIDAS y no podrán confirmarse después.\n\n¿Continuar?`);
+    if (!ok) return;
+  }
+
+  // Store confirmed data for saveRecepcion
+  draft.confirmado = true;
+  draft.recibidas  = recibidas;
+  draft.noRecibidas = noRecibidas;
+
+  // Auto-fill Recibir Ahora with peso neto of confirmed boxes
+  const qtyEl = document.getElementById(`rec-qty-${productoId}`);
+  if (qtyEl && totalPN > 0) { qtyEl.value = totalPN.toFixed(3); calcRecTotales(); }
+
+  // Update summary
+  const resumen = document.getElementById(`pl-resumen-${productoId}`);
+  if (resumen) resumen.textContent = `✓ ${recibidas.length} cajas recibidas · ${totalPN.toFixed(3)} kg · ${totalConos} conos${noRecibidas.length>0?' · ⚠️ '+noRecibidas.length+' no recibidas':''}`;
+
+  // Store on button for saveRecepcion
+  const btn = document.querySelector(`button[onclick="openPLModal('${productoId}')"]`);
+  if (btn) btn.dataset.plCajas = JSON.stringify(draft.cajas.map(c=>({
+    no_caja: c.no_caja, lote: c.lote, conos: c.conos,
+    pb: c.pb, pn: c.pn, semana: c.semana, recibido: c.recibido,
+  })));
+
+  closeModal('modal-pl-cajas');
+  toast(`✓ Recepción confirmada — ${recibidas.length} cajas, ${totalPN.toFixed(3)} kg`);
+}
+
+function confirmPL() { confirmarRecepcionPL(); }
+
 function openPLModal(productoId) {
   const prod    = state.productos.find(p=>p.id===productoId);
   document.getElementById('pl-producto-id').value  = productoId;
@@ -13568,7 +13681,7 @@ async function saveRecepcion() {
           producto_id:  item.producto_id,
           fecha,
           packing_num:  item.packing_num,
-          lote:         item.lote,
+          lote:         c.lote || item.lote,
           poliza:       item.poliza,
           costo_unit:   item.costo_unit,
           moneda:       monedaOC_pl,
@@ -13577,6 +13690,7 @@ async function saveRecepcion() {
           peso_bruto:   c.pb,
           peso_neto:    c.pn,
           valor_total:  parseFloat((c.pn * item.costo_unit).toFixed(4)),
+          estado:       c.recibido ? 'recibido' : 'no_recibido',
         }));
         const { error:ePlC } = await sb.from('erp_oc_pl').insert(cajasRows);
         if (ePlC) console.error('Error guardando PL cajas:', ePlC.message);
