@@ -12683,63 +12683,61 @@ async function escanearPL() {
       reader.readAsDataURL(f);
     })));
 
-    status.textContent = 'Leyendo páginas del documento...';
+    status.textContent = 'Extrayendo texto del documento...';
 
-    // Convert files to pages (PDF → one image per page, images → as-is)
+    // Extract text from PDF using pdf.js (much cheaper than images)
     const pages = [];
     for (const f of Array.from(files)) {
       if (f.type === 'application/pdf') {
-        // Render each PDF page as image using pdf.js
         const arrayBuffer = await f.arrayBuffer();
         const pdfjsLib = window['pdfjs-dist/build/pdf'];
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-        status.textContent = `PDF cargado — ${pdf.numPages} páginas. Procesando...`;
+        status.textContent = `PDF cargado — ${pdf.numPages} páginas. Extrayendo texto...`;
+        let fullText = '';
         for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
           const page    = await pdf.getPage(pageNum);
-          const scale   = 2.0;
-          const viewport = page.getViewport({ scale });
-          const canvas  = document.createElement('canvas');
-          canvas.width  = viewport.width;
-          canvas.height = viewport.height;
-          await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-          const base64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
-          pages.push({ type: 'image/jpeg', data: base64, pageNum });
+          const content = await page.getTextContent();
+          const pageText = content.items.map(item => item.str).join(' ');
+          fullText += `\n--- PÁGINA ${pageNum} ---\n${pageText}`;
         }
+        pages.push({ type: 'text', content: fullText });
       } else {
+        // Image file — use vision
         const base64 = await new Promise((res, rej) => {
           const r = new FileReader();
           r.onload = () => res(r.result.split(',')[1]);
           r.onerror = rej;
           r.readAsDataURL(f);
         });
-        pages.push({ type: f.type, data: base64, pageNum: 1 });
+        pages.push({ type: 'image', data: base64, mediaType: f.type });
       }
     }
 
-    status.textContent = `${pages.length} página(s) — enviando a Claude página por página...`;
+    status.textContent = 'Enviando a Claude...';
 
-    let allLotes = {};
-    let headerData = {};
+    // Build content blocks
+    const contentBlocks = [];
+    for (const page of pages) {
+      if (page.type === 'text') {
+        contentBlocks.push({ type: 'text', text: `CONTENIDO DEL PACKING LIST:\n${page.content}` });
+      } else {
+        contentBlocks.push({ type: 'image', source: { type: 'base64', media_type: page.mediaType, data: page.data } });
+      }
+    }
 
-    for (let i = 0; i < pages.length; i++) {
-      const page = pages[i];
-      status.textContent = `Analizando página ${i + 1} de ${pages.length}...`;
-
-      const chunkBlocks = [
-        { type: 'image', source: { type: 'base64', media_type: page.type, data: page.data } },
-        {
-          type: 'text',
-          text: `Eres un asistente especializado en documentos de comercio internacional de hilo/textiles.
-Analiza esta página del Packing List y extrae la información en formato JSON:
+    contentBlocks.push({
+      type: 'text',
+      text: `Eres un asistente especializado en documentos de comercio internacional de hilo/textiles.
+Analiza el Packing List y extrae la información en formato JSON exactamente así:
 
 {
-  "no_invoice": "Contract NO (solo si aparece en esta página, si no null)",
-  "no_packing_list": "Packing List NO (solo si aparece en esta página, si no null)",
-  "no_po": "PO number (solo si aparece en esta página, si no null)",
+  "no_invoice": "Contract NO del documento (ej: KAA4022)",
+  "no_packing_list": "Packing List NO (ej: KAA4022-CI01)",
+  "no_po": "PO number (solo dígitos, ej: 4193)",
   "lotes": [
     {
-      "lote": "número de lote exacto",
+      "lote": "número de lote exacto (ej: KAA25483214K)",
       "cajas": [
         {
           "no_caja": "PCK# exacto como aparece",
@@ -12754,58 +12752,47 @@ Analiza esta página del Packing List y extrae la información en formato JSON:
 }
 
 Reglas:
-- Agrupar cajas por "Lot number"
-- no_caja: valor de PCK# tal como aparece
-- conos: valor de "Pkgs qty"  
-- peso_neto_kg: NET_WEIGHT ÷ 2.20462 (los pesos vienen en LBS, convertir a KG, 3 decimales)
+- Agrupar cajas por "Lot number" — un objeto por lote
+- no_caja: valor de PCK# tal como aparece (no es correlativo)
+- conos: valor de "Pkgs qty"
+- peso_neto_kg: NET_WEIGHT ÷ 2.20462 (pesos en LBS, convertir a KG, 3 decimales)
 - peso_bruto_kg: GROSS_WEIGHT ÷ 2.20462 (3 decimales)
 - semana: "Week Number"
-- Si la página es portada o no tiene detalle de cajas, retornar {"lotes":[]}
+- Si un campo no aparece usar null
 - Responde SOLO con el JSON, sin texto adicional, sin backticks`
-        }
-      ];
+    });
 
-      try {
-        const response = await fetch('/.netlify/functions/claude-proxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 4000,
-            messages: [{ role: 'user', content: chunkBlocks }]
-          })
-        });
+    const response = await fetch('/.netlify/functions/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: contentBlocks }]
+      })
+    });
 
-        const data = await response.json();
-        const text = data.content?.find(b => b.type === 'text')?.text || data.content?.[0]?.text || '';
-        if (!text) continue;
+    const data = await response.json();
+    const text = data.content?.find(b => b.type === 'text')?.text || data.content?.[0]?.text || '';
 
-        const clean = text.replace(/```json|```/g,'').trim();
-        const parsed = JSON.parse(clean);
-
-        if (parsed.no_invoice)      headerData.no_invoice      = parsed.no_invoice;
-        if (parsed.no_packing_list) headerData.no_packing_list = parsed.no_packing_list;
-        if (parsed.no_po)           headerData.no_po           = parsed.no_po;
-
-        if (parsed.lotes?.length) {
-          for (const lote of parsed.lotes) {
-            if (!lote.lote || !lote.cajas?.length) continue;
-            if (!allLotes[lote.lote]) allLotes[lote.lote] = [];
-            allLotes[lote.lote].push(...lote.cajas);
-          }
-        }
-      } catch(e) {
-        console.log(`Page ${i+1} error:`, e.message);
-      }
+    if (!text) {
+      throw new Error('Respuesta vacía. Status: ' + response.status + '\n' + JSON.stringify(data).substring(0, 200));
     }
 
-    const lotesArray = Object.entries(allLotes).map(([lote, cajas]) => ({ lote, cajas }));
+    status.textContent = 'Procesando respuesta...';
 
+    let parsed;
+    try {
+      const clean = text.replace(/```json|```/g,'').trim();
+      parsed = JSON.parse(clean);
+    } catch {
+      throw new Error('No se pudo interpretar la respuesta:\n' + text.substring(0, 300));
+    }
+
+    const lotesArray = parsed.lotes || [];
     if (!lotesArray.length) {
-      throw new Error('No se pudieron extraer datos del documento.');
+      throw new Error('No se encontraron datos de cajas en el documento.');
     }
-
-    const parsed = { ...headerData, lotes: lotesArray };
 
     // Fill header fields
     if (parsed.no_invoice)      document.getElementById('pl-envio-input').value    = parsed.no_invoice;
