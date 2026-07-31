@@ -3705,8 +3705,9 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <th style="padding:8px 10px;text-align:center;font-size:11px;width:80px">No. Caja</th>
           <th style="padding:8px 10px;text-align:left;font-size:11px">Lote</th>
           <th style="padding:8px 10px;text-align:right;font-size:11px">Conos</th>
-          <th style="padding:8px 10px;text-align:right;font-size:11px">Peso Bruto (kg)</th>
-          <th style="padding:8px 10px;text-align:right;font-size:11px">Peso Neto (kg)</th>
+          <th style="padding:8px 10px;text-align:right;font-size:11px">P. Bruto (kg)</th>
+          <th style="padding:8px 10px;text-align:right;font-size:11px">P. Neto (kg)</th>
+          <th style="padding:8px 10px;text-align:right;font-size:11px;color:#D97706">P. Neto (lbs)</th>
           <th style="padding:8px 10px;text-align:center;font-size:11px;width:60px">Semana</th>
           <th style="padding:8px 10px;text-align:center;font-size:11px;width:80px">✓ Recibido</th>
           <th style="padding:8px 10px;width:40px"></th>
@@ -12724,9 +12725,9 @@ Extrae la información en JSON:
   "no_invoice": "Contract NO (null si no aparece)",
   "no_packing_list": "Packing List NO (null si no aparece)",
   "no_po": "PO number solo dígitos (null si no aparece)",
-  "lotes": [{"lote": "lot number exacto", "cajas": [{"no_caja": "PCK# exacto", "conos": 36, "peso_neto_kg": 113.97, "peso_bruto_kg": 120.17, "semana": 48}]}]
+  "lotes": [{"lote": "lot number exacto", "cajas": [{"no_caja": "PCK# exacto", "conos": 36, "peso_neto_lbs": 251.26, "peso_bruto_lbs": 264.93, "peso_neto_kg": 113.97, "peso_bruto_kg": 120.17, "semana": 48}]}]
 }
-Reglas: agrupar por Lot number, no_caja=PCK# exacto, conos=Pkgs qty, pesos LBS÷2.20462=KG 3 decimales, semana=Week Number. Si la página no tiene cajas retorna {"lotes":[]}. Solo JSON, sin texto extra.`;
+Reglas: agrupar por Lot number, no_caja=PCK# exacto, conos=Pkgs qty, peso_neto_lbs y peso_bruto_lbs=valores originales en LBS, pesos LBS÷2.20462=KG 3 decimales, semana=Week Number. Si la página no tiene cajas retorna {"lotes":[]}. Solo JSON, sin texto extra.`;
 
     const allLotes = {};
     let headerData = {};
@@ -12779,12 +12780,13 @@ Reglas: agrupar por Lot number, no_caja=PCK# exacto, conos=Pkgs qty, pesos LBS÷
         for (const caja of lote.cajas) {
           addPLCaja();
           const n = _plCajaCount;
-          document.getElementById(`pl-caja-${n}-num`).value   = caja.no_caja || n;
-          document.getElementById(`pl-caja-${n}-conos`).value = caja.conos || '';
-          document.getElementById(`pl-caja-${n}-pb`).value    = caja.peso_bruto_kg?.toFixed(3) || '';
-          document.getElementById(`pl-caja-${n}-pn`).value    = caja.peso_neto_kg?.toFixed(3) || '';
+          document.getElementById(`pl-caja-${n}-num`).value    = caja.no_caja || n;
+          document.getElementById(`pl-caja-${n}-conos`).value  = caja.conos || '';
+          document.getElementById(`pl-caja-${n}-pb`).value     = caja.peso_bruto_kg?.toFixed(3) || '';
+          document.getElementById(`pl-caja-${n}-pn`).value     = caja.peso_neto_kg?.toFixed(3) || '';
+          document.getElementById(`pl-caja-${n}-pn-lbs`).value = caja.peso_neto_lbs?.toFixed(2) || (caja.peso_neto_kg ? (caja.peso_neto_kg * 2.20462).toFixed(2) : '');
           document.getElementById(`pl-caja-${n}-semana`).value = caja.semana || '';
-          document.getElementById(`pl-caja-${n}-lote`).value  = lote.lote || '';
+          document.getElementById(`pl-caja-${n}-lote`).value   = lote.lote || '';
         }
       } else {
         // Multiple lotes — show alert and fill first lote, offer tabs
@@ -12850,9 +12852,11 @@ function renderPLMultiLote(lotes) {
 // Store PL draft data in memory (keyed by productoId)
 const _plDraftData = {};
 
-function guardarPLBorrador() {
+async function guardarPLBorrador() {
   const productoId = document.getElementById('pl-producto-id').value;
-  const cajas = [];
+  const ocId       = document.getElementById('rec-oc-id')?.value;
+  const fecha      = document.getElementById('rec-fecha')?.value || today();
+  const cajas      = [];
 
   document.querySelectorAll('#pl-cajas-tbody tr').forEach(tr => {
     const n  = tr.id.replace('pl-caja-row-','');
@@ -12863,9 +12867,8 @@ function guardarPLBorrador() {
       cajas.push({
         no_caja:  document.getElementById(`pl-caja-${n}-num`)?.value || String(n),
         lote:     document.getElementById(`pl-caja-${n}-lote`)?.value || '',
-        conos:    co,
-        pb,
-        pn,
+        conos:    co, pb, pn,
+        pn_lbs:   parseFloat(document.getElementById(`pl-caja-${n}-pn-lbs`)?.value)||parseFloat((pn*2.20462).toFixed(2)),
         semana:   parseInt(document.getElementById(`pl-caja-${n}-semana`)?.value)||null,
         recibido: document.getElementById(`pl-caja-${n}-recibido`)?.checked || false,
         rowId:    n,
@@ -12875,52 +12878,82 @@ function guardarPLBorrador() {
 
   if (!cajas.length) { toast('Ingresa al menos una caja','error'); return; }
 
-  // Save draft
-  _plDraftData[productoId] = {
-    packing_num: document.getElementById('pl-packing-input').value.trim(),
-    lote:        document.getElementById('pl-lote-input').value.trim(),
-    poliza:      document.getElementById('pl-poliza-input').value.trim(),
-    no_invoice:  document.getElementById('pl-envio-input').value.trim(),
-    no_po:       document.getElementById('pl-po-input')?.value.trim()||'',
-    cajas,
-    savedAt: new Date().toISOString(),
-  };
+  const packing_num = document.getElementById('pl-packing-input').value.trim();
+  const lote        = document.getElementById('pl-lote-input').value.trim();
+  const poliza      = document.getElementById('pl-poliza-input').value.trim();
+  const no_invoice  = document.getElementById('pl-envio-input').value.trim();
 
-  // Update main card fields
-  const d = _plDraftData[productoId];
-  if (d.packing_num) { const el = document.getElementById(`rec-packing-${productoId}`); if(el) el.value = d.packing_num; }
-  if (d.lote)        { const el = document.getElementById(`rec-lote-${productoId}`);    if(el) el.value = d.lote; }
-  if (d.poliza)      { const el = document.getElementById(`rec-poliza-${productoId}`);  if(el) el.value = d.poliza; }
+  // Delete existing pending cajas for this producto/OC before saving
+  if (ocId) {
+    await sb.from('erp_oc_pl')
+      .delete()
+      .eq('oc_id', ocId)
+      .eq('producto_id', productoId)
+      .eq('estado', 'pendiente');
+  }
 
-  // Show summary and reveal Confirmar Recepcion button
-  const totalCajas = cajas.length;
-  const totalPN    = cajas.reduce((s,c)=>s+c.pn, 0);
-  const marcadas   = cajas.filter(c=>c.recibido).length;
+  // Save all cajas as 'pendiente'
+  const cajasRows = cajas.map((c, idx) => ({
+    oc_id:         ocId || null,
+    producto_id:   productoId,
+    fecha,
+    packing_num,
+    lote:          c.lote || lote,
+    poliza,
+    no_caja:       c.no_caja,
+    conos:         c.conos,
+    peso_bruto:    c.pb,
+    peso_neto:     c.pn,
+    peso_neto_lbs: c.pn_lbs || null,
+    semana:        c.semana,
+    estado:        'pendiente',
+  }));
 
-  const resumen = document.getElementById(`pl-resumen-${productoId}`);
-  if (resumen) resumen.textContent = `${totalCajas} cajas · ${totalPN.toFixed(3)} kg · ${marcadas} confirmadas`;
+  const { error } = await sb.from('erp_oc_pl').insert(cajasRows);
+  if (error) { toast('Error guardando PL: ' + error.message, 'error'); return; }
+
+  // Update state in memory too
+  _plDraftData[productoId] = { packing_num, lote, poliza, no_invoice, cajas };
+
+  // Sync to main card
+  if (packing_num) { const el = document.getElementById(`rec-packing-${productoId}`); if(el) el.value = packing_num; }
+  if (lote)        { const el = document.getElementById(`rec-lote-${productoId}`);    if(el) el.value = lote; }
+  if (poliza)      { const el = document.getElementById(`rec-poliza-${productoId}`);  if(el) el.value = poliza; }
+
+  // Reload state
+  await loadAll();
+
+  // Update badge on product card
+  updatePLBadge(productoId, cajas.length, 0);
 
   document.getElementById('btn-confirmar-recepcion-pl').style.display = '';
-
-  toast(`PL guardado — ${totalCajas} cajas. Marca los rollos recibidos y confirma.`);
+  toast(`✓ PL guardado — ${cajas.length} cajas pendientes de confirmar`);
 }
 
-function confirmarRecepcionPL() {
+async function confirmarRecepcionPL() {
   const productoId = document.getElementById('pl-producto-id').value;
-  const draft = _plDraftData[productoId];
-  if (!draft) { toast('Primero guarda el PL','error'); return; }
+  const ocId       = document.getElementById('rec-oc-id')?.value;
 
-  // Re-read checkboxes (user may have changed them after saving)
+  // Read current checkbox states
+  const cajas = [];
   document.querySelectorAll('#pl-cajas-tbody tr').forEach(tr => {
-    const n = tr.id.replace('pl-caja-row-','');
-    const caja = draft.cajas.find(c => c.rowId === n);
-    if (caja) caja.recibido = document.getElementById(`pl-caja-${n}-recibido`)?.checked || false;
+    const n        = tr.id.replace('pl-caja-row-','');
+    const pn       = parseFloat(document.getElementById(`pl-caja-${n}-pn`)?.value)||0;
+    const pb       = parseFloat(document.getElementById(`pl-caja-${n}-pb`)?.value)||0;
+    const co       = parseFloat(document.getElementById(`pl-caja-${n}-conos`)?.value)||0;
+    const recibido = document.getElementById(`pl-caja-${n}-recibido`)?.checked || false;
+    const dbId     = tr.dataset.dbId || null;
+    if (pn > 0 || co > 0) cajas.push({ n, pn, pb, co, recibido, dbId,
+      no_caja: document.getElementById(`pl-caja-${n}-num`)?.value || n,
+      lote:    document.getElementById(`pl-caja-${n}-lote`)?.value || '',
+      semana:  parseInt(document.getElementById(`pl-caja-${n}-semana`)?.value)||null,
+    });
   });
 
-  const recibidas    = draft.cajas.filter(c => c.recibido);
-  const noRecibidas  = draft.cajas.filter(c => !c.recibido);
-  const totalPN      = recibidas.reduce((s,c)=>s+c.pn, 0);
-  const totalConos   = recibidas.reduce((s,c)=>s+c.conos, 0);
+  const recibidas   = cajas.filter(c => c.recibido);
+  const noRecibidas = cajas.filter(c => !c.recibido);
+  const totalPN     = recibidas.reduce((s,c)=>s+c.pn, 0);
+  const totalConos  = recibidas.reduce((s,c)=>s+c.co, 0);
 
   if (!recibidas.length) { toast('Marca al menos una caja como recibida','error'); return; }
 
@@ -12929,52 +12962,103 @@ function confirmarRecepcionPL() {
     if (!ok) return;
   }
 
-  // Store confirmed data for saveRecepcion
-  draft.confirmado = true;
-  draft.recibidas  = recibidas;
-  draft.noRecibidas = noRecibidas;
+  // Update estados in DB
+  for (const c of cajas) {
+    if (c.dbId) {
+      await sb.from('erp_oc_pl').update({ estado: c.recibido ? 'recibido' : 'no_recibido' }).eq('id', c.dbId);
+    }
+  }
 
-  // Auto-fill Recibir Ahora with peso neto of confirmed boxes
-  const qtyEl = document.getElementById(`rec-qty-${productoId}`);
-  if (qtyEl && totalPN > 0) { qtyEl.value = totalPN.toFixed(3); calcRecTotales(); }
+  // Store for saveRecepcion
+  _plDraftData[productoId] = { ...(  _plDraftData[productoId]||{}), cajas,
+    confirmado: true, recibidas, noRecibidas };
 
-  // Update summary
-  const resumen = document.getElementById(`pl-resumen-${productoId}`);
-  if (resumen) resumen.textContent = `✓ ${recibidas.length} cajas recibidas · ${totalPN.toFixed(3)} kg · ${totalConos} conos${noRecibidas.length>0?' · ⚠️ '+noRecibidas.length+' no recibidas':''}`;
-
-  // Store on button for saveRecepcion
   const btn = document.querySelector(`button[onclick="openPLModal('${productoId}')"]`);
-  if (btn) btn.dataset.plCajas = JSON.stringify(draft.cajas.map(c=>({
-    no_caja: c.no_caja, lote: c.lote, conos: c.conos,
+  if (btn) btn.dataset.plCajas = JSON.stringify(cajas.map(c=>({
+    no_caja: c.no_caja, lote: c.lote, conos: c.co,
     pb: c.pb, pn: c.pn, semana: c.semana, recibido: c.recibido,
   })));
 
+  // Auto-fill Recibir Ahora
+  const qtyEl = document.getElementById(`rec-qty-${productoId}`);
+  if (qtyEl && totalPN > 0) { qtyEl.value = totalPN.toFixed(3); calcRecTotales(); }
+
+  updatePLBadge(productoId, cajas.length, recibidas.length);
   closeModal('modal-pl-cajas');
-  toast(`✓ Recepción confirmada — ${recibidas.length} cajas, ${totalPN.toFixed(3)} kg`);
+  toast(`✓ ${recibidas.length} cajas recibidas · ${totalPN.toFixed(3)} kg${noRecibidas.length>0?' · '+noRecibidas.length+' no recibidas':''}`);
 }
 
 function confirmPL() { confirmarRecepcionPL(); }
 
-function openPLModal(productoId) {
-  const prod    = state.productos.find(p=>p.id===productoId);
+function updatePLBadge(productoId, totalCajas, recibidas) {
+  const resumen = document.getElementById(`pl-resumen-${productoId}`);
+  if (!resumen) return;
+  const pendientes = totalCajas - recibidas;
+  if (pendientes > 0) {
+    resumen.innerHTML = `<span style="background:#FEF3C7;color:#D97706;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700">📦 ${pendientes} cajas pendientes</span>`;
+  } else if (totalCajas > 0) {
+    resumen.innerHTML = `<span style="background:#DCFCE7;color:#16A34A;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700">✓ ${totalCajas} cajas confirmadas</span>`;
+  }
+}
+
+async function openPLModal(productoId) {
+  const prod = state.productos.find(p=>p.id===productoId);
+  const ocId = document.getElementById('rec-oc-id')?.value;
+
   document.getElementById('pl-producto-id').value  = productoId;
   document.getElementById('pl-rec-prod-id').value  = productoId;
   document.getElementById('pl-cajas-sub').textContent = (prod?.codigo_interno||prod?.code||'') + ' — ' + (prod?.description||'');
+
   // Pre-fill from main card
   document.getElementById('pl-packing-input').value = document.getElementById(`rec-packing-${productoId}`)?.value || '';
   document.getElementById('pl-lote-input').value    = document.getElementById(`rec-lote-${productoId}`)?.value || '';
   document.getElementById('pl-poliza-input').value  = document.getElementById(`rec-poliza-${productoId}`)?.value || '';
-  document.getElementById('pl-envio-input').value   = document.getElementById(`rec-envio-header`)?.value || '';
+  document.getElementById('pl-envio-input').value   = document.getElementById('rec-envio-header')?.value || '';
+
   // Reset scan area
   document.getElementById('pl-scan-file').value = '';
   document.getElementById('pl-scan-file-name').textContent = 'Ningún archivo seleccionado';
   document.getElementById('pl-scan-status').style.display = 'none';
   document.getElementById('pl-scan-status').style.color = '#7C3AED';
-  // Reset cajas
+
+  // Load existing pending cajas from DB
   document.getElementById('pl-cajas-tbody').innerHTML = '';
   _plCajaCount = 0;
+
+  const existingCajas = (state.plCajas||[]).filter(c =>
+    c.producto_id === productoId &&
+    c.oc_id === ocId &&
+    c.estado === 'pendiente'
+  );
+
+  if (existingCajas.length > 0) {
+    // Load from DB
+    document.getElementById('pl-packing-input').value = existingCajas[0].packing_num || '';
+    document.getElementById('pl-lote-input').value    = existingCajas[0].lote || '';
+    document.getElementById('pl-poliza-input').value  = existingCajas[0].poliza || '';
+
+    for (const caja of existingCajas.sort((a,b) => (a.no_caja||'').localeCompare(b.no_caja||''))) {
+      addPLCaja();
+      const n = _plCajaCount;
+      document.getElementById(`pl-caja-${n}-num`).value    = caja.no_caja || '';
+      document.getElementById(`pl-caja-${n}-lote`).value   = caja.lote || '';
+      document.getElementById(`pl-caja-${n}-conos`).value  = caja.conos || '';
+      document.getElementById(`pl-caja-${n}-pb`).value     = caja.peso_bruto || '';
+      document.getElementById(`pl-caja-${n}-pn`).value     = caja.peso_neto || '';
+      document.getElementById(`pl-caja-${n}-pn-lbs`).value = caja.peso_neto_lbs || (caja.peso_neto ? (caja.peso_neto * 2.20462).toFixed(2) : '');
+      document.getElementById(`pl-caja-${n}-semana`).value = caja.semana || '';
+      // Store DB id for update
+      document.getElementById(`pl-caja-row-${n}`).dataset.dbId = caja.id;
+    }
+
+    document.getElementById('btn-confirmar-recepcion-pl').style.display = '';
+    toast(`PL cargado — ${existingCajas.length} cajas pendientes`,'info');
+  } else {
+    addPLCaja();
+    document.getElementById('btn-confirmar-recepcion-pl').style.display = 'none';
+  }
+
   calcPLTotales();
-  addPLCaja();
   openModal('modal-pl-cajas');
 }
 
@@ -13010,8 +13094,13 @@ function addPLCaja() {
     </td>
     <td style="padding:5px 8px">
       <input type="number" id="pl-caja-${n}-pn" step="0.001" min="0" placeholder="0.000"
-        oninput="calcPLTotales()"
+        oninput="calcPLTotales();calcPLLbs(${n})"
         style="padding:4px 6px;border:1.5px solid var(--accent);border-radius:6px;font-family:'DM Mono',monospace;font-size:12px;font-weight:600;width:100%;text-align:right;color:var(--accent)"/>
+    </td>
+    <td style="padding:5px 8px">
+      <input type="number" id="pl-caja-${n}-pn-lbs" step="0.01" min="0" placeholder="0.00"
+        oninput="calcPLLbsToKg(${n})"
+        style="padding:4px 6px;border:1.5px solid #F59E0B;border-radius:6px;font-family:'DM Mono',monospace;font-size:12px;font-weight:600;width:100%;text-align:right;color:#D97706"/>
     </td>
     <td style="padding:5px 8px">
       <input type="number" id="pl-caja-${n}-semana" step="1" min="1" placeholder="—"
@@ -13033,6 +13122,20 @@ function addPLCaja() {
 function removePLCaja(n) {
   document.getElementById(`pl-caja-row-${n}`)?.remove();
   calcPLTotales();
+}
+
+function calcPLLbs(n) {
+  // KG → LBS auto-calc
+  const kg  = parseFloat(document.getElementById(`pl-caja-${n}-pn`)?.value)||0;
+  const lbs = document.getElementById(`pl-caja-${n}-pn-lbs`);
+  if (lbs && kg > 0) lbs.value = (kg * 2.20462).toFixed(2);
+}
+
+function calcPLLbsToKg(n) {
+  // LBS → KG auto-calc
+  const lbs = parseFloat(document.getElementById(`pl-caja-${n}-pn-lbs`)?.value)||0;
+  const kg  = document.getElementById(`pl-caja-${n}-pn`);
+  if (kg && lbs > 0) { kg.value = (lbs / 2.20462).toFixed(3); calcPLTotales(); }
 }
 
 function onPLCajaCheck(n) {
@@ -13431,14 +13534,23 @@ async function openRecepcion() {
         </div>
       </div>
 
-      ${esHilo ? `
-      <div style="margin-top:10px">
-        <button class="btn btn-sm" onclick="openPLModal('${i.producto_id}')"
-          style="background:#E0F2FE;color:#0284C7;border:1.5px solid #BAE6FD;font-weight:600">
-          📦 Ingresar Packing List
-        </button>
-        <span id="pl-resumen-${i.producto_id}" style="margin-left:12px;font-size:11px;color:#0284C7;font-family:'DM Mono',monospace"></span>
-      </div>` : ''}
+      ${esHilo ? (() => {
+        const ocId = document.getElementById('rec-oc-id')?.value;
+        const pendientes = (state.plCajas||[]).filter(c =>
+          c.producto_id === i.producto_id && c.oc_id === ocId && c.estado === 'pendiente'
+        );
+        const btnLabel = pendientes.length > 0
+          ? `📦 Ver PL <span style="background:#D97706;color:#fff;border-radius:99px;padding:1px 7px;font-size:10px;margin-left:6px">${pendientes.length} pendientes</span>`
+          : '📦 Ingresar Packing List';
+        return `
+        <div style="margin-top:10px">
+          <button class="btn btn-sm" onclick="openPLModal('${i.producto_id}')"
+            style="background:${pendientes.length>0?'#FEF3C7;color:#D97706;border:1.5px solid #F59E0B':'#E0F2FE;color:#0284C7;border:1.5px solid #BAE6FD'};font-weight:600">
+            ${btnLabel}
+          </button>
+          <span id="pl-resumen-${i.producto_id}" style="margin-left:12px;font-size:11px;color:#0284C7;font-family:'DM Mono',monospace"></span>
+        </div>`;
+      })() : ''}
     </div>`;
   }).join('');
 
