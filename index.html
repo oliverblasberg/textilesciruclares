@@ -13554,6 +13554,85 @@ async function deleteOC(id) {
 }
 
 // ── RECEPCION ──
+async function guardarRecepcionBorrador() {
+  const ocId      = document.getElementById('rec-oc-id')?.value;
+  const fecha     = document.getElementById('rec-fecha')?.value;
+  const numero    = document.getElementById('rec-num')?.value;
+  const bodega_id = document.getElementById('rec-bodega')?.value || null;
+  const envio     = document.getElementById('rec-envio-header')?.value.trim() || '';
+  const packingH  = document.getElementById('rec-packing-header')?.value.trim() || '';
+
+  if (!ocId || !fecha || !numero) { toast('Completa fecha y bodega', 'error'); return; }
+
+  try {
+    // Check if recepcion already exists
+    const existing = (state.ocRecepciones||[]).find(r => r.numero === numero && r.oc_id === ocId);
+
+    const recData = {
+      oc_id:        ocId,
+      numero,
+      fecha,
+      status:       'borrador',
+      bodega_id,
+      envio_numero: envio,
+      packing_num:  packingH,
+    };
+
+    let recepcionId;
+    if (existing) {
+      const { error } = await sb.from('erp_oc_recepciones').update(recData).eq('id', existing.id);
+      if (error) { alert('Error actualizando recepción:\n' + error.message); return; }
+      recepcionId = existing.id;
+    } else {
+      const { data, error } = await sb.from('erp_oc_recepciones').insert(recData).select().single();
+      if (error) { alert('Error guardando recepción:\n' + error.message); return; }
+      recepcionId = data.id;
+    }
+
+    // Save recepcion items (one per lote row)
+    // Delete existing items for this recepcion first
+    await sb.from('erp_oc_recepcion_items').delete().eq('recepcion_id', recepcionId);
+
+    const loteRows = document.querySelectorAll('[id^="rec-lote-val-"]');
+    const insertItems = [];
+
+    loteRows.forEach(el => {
+      const n        = el.id.replace('rec-lote-val-','');
+      const lote     = el.value.trim();
+      const prodId   = el.dataset.prod;
+      const unidad   = el.dataset.unidad || '';
+      const costo    = parseFloat(el.dataset.costo)||0;
+      const qtyEl    = document.getElementById(`rec-qty-${prodId}-${n}`);
+      const qty      = parseFloat(qtyEl?.value)||0;
+      const esperada = parseFloat(document.getElementById(`rec-qty-esperada-${n}`)?.value)||0;
+
+      if (qty > 0 || esperada > 0) {
+        insertItems.push({
+          recepcion_id: recepcionId,
+          producto_id:  prodId,
+          unidad,
+          cantidad:     qty,
+          costo_unit:   costo,
+          lote:         lote || null,
+          packing_num:  packingH || null,
+          estado:       'borrador',
+        });
+      }
+    });
+
+    if (insertItems.length) {
+      const { error: eItems } = await sb.from('erp_oc_recepcion_items').insert(insertItems);
+      if (eItems) { alert('Error guardando líneas:\n' + eItems.message); return; }
+    }
+
+    await loadAll();
+    toast(`✓ Borrador guardado — ${numero}`);
+
+  } catch(e) {
+    alert('Error inesperado:\n' + e.message);
+  }
+}
+
 async function openRecepcion(ocIdParam) {
   const ocId = ocIdParam || currentOCId;
   if (!ocId) return;
