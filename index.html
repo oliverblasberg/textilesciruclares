@@ -3612,34 +3612,6 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div id="rec-lines-container"></div>
       </div>
 
-      <!-- ── SECCIÓN 3: PACKING LIST DETALLE ── -->
-      <div style="padding:16px 20px;border-bottom:1px solid var(--border)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3)">
-            3 — Detalle Packing List (Cajas / Bultos)
-          </div>
-          <button class="btn btn-sm" onclick="openPLModal(document.querySelector('[id^=rec-lote-val-]')?.dataset?.prod)"
-            style="background:#E0F2FE;color:#0284C7;border:1.5px solid #BAE6FD;font-weight:600">
-            📦 Cargar Packing List
-          </button>
-        </div>
-        <div id="rec-pl-section">
-          <div style="font-size:12px;color:var(--text3);font-style:italic">
-            Carga el PL para ver el detalle de cajas por lote.
-          </div>
-        </div>
-      </div>
-
-      <!-- ── SECCIÓN 4: VERIFICACIÓN ── -->
-      <div style="padding:16px 20px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">
-          4 — Verificación
-        </div>
-        <div id="rec-verificacion" style="font-size:12px;color:var(--text3);font-style:italic">
-          Completa los lotes para ver la verificación.
-        </div>
-      </div>
-
     </div>
     <div class="modal-footer" style="justify-content:space-between">
       <button class="btn btn-ghost" onclick="closeModal('modal-recepcion')">Cancelar</button>
