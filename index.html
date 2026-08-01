@@ -12259,48 +12259,46 @@ function renderOCPanel(ocId) {
     </tr>`;
   }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:12px">Sin líneas</td></tr>';
 
-  // Recepciones
+  // Recepciones — one row per recepcion, lotes in cascade
   const recs = state.ocRecepciones.filter(r=>r.oc_id===ocId);
-  document.getElementById('oc-panel-recepciones').innerHTML = recs.map(r=>{
-    const ri = state.ocRecepcionItems.filter(x=>x.recepcion_id===r.id);
+  const STATUS_REC_COLOR = { borrador:'badge-gray', en_proceso:'badge-yellow', completada:'badge-green', cancelada:'badge-red' };
+  const STATUS_REC_LABEL = { borrador:'Borrador', en_proceso:'En Proceso', completada:'Completada', cancelada:'Cancelada' };
+  document.getElementById('oc-panel-recepciones').innerHTML = recs.length ? recs.map(r=>{
+    const ri      = state.ocRecepcionItems.filter(x=>x.recepcion_id===r.id);
+    const lotes   = [...new Set(ri.map(x=>x.lote).filter(Boolean))];
+    const plCajas = (state.plCajas||[]).filter(c=>c.recepcion_id===r.id);
+    const pendientes = plCajas.filter(c=>c.estado==='pendiente').length;
+    const totalKg  = ri.reduce((s,x)=>s+Number(x.cantidad||0),0);
 
-    // En proceso — show PL cajas summary
-    if (r.status === 'en_proceso') {
-      const plCajas = (state.plCajas||[]).filter(c=>c.recepcion_id===r.id);
-      const pendientes  = plCajas.filter(c=>c.estado==='pendiente').length;
-      const recibidas   = plCajas.filter(c=>c.estado==='recibido').length;
-      const totalPN     = plCajas.filter(c=>c.estado==='pendiente').reduce((s,c)=>s+Number(c.peso_neto||0),0);
-      return `<tr style="background:#FFFBEB">
-        <td class="td-mono" style="font-size:11px;color:var(--accent)">${r.numero||'—'}</td>
-        <td style="font-size:12px">${fmtDate(r.fecha)}</td>
-        <td colspan="4" style="font-size:12px">
-          <span style="font-weight:600">📦 PL En Proceso</span>
-          <span style="margin-left:8px;font-size:11px;color:var(--text3)">${pendientes} cajas pendientes · ${totalPN.toFixed(3)} kg</span>
-          ${recibidas>0?`<span style="margin-left:8px;font-size:11px;color:var(--green)">✓ ${recibidas} confirmadas</span>`:''}
-        </td>
-        <td><span class="badge badge-yellow">En Proceso</span></td>
-        <td><button class="btn btn-sm btn-primary" onclick="openRecepcion('${ocId}')">Continuar</button></td>
+    const loteRows = lotes.map(lote=>{
+      const lineas = ri.filter(x=>x.lote===lote);
+      const qty    = lineas.reduce((s,x)=>s+Number(x.cantidad||0),0);
+      const cajasLote = plCajas.filter(c=>c.lote===lote);
+      return `<tr style="background:var(--surface)">
+        <td style="padding:4px 12px 4px 28px;font-size:11px;color:var(--text3)">↳</td>
+        <td class="td-mono" style="font-size:11px;color:var(--accent);padding:4px 8px">${lote}</td>
+        <td style="font-size:11px;padding:4px 8px">${prodName(lineas[0]?.producto_id)}</td>
+        <td class="td-mono" style="font-size:11px;padding:4px 8px">${qty.toFixed(3)} ${lineas[0]?.unidad||''}</td>
+        <td style="font-size:10px;color:var(--text3);padding:4px 8px">${cajasLote.length>0?cajasLote.length+' cajas':''}</td>
+        <td colspan="2"></td>
       </tr>`;
-    }
+    }).join('');
 
-    return ri.map(item=>`<tr>
-      <td class="td-mono" style="font-size:11px">
-        ${item.estado==='devuelto' && item.numero_devolucion
-          ? `<span style="color:var(--red);font-weight:700">${item.numero_devolucion}</span>`
-          : `<span style="color:var(--accent)">${r.numero||'—'}</span>`}
-      </td>
+    const pendRow = pendientes>0 && lotes.length===0 ? `<tr style="background:var(--surface)">
+      <td colspan="7" style="padding:4px 12px 4px 28px;font-size:11px;color:#D97706;font-style:italic">
+        📦 ${pendientes} cajas de PL pendientes de confirmar
+      </td></tr>` : '';
+
+    return `<tr style="cursor:pointer" onclick="abrirRecepcion('${r.id}')">
+      <td class="td-mono" style="font-size:12px;font-weight:700;color:var(--accent)">${r.numero||'—'}</td>
       <td style="font-size:12px">${fmtDate(r.fecha)}</td>
-      <td class="td-mono" style="font-size:11px;color:var(--accent3)">${item.envio_numero||'—'}</td>
-      <td style="font-size:12px">${prodName(item.producto_id)}</td>
-      <td class="td-mono" style="text-align:right">${Number(item.cantidad||0).toFixed(3)} ${item.unidad||''}</td>
-      <td class="td-mono" style="font-size:11px">${item.lote||'—'}</td>
-      <td class="td-mono" style="font-size:11px">${item.poliza||'—'}</td>
-      <td><span class="badge ${item.estado==='devuelto'?'badge-red':item.estado==='facturado'?'badge-yellow':item.estado==='pagado'?'badge-green':'badge-blue'}">${item.estado||'recibido'}</span></td>
-      <td>${item.estado!=='devuelto'
-        ? `<button class="btn btn-sm btn-danger" onclick="openDevolucion('${item.id}','${r.id}','${ocId}')">↩ Devolver</button>`
-        : ''}</td>
-    </tr>`).join('');
-  }).join('') || '<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:12px">Sin recepciones</td></tr>';
+      <td class="td-mono" style="font-size:11px;color:var(--accent3)">${r.envio_numero||'—'}</td>
+      <td style="font-size:11px">${r.packing_num||'—'}</td>
+      <td class="td-mono" style="font-size:12px">${totalKg>0?totalKg.toFixed(3)+' kg':'—'}</td>
+      <td><span class="badge ${STATUS_REC_COLOR[r.status]||'badge-gray'}">${STATUS_REC_LABEL[r.status]||r.status}</span></td>
+      <td><button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();abrirRecepcion('${r.id}')">✏️ Editar</button></td>
+    </tr>${loteRows}${pendRow}`;
+  }).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:12px">Sin recepciones</td></tr>';
 
   // Facturas
   const facts = state.ocFacturas.filter(f=>f.oc_id===ocId);
@@ -13626,66 +13624,79 @@ async function guardarRecepcionBorrador() {
     }
 
     await loadAll();
-    toast(`✓ Borrador guardado — ${numero}`);
+    toast(`✓ Información guardada — ${numero}`);
 
   } catch(e) {
     alert('Error inesperado:\n' + e.message);
   }
 }
 
-async function openRecepcion(ocIdParam) {
+async function abrirRecepcion(recepcionId) {
+  await loadAll();
+  const rec = (state.ocRecepciones||[]).find(r => r.id === recepcionId);
+  if (!rec) { toast('Recepción no encontrada','error'); return; }
+  currentOCId = rec.oc_id;
+  await openRecepcion(rec.oc_id, recepcionId);
+}
+
+async function openRecepcion(ocIdParam, recepcionId) {
   const ocId = ocIdParam || currentOCId;
   if (!ocId) return;
   const oc    = state.oc.find(o => o.id === ocId);
-  if (oc?.status === 'completada') {
-    toast('Este pedido ya está completo.', 'error'); return;
-  }
   const prov  = state.proveedores.find(p=>p.id===oc?.proveedor_id);
   const items = state.ocItems.filter(i=>i.oc_id===ocId);
 
   document.getElementById('rec-oc-id').value = ocId;
   document.getElementById('rec-panel-sub').textContent = `${oc?.numero||''} — ${prov?.name||''}`;
 
-  // Check for existing en_proceso recepcion
-  const existingRec = (state.ocRecepciones||[]).find(r => r.oc_id===ocId && r.status==='en_proceso');
+  // Load existing recepcion if provided
+  const existingRec = recepcionId
+    ? (state.ocRecepciones||[]).find(r => r.id === recepcionId)
+    : (state.ocRecepciones||[]).find(r => r.oc_id===ocId && r.status==='borrador');
 
   // Section 1 — Header
-  document.getElementById('rec-fecha').value         = existingRec?.fecha || today();
-  document.getElementById('rec-num').value           = existingRec?.numero || nextRecepcionNum();
-  document.getElementById('rec-envio-header').value  = existingRec?.envio_numero || oc?.numero || '';
+  document.getElementById('rec-fecha').value          = existingRec?.fecha || today();
+  document.getElementById('rec-num').value            = existingRec?.numero || nextRecepcionNum();
+  document.getElementById('rec-envio-header').value   = existingRec?.envio_numero || '';
   document.getElementById('rec-packing-header').value = existingRec?.packing_num || '';
   document.getElementById('rec-bodega').innerHTML =
     '<option value="">— Seleccionar —</option>' +
     (state.bodegas||[]).filter(b=>b.activa!==false)
       .map(b=>`<option value="${b.id}"${b.id===(existingRec?.bodega_id||oc?.bodega_id)?' selected':''}>${b.codigo?b.codigo+' — ':''}${b.nombre}</option>`).join('');
 
-  // Section 2 — Products / Lotes
-  renderRecLotes(items, ocId);
+  // Section 2 — Products / Lotes (pre-fill from existing items)
+  const existingItems = existingRec
+    ? (state.ocRecepcionItems||[]).filter(x=>x.recepcion_id===existingRec.id)
+    : [];
+  _recLoteCount = 0;
+  renderRecLotes(items, ocId, existingItems);
 
   // Section 3 — PL placeholder
   document.getElementById('rec-pl-section').innerHTML =
     '<div style="font-size:12px;color:var(--text3);font-style:italic">Selecciona un lote arriba para cargar o ingresar el PL correspondiente.</div>';
 
-  // Section 4 — Verificación placeholder
-  calcRecVerificacion(items, ocId);
+  // Section 4 — Verificación
+  calcRecVerificacion();
 
   openModal('modal-recepcion');
 }
 
-function renderRecLotes(items, ocId) {
+function renderRecLotes(items, ocId, existingItems=[]) {
   const container = document.getElementById('rec-lines-container');
   container.innerHTML = items.map(i => {
     const prod      = state.productos.find(p=>p.id===i.producto_id);
     const recibido  = ocRecibidoQty(ocId, i.producto_id);
     const pendiente = Math.max(0, Number(i.cantidad||0) - recibido);
 
-    // Get existing lotes for this product from pending PL cajas
-    const plCajas = (state.plCajas||[]).filter(c => c.producto_id===i.producto_id && c.oc_id===ocId);
-    const lotesEnPL = [...new Set(plCajas.map(c=>c.lote).filter(Boolean))];
+    // Get lotes from existing saved items
+    const savedItems = existingItems.filter(x=>x.producto_id===i.producto_id);
+    const plCajas    = (state.plCajas||[]).filter(c=>c.producto_id===i.producto_id && c.oc_id===ocId);
+    const lotesEnPL  = [...new Set(plCajas.map(c=>c.lote).filter(Boolean))];
+    const savedLotes = savedItems.map(x=>x.lote).filter(Boolean);
+    const todosLotes = [...new Set([...savedLotes, ...lotesEnPL])];
 
     return `
     <div style="border:1.5px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden">
-      <!-- Producto header -->
       <div style="padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
         <div>
           <span style="font-weight:700;font-size:14px">${prod?.description||prodName(i.producto_id)}</span>
@@ -13697,12 +13708,15 @@ function renderRecLotes(items, ocId) {
           &nbsp;·&nbsp; Pendiente: <strong style="color:${pendiente>0?'var(--accent)':'var(--text3)'}">${pendiente.toFixed(3)}</strong>
         </div>
       </div>
-      <!-- Lotes -->
       <div style="padding:12px 16px">
         <div id="rec-lotes-${i.producto_id}">
-          ${lotesEnPL.length > 0
-            ? lotesEnPL.map(lote => renderRecLoteRow(i, lote, plCajas.filter(c=>c.lote===lote), ocId)).join('')
-            : renderRecLoteRow(i, '', [], ocId)
+          ${todosLotes.length > 0
+            ? todosLotes.map(lote => {
+                const savedItem = savedItems.find(x=>x.lote===lote);
+                const cajasLote = plCajas.filter(c=>c.lote===lote);
+                return renderRecLoteRow(i, lote, cajasLote, ocId, savedItem);
+              }).join('')
+            : renderRecLoteRow(i, '', [], ocId, null)
           }
         </div>
         <button class="btn btn-sm btn-ghost" onclick="addRecLote('${i.producto_id}','${i.unidad||''}','${i.precio_unit||0}')"
@@ -13713,11 +13727,13 @@ function renderRecLotes(items, ocId) {
 }
 
 let _recLoteCount = 0;
-function renderRecLoteRow(item, lote, cajasLote, ocId) {
+function renderRecLoteRow(item, lote, cajasLote, ocId, savedItem=null) {
   _recLoteCount++;
   const n      = _recLoteCount;
-  const totalPN = cajasLote.reduce((s,c)=>s+Number(c.peso_neto||0),0);
-  const hasPL  = cajasLote.length > 0;
+  const totalPN    = cajasLote.reduce((s,c)=>s+Number(c.peso_neto||0),0);
+  const hasPL      = cajasLote.length > 0;
+  const qtyValue   = savedItem?.cantidad ? Number(savedItem.cantidad).toFixed(3) : (hasPL ? totalPN.toFixed(3) : '');
+  const espValue   = savedItem?.cantidad_esperada ? Number(savedItem.cantidad_esperada).toFixed(3) : '';
   return `
   <div id="rec-lote-row-${n}" style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr auto;gap:10px;align-items:end;padding:8px 0;border-bottom:1px solid var(--border)">
     <div>
@@ -13729,11 +13745,7 @@ function renderRecLoteRow(item, lote, cajasLote, ocId) {
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Cantidad Esperada</div>
       <input type="number" id="rec-qty-esperada-${n}" step="0.001" min="0" placeholder="0.000"
-        style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"
-        oninput="calcRecVerificacion()"/>
-    </div>
-    <div>
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Del PL</div>
+        value="${espValue}"
       <div style="padding:6px 10px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:${hasPL?'var(--green)':'var(--text3)'}">
         ${hasPL ? totalPN.toFixed(3)+' '+item.unidad : '—'}
         ${hasPL ? `<span style="font-size:10px;font-weight:400;color:var(--text3)"> (${cajasLote.length} cajas)</span>` : ''}
@@ -13742,7 +13754,7 @@ function renderRecLoteRow(item, lote, cajasLote, ocId) {
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Recibir Ahora</div>
       <input type="number" id="rec-qty-${item.producto_id}-${n}" step="0.001" min="0"
-        value="${hasPL ? totalPN.toFixed(3) : ''}" placeholder="0.000"
+        value="${qtyValue}" placeholder="0.000"
         data-prod="${item.producto_id}" data-unidad="${item.unidad||''}" data-costo="${item.precio_unit||0}" data-lote="${lote||''}"
         style="padding:6px 10px;border:1.5px solid var(--accent);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100%;color:var(--accent)"
         oninput="calcRecVerificacion()"/>
