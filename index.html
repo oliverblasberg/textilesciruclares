@@ -13680,9 +13680,11 @@ function renderRecLoteRow(item, lote, cajasLote, ocId) {
 function addRecLote(productoId, unidad, costo) {
   const item = { producto_id: productoId, unidad, precio_unit: costo };
   const container = document.getElementById(`rec-lotes-${productoId}`);
+  if (!container) { toast('Error: no se encontró el contenedor del producto','error'); return; }
   const div = document.createElement('div');
-  div.innerHTML = renderRecLoteRow(item, '', [], currentOCId);
-  container.appendChild(div.firstChild);
+  div.innerHTML = renderRecLoteRow(item, '', [], currentOCId || document.getElementById('rec-oc-id')?.value);
+  // Append all child nodes
+  while (div.firstChild) container.appendChild(div.firstChild);
 }
 
 function openPLModalForLote(productoId, lote, rowN) {
