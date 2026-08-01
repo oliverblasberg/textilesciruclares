@@ -11866,6 +11866,16 @@ const OC_STATUS_LABEL = {
 let currentOCId = null;
 
 // ── Correlativos ──
+function nextRecepcionNum() {
+  // Use REC-YYYY-XXXX format, unique across erp_oc_recepciones
+  const year = new Date().getFullYear();
+  const nums = (state.ocRecepciones||[])
+    .filter(r => (r.numero||'').startsWith(`REC-${year}`))
+    .map(r => parseInt((r.numero||'').slice(-4))||0);
+  const next = (nums.length ? Math.max(...nums) : 0) + 1;
+  return `REC-${year}-${String(next).padStart(4,'0')}`;
+}
+
 function nextCorrelativo(prefix, list, field='numero') {
   const year  = new Date().getFullYear();
   const nums  = list.filter(x=>(x[field]||'').startsWith(`${prefix}-${year}`))
@@ -12926,7 +12936,7 @@ async function guardarPLBorrador() {
     if (existingRec) {
       recepcionId = existingRec.id;
     } else {
-      const numero = nextCorrelativo('REC', state.ocRecepciones, 'numero');
+      const numero = nextRecepcionNum();
       const { data: newRec, error: eRec } = await sb.from('erp_oc_recepciones').insert({
         oc_id: ocId,
         numero,
@@ -13056,6 +13066,24 @@ function updatePLBadge(productoId, totalCajas, recibidas) {
   } else if (totalCajas > 0) {
     resumen.innerHTML = `<span style="background:#DCFCE7;color:#16A34A;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700">✓ ${totalCajas} cajas confirmadas</span>`;
   }
+}
+
+async function verPLModal(productoId) {
+  // Same as openPLModal but forces load from DB
+  const ocId = document.getElementById('rec-oc-id')?.value;
+  const existingCajas = (state.plCajas||[]).filter(c =>
+    c.producto_id === productoId &&
+    c.oc_id === ocId &&
+    (c.estado === 'pendiente' || c.estado === 'recibido')
+  );
+
+  if (!existingCajas.length) {
+    toast('No hay PL guardado para este producto','error');
+    return;
+  }
+
+  // Open modal and load
+  await openPLModal(productoId);
 }
 
 async function openPLModal(productoId) {
@@ -13505,7 +13533,7 @@ async function openRecepcion() {
   document.getElementById('rec-notas').value       = '';
   document.getElementById('rec-envio-header').value = '';
   document.getElementById('rec-tracking').value    = '';
-  document.getElementById('rec-num').value         = nextCorrelativo('REC',state.ocRecepciones,'numero');
+  document.getElementById('rec-num').value         = nextRecepcionNum();
   document.getElementById('rec-bodega').innerHTML  =
     '<option value="">— Seleccionar bodega —</option>' +
     (state.bodegas||[]).filter(b=>b.activa!==false)
@@ -13600,12 +13628,17 @@ async function openRecepcion() {
           ? `📦 Ver PL <span style="background:#D97706;color:#fff;border-radius:99px;padding:1px 7px;font-size:10px;margin-left:6px">${pendientes.length} pendientes</span>`
           : '📦 Ingresar Packing List';
         return `
-        <div style="margin-top:10px">
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="btn btn-sm" onclick="openPLModal('${i.producto_id}')"
             style="background:${pendientes.length>0?'#FEF3C7;color:#D97706;border:1.5px solid #F59E0B':'#E0F2FE;color:#0284C7;border:1.5px solid #BAE6FD'};font-weight:600">
             ${btnLabel}
           </button>
-          <span id="pl-resumen-${i.producto_id}" style="margin-left:12px;font-size:11px;color:#0284C7;font-family:'DM Mono',monospace"></span>
+          ${pendientes.length > 0 ? `
+          <button class="btn btn-sm" onclick="verPLModal('${i.producto_id}')"
+            style="background:#F0FDF4;color:#16A34A;border:1.5px solid #86EFAC;font-weight:600">
+            👁 Ver PL
+          </button>` : ''}
+          <span id="pl-resumen-${i.producto_id}" style="font-size:11px;color:#0284C7;font-family:'DM Mono',monospace"></span>
         </div>`;
       })() : ''}
     </div>`;
