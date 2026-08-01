@@ -14032,46 +14032,54 @@ async function saveRecepcion() {
     const oc       = state.oc.find(o => o.id === ocId);
     const items    = state.ocItems.filter(i => i.oc_id === ocId);
     const monedaOC = items[0]?.moneda || 'GTQ';
+    const packingH = document.getElementById('rec-packing-header')?.value.trim()||'';
     const recItems = [];
 
-    // Standard lines (one per OC item)
-    items.forEach(i => {
-      const qty      = parseFloat(document.getElementById(`rec-qty-${i.producto_id}`)?.value)||0;
-      const costo    = Number(i.precio_unit||0);
-      const lote     = document.getElementById(`rec-lote-${i.producto_id}`)?.value.trim().toUpperCase()||null;
-      const poliza   = document.getElementById(`rec-poliza-${i.producto_id}`)?.value.trim()||null;
-      const envio    = document.getElementById(`rec-envio-${i.producto_id}`)?.value.trim().toUpperCase() || envioHdr || null;
-      const packing  = document.getElementById(`rec-packing-${i.producto_id}`)?.value.trim()||null;
-      const polizaKg = parseFloat(document.getElementById(`rec-poliza-kg-${i.producto_id}`)?.value)||null;
-      const polizaFv = document.getElementById(`rec-poliza-fv-${i.producto_id}`)?.value||null;
-      const plCajas  = prod?.tipo === 'almacenable' ? getPLCajasForProducto(i.producto_id) : [];
-
-      if (qty > 0) recItems.push({
-        producto_id: i.producto_id,
-        unidad: i.unidad||'', cantidad: qty,
-        costo_unit: costo,
-        lote, poliza, envio_numero: envio, packing_num: packing,
-        poliza_kg_mp: polizaKg, poliza_fv: polizaFv,
-        estado: 'recibido',
-        pl_cajas:          plCajas.length || null,
-        pl_total_conos:    plCajas.reduce((s,c)=>s+c.conos,0) || null,
-        pl_peso_bruto_total: plCajas.reduce((s,c)=>s+c.pb,0) || null,
-        pl_peso_neto_total:  plCajas.reduce((s,c)=>s+c.pn,0) || null,
-        _plCajasDetalle: plCajas, // temp for saving detail
-      });
+    // Read from new lote rows: rec-lote-val-N, rec-qty-{prod}-N
+    document.querySelectorAll('[id^="rec-lote-val-"]').forEach(el => {
+      const n      = el.id.replace('rec-lote-val-','');
+      const lote   = el.value.trim() || null;
+      const prodId = el.dataset.prod;
+      const unidad = el.dataset.unidad || '';
+      const costo  = parseFloat(el.dataset.costo)||0;
+      const qtyEl  = document.getElementById(`rec-qty-${prodId}-${n}`);
+      const qty    = parseFloat(qtyEl?.value)||0;
+      if (qty > 0) {
+        recItems.push({
+          producto_id:  prodId,
+          unidad,
+          cantidad:     qty,
+          costo_unit:   costo,
+          lote,
+          poliza:       null,
+          envio_numero: envioHdr || null,
+          packing_num:  packingH || null,
+          estado:       'recibido',
+        });
+      }
     });
-
-    // Extra lines added by user
-    recItems.push(...getExtraRecLines());
 
     if (!recItems.length) { toast('Ingresa al menos una cantidad a recibir','error'); return; }
 
-    // Create recepcion header
-    const { data:rec, error:e1 } = await sb.from('erp_oc_recepciones').insert({
-      oc_id: ocId, numero, fecha, status: 'completada', bodega_id: bodega_id||null,
-      notas: [notas, envioHdr?`Envío: ${envioHdr}`:'', tracking?`Guía: ${tracking}`:''].filter(Boolean).join(' | '),
-    }).select().single();
-    if (e1) { toast('Error creando recepción: '+e1.message,'error'); return; }
+    // Create or update recepcion header
+    const existingRec = (state.ocRecepciones||[]).find(r => r.numero===numero && r.oc_id===ocId);
+    let rec;
+    if (existingRec) {
+      const { data, error:e1 } = await sb.from('erp_oc_recepciones')
+        .update({ status:'completada', bodega_id: bodega_id||null, envio_numero: envioHdr||null, packing_num: packingH||null })
+        .eq('id', existingRec.id).select().single();
+      if (e1) { toast('Error actualizando recepción: '+e1.message,'error'); return; }
+      rec = data;
+      // Delete borrador items
+      await sb.from('erp_oc_recepcion_items').delete().eq('recepcion_id', rec.id).eq('estado','borrador');
+    } else {
+      const { data, error:e1 } = await sb.from('erp_oc_recepciones').insert({
+        oc_id: ocId, numero, fecha, status: 'completada',
+        bodega_id: bodega_id||null, envio_numero: envioHdr||null, packing_num: packingH||null,
+      }).select().single();
+      if (e1) { toast('Error creando recepción: '+e1.message,'error'); return; }
+      rec = data;
+    }
 
     // Create items + inventory movements
     for (const item of recItems) {
