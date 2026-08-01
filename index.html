@@ -12244,6 +12244,26 @@ function renderOCPanel(ocId) {
   const recs = state.ocRecepciones.filter(r=>r.oc_id===ocId);
   document.getElementById('oc-panel-recepciones').innerHTML = recs.map(r=>{
     const ri = state.ocRecepcionItems.filter(x=>x.recepcion_id===r.id);
+
+    // En proceso — show PL cajas summary
+    if (r.status === 'en_proceso') {
+      const plCajas = (state.plCajas||[]).filter(c=>c.recepcion_id===r.id);
+      const pendientes  = plCajas.filter(c=>c.estado==='pendiente').length;
+      const recibidas   = plCajas.filter(c=>c.estado==='recibido').length;
+      const totalPN     = plCajas.filter(c=>c.estado==='pendiente').reduce((s,c)=>s+Number(c.peso_neto||0),0);
+      return `<tr style="background:#FFFBEB">
+        <td class="td-mono" style="font-size:11px;color:var(--accent)">${r.numero||'—'}</td>
+        <td style="font-size:12px">${fmtDate(r.fecha)}</td>
+        <td colspan="4" style="font-size:12px">
+          <span style="font-weight:600">📦 PL En Proceso</span>
+          <span style="margin-left:8px;font-size:11px;color:var(--text3)">${pendientes} cajas pendientes · ${totalPN.toFixed(3)} kg</span>
+          ${recibidas>0?`<span style="margin-left:8px;font-size:11px;color:var(--green)">✓ ${recibidas} confirmadas</span>`:''}
+        </td>
+        <td><span class="badge badge-yellow">En Proceso</span></td>
+        <td><button class="btn btn-sm btn-primary" onclick="openRecepcion('${ocId}')">Continuar</button></td>
+      </tr>`;
+    }
+
     return ri.map(item=>`<tr>
       <td class="td-mono" style="font-size:11px">
         ${item.estado==='devuelto' && item.numero_devolucion
@@ -12853,6 +12873,7 @@ function renderPLMultiLote(lotes) {
       document.getElementById(`pl-caja-${n}-conos`).value  = caja.conos || '';
       document.getElementById(`pl-caja-${n}-pb`).value     = caja.peso_bruto_kg?.toFixed(3) || '';
       document.getElementById(`pl-caja-${n}-pn`).value     = caja.peso_neto_kg?.toFixed(3) || '';
+      document.getElementById(`pl-caja-${n}-pn-lbs`).value = caja.peso_neto_lbs?.toFixed(2) || (caja.peso_neto_kg ? (caja.peso_neto_kg * 2.20462).toFixed(2) : '');
       document.getElementById(`pl-caja-${n}-semana`).value = caja.semana || '';
     }
   }
@@ -12866,6 +12887,7 @@ async function guardarPLBorrador() {
   const productoId = document.getElementById('pl-producto-id').value;
   const ocId       = document.getElementById('rec-oc-id')?.value;
   const fecha      = document.getElementById('rec-fecha')?.value || today();
+  const bodega_id  = document.getElementById('rec-bodega')?.value || null;
   const cajas      = [];
 
   document.querySelectorAll('#pl-cajas-tbody tr').forEach(tr => {
@@ -12879,6 +12901,7 @@ async function guardarPLBorrador() {
         lote:     document.getElementById(`pl-caja-${n}-lote`)?.value || '',
         conos:    co, pb, pn,
         pn_lbs:   parseFloat(document.getElementById(`pl-caja-${n}-pn-lbs`)?.value)||parseFloat((pn*2.20462).toFixed(2)),
+        pb_lbs:   parseFloat(document.getElementById(`pl-caja-${n}-pb-lbs`)?.value)||parseFloat((pb*2.20462).toFixed(2)),
         semana:   parseInt(document.getElementById(`pl-caja-${n}-semana`)?.value)||null,
         recibido: document.getElementById(`pl-caja-${n}-recibido`)?.checked || false,
         rowId:    n,
@@ -12893,36 +12916,64 @@ async function guardarPLBorrador() {
   const poliza      = document.getElementById('pl-poliza-input').value.trim();
   const no_invoice  = document.getElementById('pl-envio-input').value.trim();
 
-  // Delete existing pending cajas for this producto/OC before saving
-  if (ocId) {
+  try {
+    // 1. Create or find existing recepcion en_proceso for this OC
+    let recepcionId = null;
+    const existingRec = (state.ocRecepciones||[]).find(r =>
+      r.oc_id === ocId && r.status === 'en_proceso'
+    );
+
+    if (existingRec) {
+      recepcionId = existingRec.id;
+    } else {
+      const numero = nextCorrelativo('REC', state.ocRecepciones, 'numero');
+      const { data: newRec, error: eRec } = await sb.from('erp_oc_recepciones').insert({
+        oc_id: ocId,
+        numero,
+        fecha,
+        status: 'en_proceso',
+        bodega_id: bodega_id || null,
+      }).select().single();
+      if (eRec) { alert('Error creando recepción:\n' + eRec.message); return; }
+      recepcionId = newRec.id;
+      // Show numero on main form
+      document.getElementById('rec-num').value = numero;
+    }
+
+    // 2. Delete existing pending cajas for this producto/recepcion
     await sb.from('erp_oc_pl')
       .delete()
       .eq('oc_id', ocId)
       .eq('producto_id', productoId)
       .eq('estado', 'pendiente');
+
+    // 3. Save cajas as 'pendiente'
+    const cajasRows = cajas.map(c => ({
+      recepcion_id:   recepcionId,
+      oc_id:          ocId || null,
+      producto_id:    productoId,
+      fecha,
+      packing_num,
+      lote:           c.lote || lote,
+      poliza,
+      no_caja:        c.no_caja,
+      conos:          c.conos,
+      peso_bruto:     c.pb,
+      peso_neto:      c.pn,
+      peso_neto_lbs:  c.pn_lbs || null,
+      peso_bruto_lbs: c.pb_lbs || null,
+      semana:         c.semana,
+      estado:         'pendiente',
+    }));
+
+    const { error: ePL } = await sb.from('erp_oc_pl').insert(cajasRows);
+    if (ePL) { alert('Error guardando PL:\n' + ePL.message + '\nCode: ' + (ePL.code||'')); return; }
+
+  } catch(e) {
+    alert('Error inesperado:\n' + e.message); return;
   }
 
-  // Save all cajas as 'pendiente'
-  const cajasRows = cajas.map((c, idx) => ({
-    oc_id:         ocId || null,
-    producto_id:   productoId,
-    fecha,
-    packing_num,
-    lote:          c.lote || lote,
-    poliza,
-    no_caja:       c.no_caja,
-    conos:         c.conos,
-    peso_bruto:    c.pb,
-    peso_neto:     c.pn,
-    peso_neto_lbs: c.pn_lbs || null,
-    semana:        c.semana,
-    estado:        'pendiente',
-  }));
-
-  const { error } = await sb.from('erp_oc_pl').insert(cajasRows);
-  if (error) { toast('Error guardando PL: ' + error.message, 'error'); return; }
-
-  // Update state in memory too
+  // Update memory
   _plDraftData[productoId] = { packing_num, lote, poliza, no_invoice, cajas };
 
   // Sync to main card
@@ -12930,14 +12981,10 @@ async function guardarPLBorrador() {
   if (lote)        { const el = document.getElementById(`rec-lote-${productoId}`);    if(el) el.value = lote; }
   if (poliza)      { const el = document.getElementById(`rec-poliza-${productoId}`);  if(el) el.value = poliza; }
 
-  // Reload state
   await loadAll();
-
-  // Update badge on product card
   updatePLBadge(productoId, cajas.length, 0);
-
   document.getElementById('btn-confirmar-recepcion-pl').style.display = '';
-  toast(`✓ PL guardado — ${cajas.length} cajas pendientes de confirmar`);
+  toast(`✓ PL guardado — ${cajas.length} cajas · Recepción "En Proceso" creada`);
 }
 
 async function confirmarRecepcionPL() {
