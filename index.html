@@ -3560,79 +3560,87 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 <!-- RECEPCION MODAL -->
 <div class="modal-overlay" id="modal-recepcion">
-  <div class="modal modal-lg" style="max-width:90vw;width:90vw">
+  <div class="modal modal-lg" style="max-width:92vw;width:92vw">
     <div class="modal-header">
-      <div class="modal-title">Recibir Pedido</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-secondary btn-sm" onclick="abrirScanRecepcion()" style="display:flex;align-items:center;gap:6px">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-          Escanear Envío
-        </button>
-        <button class="modal-close" onclick="closeModal('modal-recepcion')">✕</button>
+      <div>
+        <div class="modal-title">Recibir Pedido</div>
+        <div id="rec-panel-sub" style="font-size:12px;color:var(--text3);margin-top:2px"></div>
       </div>
+      <button class="modal-close" onclick="closeModal('modal-recepcion')">✕</button>
     </div>
-    <div class="modal-body">
+    <div class="modal-body" style="padding:0">
       <input type="hidden" id="rec-oc-id"/>
 
-      <!-- Scan area (hidden by default) -->
-      <div id="rec-scan-area" style="display:none;margin-bottom:20px">
-        <div style="border:1.5px solid var(--border);border-radius:10px;overflow:hidden">
-          <!-- Upload -->
-          <div id="rec-scan-upload" style="padding:28px;text-align:center;cursor:pointer;background:var(--surface2)"
-            onclick="document.getElementById('rec-scan-input').click()"
-            ondragover="event.preventDefault();this.style.background='var(--accent-bg)'"
-            ondragleave="this.style.background='var(--surface2)'"
-            ondrop="onRecScanDrop(event)">
-            <div style="font-size:28px;margin-bottom:8px">📋</div>
-            <div style="font-size:14px;font-weight:600;color:var(--text2);margin-bottom:4px">Arrastra la lista de empaque aquí</div>
-            <div style="font-size:12px;color:var(--text3)">JPG, PNG o PDF — Click para seleccionar</div>
-            <input type="file" id="rec-scan-input" accept="image/*,.pdf" style="display:none" onchange="procesarScanRecepcion(this.files[0])"/>
+      <!-- ── SECCIÓN 1: HEADER DEL ENVÍO ── -->
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface2)">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">
+          1 — Información del Envío
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
+          <div>
+            <div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px;text-transform:uppercase">No. Recepción</div>
+            <input type="text" id="rec-num" readonly style="padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:700;width:100%;background:var(--surface);color:var(--accent)"/>
           </div>
-          <!-- Processing -->
-          <div id="rec-scan-processing" style="display:none;padding:24px;text-align:center;background:var(--surface2)">
-            <div style="font-size:22px;margin-bottom:8px">🤖</div>
-            <div style="font-size:13px;font-weight:600;color:var(--text2)">Analizando documento con IA...</div>
-            <div style="margin-top:12px;height:3px;background:var(--border);border-radius:2px;overflow:hidden">
-              <div style="height:100%;width:60%;background:var(--accent);border-radius:2px;animation:scan-progress 1.5s ease-in-out infinite"></div>
-            </div>
+          <div>
+            <div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px;text-transform:uppercase">Fecha *</div>
+            <input type="date" id="rec-fecha" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;width:100%"/>
           </div>
-          <!-- Result banner -->
-          <div id="rec-scan-result-banner" style="display:none;padding:10px 16px;background:#ECFDF5;border-top:1px solid #A7F3D0;font-size:12px;font-weight:600;color:#065F46;display:flex;align-items:center;gap:8px">
-            <span>✅</span><span id="rec-scan-result-text"></span>
-            <button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="document.getElementById('rec-scan-input').click()">↺ Re-escanear</button>
+          <div>
+            <div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px;text-transform:uppercase">Bodega de Ingreso *</div>
+            <select id="rec-bodega" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;width:100%">
+              <option value="">— Seleccionar —</option>
+            </select>
+          </div>
+          <div>
+            <div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px;text-transform:uppercase">No. Envío</div>
+            <input type="text" id="rec-envio-header" placeholder="Ej. 9152475A" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"/>
+          </div>
+          <div>
+            <div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px;text-transform:uppercase">No. Packing List</div>
+            <input type="text" id="rec-packing-header" placeholder="Ej. KAA4071-CI01" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"/>
           </div>
         </div>
       </div>
 
-      <!-- Manual / confirmed fields -->
-      <div class="form-grid form-grid-2" style="margin-bottom:20px">
-        <div class="field"><label>Fecha de Recepción *</label><input type="date" id="rec-fecha"/></div>
-        <div class="field"><label>No. Recepción (auto)</label><input type="text" id="rec-num" readonly style="background:var(--surface2);color:var(--text2)"/></div>
-        <div class="field"><label>Bodega de Ingreso *</label>
-          <select id="rec-bodega">
-            <option value="">— Seleccionar bodega —</option>
-          </select>
+      <!-- ── SECCIÓN 2: PRODUCTOS Y LOTES ── -->
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3)">
+            2 — Productos / Lotes Recibidos
+          </div>
         </div>
-        <div class="field"><label>No. Envío Proveedor</label><input type="text" id="rec-envio-header" placeholder="Ej. 126-RE"/></div>
-        <div class="field"><label>No. Guía / Tracking</label><input type="text" id="rec-tracking" placeholder="Ej. número de guía o AWB"/></div>
-        <div class="field field-full"><label>Notas</label><textarea id="rec-notas" rows="2"></textarea></div>
+        <div id="rec-lines-container"></div>
       </div>
 
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3)">
-          Cantidades Recibidas
-          <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3);margin-left:8px">— Edita las cantidades según lo físicamente recibido</span>
+      <!-- ── SECCIÓN 3: PACKING LIST DETALLE ── -->
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">
+          3 — Detalle Packing List (Cajas / Bultos)
         </div>
-        <button class="btn btn-sm btn-ghost" onclick="addRecLine()">+ Agregar Línea</button>
+        <div id="rec-pl-section">
+          <div style="font-size:12px;color:var(--text3);font-style:italic">
+            Selecciona un producto y lote arriba para cargar el PL correspondiente.
+          </div>
+        </div>
       </div>
-      <div id="rec-lines-container"></div>
 
-      <!-- Totals -->
-      <div id="rec-totales" style="margin-top:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px"></div>
+      <!-- ── SECCIÓN 4: VERIFICACIÓN ── -->
+      <div style="padding:16px 20px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">
+          4 — Verificación
+        </div>
+        <div id="rec-verificacion" style="font-size:12px;color:var(--text3);font-style:italic">
+          Completa los lotes para ver la verificación.
+        </div>
+      </div>
+
     </div>
     <div class="modal-footer" style="justify-content:space-between">
       <button class="btn btn-ghost" onclick="closeModal('modal-recepcion')">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveRecepcion()">✓ Confirmar Recepción</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="guardarRecepcionBorrador()">💾 Guardar Borrador</button>
+        <button class="btn btn-primary" onclick="saveRecepcion()">✓ Confirmar Recepción</button>
+      </div>
     </div>
   </div>
 </div>
@@ -3656,6 +3664,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     <div class="modal-body">
       <input type="hidden" id="pl-producto-id"/>
       <input type="hidden" id="pl-rec-prod-id"/>
+      <input type="hidden" id="pl-rec-lote-row" value=""/>
 
       <!-- AI Scan Area -->
       <div id="pl-scan-area" style="margin-bottom:16px;padding:14px 16px;border:2px dashed #7C3AED33;border-radius:10px;background:#FAF5FF">
@@ -13545,134 +13554,178 @@ async function deleteOC(id) {
 }
 
 // ── RECEPCION ──
-async function openRecepcion() {
-  if (!currentOCId) return;
-  const oc   = state.oc.find(o => o.id === currentOCId);
+async function openRecepcion(ocIdParam) {
+  const ocId = ocIdParam || currentOCId;
+  if (!ocId) return;
+  const oc    = state.oc.find(o => o.id === ocId);
   if (oc?.status === 'completada') {
-    toast('Este pedido ya está completo — no se puede recibir más producto.', 'error');
-    return;
+    toast('Este pedido ya está completo.', 'error'); return;
   }
-  const prov = state.proveedores.find(p=>p.id===oc?.proveedor_id);
-  const items = state.ocItems.filter(i=>i.oc_id===currentOCId);
+  const prov  = state.proveedores.find(p=>p.id===oc?.proveedor_id);
+  const items = state.ocItems.filter(i=>i.oc_id===ocId);
 
-  document.getElementById('rec-oc-id').value      = currentOCId;
-  document.getElementById('rec-fecha').value       = today();
-  document.getElementById('rec-notas').value       = '';
-  document.getElementById('rec-envio-header').value = '';
-  document.getElementById('rec-tracking').value    = '';
-  document.getElementById('rec-num').value         = nextRecepcionNum();
-  document.getElementById('rec-bodega').innerHTML  =
-    '<option value="">— Seleccionar bodega —</option>' +
+  document.getElementById('rec-oc-id').value = ocId;
+  document.getElementById('rec-panel-sub').textContent = `${oc?.numero||''} — ${prov?.name||''}`;
+
+  // Check for existing en_proceso recepcion
+  const existingRec = (state.ocRecepciones||[]).find(r => r.oc_id===ocId && r.status==='en_proceso');
+
+  // Section 1 — Header
+  document.getElementById('rec-fecha').value         = existingRec?.fecha || today();
+  document.getElementById('rec-num').value           = existingRec?.numero || nextRecepcionNum();
+  document.getElementById('rec-envio-header').value  = existingRec?.envio_numero || oc?.numero || '';
+  document.getElementById('rec-packing-header').value = existingRec?.packing_num || '';
+  document.getElementById('rec-bodega').innerHTML =
+    '<option value="">— Seleccionar —</option>' +
     (state.bodegas||[]).filter(b=>b.activa!==false)
-      .map(b=>`<option value="${b.id}"${b.id===oc?.bodega_id?' selected':''}>${b.codigo?b.codigo+' — ':''}${b.nombre}</option>`).join('');
-  _recLineCount = 0;
-  document.querySelectorAll('[id^="rec-extra-"]').forEach(el => el.remove());
+      .map(b=>`<option value="${b.id}"${b.id===(existingRec?.bodega_id||oc?.bodega_id)?' selected':''}>${b.codigo?b.codigo+' — ':''}${b.nombre}</option>`).join('');
 
-  // Reset scan area
-  document.getElementById('rec-scan-area').style.display             = 'none';
-  document.getElementById('rec-scan-upload').style.display           = 'block';
-  document.getElementById('rec-scan-processing').style.display       = 'none';
-  document.getElementById('rec-scan-result-banner').style.display    = 'none';
-  document.getElementById('rec-scan-input').value                    = '';
+  // Section 2 — Products / Lotes
+  renderRecLotes(items, ocId);
 
-  const container = document.getElementById('rec-lines-container');
-  // Keep hidden tbody for compatibility with calcRecTotales
-  if (!document.getElementById('rec-lines')) {
-    const t = document.createElement('tbody');
-    t.id = 'rec-lines';
-    t.style.display = 'none';
-    container.appendChild(t);
-  }
-  container.innerHTML = items.map(i=>{
-    const recibido  = ocRecibidoQty(currentOCId, i.producto_id);
-    const pendiente = Math.max(0, Number(i.cantidad||0) - recibido);
-    const prod      = state.productos.find(p=>p.id===i.producto_id);
-    const moneda    = i.moneda || 'GTQ';
-    const esAlmacenable  = prod?.tipo === 'almacenable';
-    const plLineId  = `pl-${i.producto_id}`;
-    const inp = (id,type='text',extra='',w='100%') =>
-      `<input type="${type}" id="${id}" ${extra}
-        style="padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:12px;width:${w};background:var(--surface)"/>`;
-    return `
-    <div style="border:1.5px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:10px;background:var(--surface)">
-      <!-- Producto como título -->
-      <div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border)">
-        <div style="font-weight:700;font-size:14px">${prod?.description||prodName(i.producto_id)}</div>
-        <div style="font-size:11px;color:var(--accent);font-family:'DM Mono',monospace;margin-top:2px">${prod?.codigo_interno||prod?.code||''}</div>
-      </div>
-      <!-- Línea 1: cantidades -->
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1.2fr;gap:10px;align-items:end;margin-bottom:10px">
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Pedido</div>
-          <div style="font-family:'DM Mono',monospace;font-size:13px">${Number(i.cantidad||0).toFixed(3)} ${i.unidad||''}</div>
-        </div>
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Ya Recibido</div>
-          <div style="font-family:'DM Mono',monospace;font-size:13px;color:var(--green)">${recibido.toFixed(3)}</div>
-        </div>
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Pendiente</div>
-          <div style="font-family:'DM Mono',monospace;font-size:13px;color:${pendiente>0?'var(--accent)':'var(--text3)'}">${pendiente.toFixed(3)}</div>
-        </div>
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Recibir Ahora *</div>
-          <input type="number" id="rec-qty-${i.producto_id}"
-            data-prod="${i.producto_id}" data-unidad="${i.unidad||''}" data-costo="${i.precio_unit||0}"
-            step="0.001" min="0" value="${pendiente.toFixed(3)}" oninput="calcRecTotales()"
-            style="padding:6px 8px;border:1.5px solid var(--accent);border-radius:6px;font-family:'DM Mono',monospace;font-size:14px;font-weight:600;width:100%;color:var(--accent)"/>
-        </div>
-      </div>
-      <!-- Línea 2: trazabilidad -->
-      <div style="display:grid;grid-template-columns:1.2fr 2fr 1fr 1.2fr 1.2fr;gap:10px;align-items:end;padding-top:10px;border-top:1px solid var(--border)">
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">No. Lista de Empaque</div>
-          ${inp(`rec-packing-${i.producto_id}`,'text','placeholder="Ej. PL-0001"')}
-        </div>
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Lote</div>
-          ${inp(`rec-lote-${i.producto_id}`,'text','placeholder="Número de lote"')}
-        </div>
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Póliza</div>
-          ${inp(`rec-poliza-${i.producto_id}`,'text','placeholder="272-2025..."')}
-        </div>
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">KG MP Póliza</div>
-          ${inp(`rec-poliza-kg-${i.producto_id}`,'number','step="0.001" placeholder="0.000"')}
-        </div>
-        <div>
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">FV Póliza</div>
-          ${inp(`rec-poliza-fv-${i.producto_id}`,'date','')}
-        </div>
-      </div>
+  // Section 3 — PL placeholder
+  document.getElementById('rec-pl-section').innerHTML =
+    '<div style="font-size:12px;color:var(--text3);font-style:italic">Selecciona un lote arriba para cargar o ingresar el PL correspondiente.</div>';
 
-      ${esAlmacenable ? (() => {
-        const ocId = document.getElementById('rec-oc-id')?.value;
-        const pendientes = (state.plCajas||[]).filter(c =>
-          c.producto_id === i.producto_id && c.oc_id === ocId && c.estado === 'pendiente'
-        );
-        const btnLabel = pendientes.length > 0
-          ? `📦 Ver PL <span style="background:#D97706;color:#fff;border-radius:99px;padding:1px 7px;font-size:10px;margin-left:6px">${pendientes.length} pendientes</span>`
-          : '📦 Ingresar Packing List';
-        return `
-        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button class="btn btn-sm" onclick="openPLModal('${i.producto_id}')"
-            style="background:${pendientes.length>0?'#FEF3C7;color:#D97706;border:1.5px solid #F59E0B':'#E0F2FE;color:#0284C7;border:1.5px solid #BAE6FD'};font-weight:600">
-            ${btnLabel}
-          </button>
-          <button class="btn btn-sm" onclick="verPLModal('${i.producto_id}')"
-            style="background:#F0FDF4;color:#16A34A;border:1.5px solid #86EFAC;font-weight:600">
-            👁 Ver PL
-          </button>
-          <span id="pl-resumen-${i.producto_id}" style="font-size:11px;color:#0284C7;font-family:'DM Mono',monospace"></span>
-        </div>`;
-      })() : ''}
-    </div>`;
-  }).join('');
+  // Section 4 — Verificación placeholder
+  calcRecVerificacion(items, ocId);
 
-  calcRecTotales();
   openModal('modal-recepcion');
 }
+
+function renderRecLotes(items, ocId) {
+  const container = document.getElementById('rec-lines-container');
+  container.innerHTML = items.map(i => {
+    const prod      = state.productos.find(p=>p.id===i.producto_id);
+    const recibido  = ocRecibidoQty(ocId, i.producto_id);
+    const pendiente = Math.max(0, Number(i.cantidad||0) - recibido);
+
+    // Get existing lotes for this product from pending PL cajas
+    const plCajas = (state.plCajas||[]).filter(c => c.producto_id===i.producto_id && c.oc_id===ocId);
+    const lotesEnPL = [...new Set(plCajas.map(c=>c.lote).filter(Boolean))];
+
+    return `
+    <div style="border:1.5px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden">
+      <!-- Producto header -->
+      <div style="padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <span style="font-weight:700;font-size:14px">${prod?.description||prodName(i.producto_id)}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent);margin-left:8px">${prod?.codigo_interno||prod?.code||''}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text3)">
+          Pedido: <strong>${Number(i.cantidad||0).toFixed(3)} ${i.unidad||''}</strong>
+          &nbsp;·&nbsp; Recibido: <strong style="color:var(--green)">${recibido.toFixed(3)}</strong>
+          &nbsp;·&nbsp; Pendiente: <strong style="color:${pendiente>0?'var(--accent)':'var(--text3)'}">${pendiente.toFixed(3)}</strong>
+        </div>
+      </div>
+      <!-- Lotes -->
+      <div style="padding:12px 16px">
+        <div id="rec-lotes-${i.producto_id}">
+          ${lotesEnPL.length > 0
+            ? lotesEnPL.map(lote => renderRecLoteRow(i, lote, plCajas.filter(c=>c.lote===lote), ocId)).join('')
+            : renderRecLoteRow(i, '', [], ocId)
+          }
+        </div>
+        <button class="btn btn-sm btn-ghost" onclick="addRecLote('${i.producto_id}','${i.unidad||''}','${i.precio_unit||0}')"
+          style="margin-top:8px;font-size:11px">+ Agregar Lote</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+let _recLoteCount = 0;
+function renderRecLoteRow(item, lote, cajasLote, ocId) {
+  _recLoteCount++;
+  const n      = _recLoteCount;
+  const totalPN = cajasLote.reduce((s,c)=>s+Number(c.peso_neto||0),0);
+  const hasPL  = cajasLote.length > 0;
+  return `
+  <div id="rec-lote-row-${n}" style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr auto;gap:10px;align-items:end;padding:8px 0;border-bottom:1px solid var(--border)">
+    <div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Lote</div>
+      <input type="text" id="rec-lote-val-${n}" value="${lote||''}" placeholder="Número de lote"
+        style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100%"
+        data-prod="${item.producto_id}" data-unidad="${item.unidad||''}" data-costo="${item.precio_unit||0}"/>
+    </div>
+    <div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Cantidad Esperada</div>
+      <input type="number" id="rec-qty-esperada-${n}" step="0.001" min="0" placeholder="0.000"
+        style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"
+        oninput="calcRecVerificacion()"/>
+    </div>
+    <div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Del PL</div>
+      <div style="padding:6px 10px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:${hasPL?'var(--green)':'var(--text3)'}">
+        ${hasPL ? totalPN.toFixed(3)+' '+item.unidad : '—'}
+        ${hasPL ? `<span style="font-size:10px;font-weight:400;color:var(--text3)"> (${cajasLote.length} cajas)</span>` : ''}
+      </div>
+    </div>
+    <div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Recibir Ahora</div>
+      <input type="number" id="rec-qty-${item.producto_id}-${n}" step="0.001" min="0"
+        value="${hasPL ? totalPN.toFixed(3) : ''}" placeholder="0.000"
+        data-prod="${item.producto_id}" data-unidad="${item.unidad||''}" data-costo="${item.precio_unit||0}" data-lote="${lote||''}"
+        style="padding:6px 10px;border:1.5px solid var(--accent);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100%;color:var(--accent)"
+        oninput="calcRecVerificacion()"/>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-sm" onclick="openPLModalForLote('${item.producto_id}','${lote||''}',${n})"
+        style="background:#E0F2FE;color:#0284C7;border:1.5px solid #BAE6FD;white-space:nowrap;font-size:11px">
+        📦 ${hasPL ? 'Ver PL' : 'Ingresar PL'}
+      </button>
+    </div>
+  </div>`;
+}
+
+function addRecLote(productoId, unidad, costo) {
+  const item = { producto_id: productoId, unidad, precio_unit: costo };
+  const container = document.getElementById(`rec-lotes-${productoId}`);
+  const div = document.createElement('div');
+  div.innerHTML = renderRecLoteRow(item, '', [], currentOCId);
+  container.appendChild(div.firstChild);
+}
+
+function openPLModalForLote(productoId, lote, rowN) {
+  // Store which lote row we're editing
+  document.getElementById('pl-rec-lote-row').value = rowN;
+  openPLModal(productoId, lote);
+}
+
+function calcRecVerificacion() {
+  const ocId = document.getElementById('rec-oc-id')?.value;
+  const items = state.ocItems.filter(i=>i.oc_id===ocId);
+  let html = '';
+  let allOk = true;
+
+  items.forEach(i => {
+    const prod = state.productos.find(p=>p.id===i.producto_id);
+    const qtyPedido = Number(i.cantidad||0);
+    // Sum all lote rows for this product
+    let qtyTotal = 0;
+    document.querySelectorAll(`[id^="rec-qty-${i.producto_id}-"]`).forEach(el => {
+      qtyTotal += parseFloat(el.value)||0;
+    });
+    const diff = qtyTotal - qtyPedido;
+    const ok   = Math.abs(diff) < 0.001;
+    if (!ok) allOk = false;
+    html += `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:6px;margin-bottom:6px;background:${ok?'#F0FDF4':'#FFF7ED'}">
+      <span style="font-size:12px;font-weight:500">${prod?.description||prodName(i.producto_id)}</span>
+      <div style="display:flex;gap:16px;font-family:'DM Mono',monospace;font-size:12px">
+        <span style="color:var(--text3)">Pedido: ${qtyPedido.toFixed(3)}</span>
+        <span style="color:var(--text2)">A recibir: ${qtyTotal.toFixed(3)}</span>
+        <span style="color:${ok?'#16A34A':diff>0?'#D97706':'#DC2626'};font-weight:700">
+          ${ok ? '✓ OK' : diff>0 ? `+${diff.toFixed(3)} exceso` : `${diff.toFixed(3)} faltante`}
+        </span>
+      </div>
+    </div>`;
+  });
+
+  document.getElementById('rec-verificacion').innerHTML = html ||
+    '<div style="font-size:12px;color:var(--text3);font-style:italic">Ingresa cantidades para ver la verificación.</div>';
+}
+
+
 
 function calcRecTotales() {
   const items = state.ocItems.filter(i=>i.oc_id===currentOCId);
