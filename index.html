@@ -13688,8 +13688,7 @@ async function openRecepcion(ocIdParam, recepcionId) {
     }));
     renderPLCascadeSection3(cajasFormatted, prodId);
   } else {
-    document.getElementById('rec-pl-section').innerHTML =
-      '<div style="font-size:12px;color:var(--text3);font-style:italic">Carga el PL para ver el detalle de cajas por lote.</div>';
+    // rec-pl-section removed
   }
 
   // Section 4
@@ -13843,8 +13842,7 @@ function renderPLCascadeSection3(cajas, productoId) {
     </div>`;
   }).join('');
 
-  const section = document.getElementById('rec-pl-section');
-  if (section) section.innerHTML = html || '<div style="font-size:12px;color:var(--text3)">Sin detalle de cajas.</div>';
+  // rec-pl-section removed
 }
 
 function openPLModalForLote(productoId, lote, rowN) {
@@ -13883,8 +13881,7 @@ function calcRecVerificacion() {
     </div>`;
   });
 
-  document.getElementById('rec-verificacion').innerHTML = html ||
-    '<div style="font-size:12px;color:var(--text3);font-style:italic">Ingresa cantidades para ver la verificación.</div>';
+  // rec-verificacion removed
 }
 
 
