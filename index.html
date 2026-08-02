@@ -10230,36 +10230,51 @@ async function asientoFacturaCompra(ocFacturaId) {
   const oc   = state.oc.find(o => o.id === fc.oc_id);
   const prov = state.proveedores.find(p => p.id === oc?.proveedor_id);
 
-  // Moneda from producto.proveedores_compra
   const monedaOC  = getMonedaOC(oc?.id);
-  const totalOrig = Number(fc.total||0);  // in moneda original
-  const esIVA     = fc.tipo !== 'FX';    // FX = Exportación = no IVA
+  const totalOrig = Number(fc.total||0);
+  const esIVA     = fc.tipo !== 'FX';
 
-  // Detect if service OC
+  // Get category from first OC item product
   const ocItems    = state.ocItems.filter(i => i.oc_id === oc?.id);
+  const firstProd  = state.productos.find(p => p.id === ocItems[0]?.producto_id);
+  const cat        = firstProd?.categoria ? state.categorias?.find(c => c.id === firstProd.categoria) : null;
   const esServicio = ocItems.every(i => state.productos.find(p=>p.id===i.producto_id)?.tipo === 'servicio');
 
-  // Find accounts
-  const ctaGasto    = state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('gasto') && n.tipo?.toLowerCase().includes('gasto'));
-  const ctaInventario = state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('inventario') && n.tipo?.toLowerCase().includes('activo'));
-  const ctaIVACred  = state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('iva') && (n.nombre||'').toLowerCase().includes('créd'));
-  const ctaPorPagar = state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('pagar') && n.tipo?.toLowerCase().includes('pasivo'));
+  // Use category accounts
+  const ctaGastoId     = cat?.cta_gasto     || null;
+  const ctaIngresosId  = cat?.cta_ingresos  || null;
+  const ctaValorId     = cat?.cta_valoracion || null;
 
-  // Debit account: services → gastos; physical → inventario
-  const ctaDebe = esServicio ? ctaGasto : ctaInventario;
+  // Debit account: services → cta_gasto; physical products → cta_valoracion or cta_ingresos
+  const ctaDebeId = esServicio
+    ? (ctaGastoId || ctaIngresosId)
+    : (ctaValorId || ctaIngresosId || ctaGastoId);
 
-  // Build lineas — amounts in moneda original (TC conversion handled in crearAsiento)
+  // IVA Credito Fiscal — find by code 11205001 or by name
+  const ctaIVACred  = state.nomenclatura.find(n =>
+    n.codigo === '11205001' ||
+    ((n.nombre||'').toLowerCase().includes('iva') && (n.nombre||'').toLowerCase().includes('cr'))
+  );
+
+  // Cuentas por Pagar Proveedores — find by code 21101001 or by name
+  const ctaPorPagar = state.nomenclatura.find(n =>
+    n.codigo === '21101001' ||
+    ((n.nombre||'').toLowerCase().includes('proveedores') && n.tipo?.toLowerCase().includes('pasivo'))
+  );
+
+  const ctaNom = id => state.nomenclatura.find(n => n.id === id);
+  const ctaDebe = ctaNom(ctaDebeId);
+
   const lineas = [];
   if (esIVA) {
     const neto = parseFloat((totalOrig / 1.12).toFixed(4));
     const iva  = parseFloat((totalOrig - neto).toFixed(4));
-    lineas.push({ cuenta_id: ctaDebe?.id||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto por Servicio':'Inventario'), debe: neto, haber: 0 });
+    lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: neto, haber: 0 });
     lineas.push({ cuenta_id: ctaIVACred?.id||null, cuenta_codigo: ctaIVACred?.codigo||'IVA-CRED', cuenta_nombre: ctaIVACred?.nombre||'IVA Crédito Fiscal', debe: iva, haber: 0 });
   } else {
-    // No IVA (Ley Maquila / exportación)
-    lineas.push({ cuenta_id: ctaDebe?.id||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto por Servicio':'Inventario'), debe: totalOrig, haber: 0 });
+    lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: totalOrig, haber: 0 });
   }
-  lineas.push({ cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'POR-PAGAR', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas por Pagar', debe: 0, haber: totalOrig });
+  lineas.push({ cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'POR-PAGAR', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas por Pagar Proveedores', debe: 0, haber: totalOrig });
 
   await crearAsiento({
     diario: 'COMPRAS', fecha: fc.fecha,
