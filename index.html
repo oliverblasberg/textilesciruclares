@@ -4344,7 +4344,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         </div>
         <div class="field">
           <label>Valoración del Inventario</label>
-          <select id="cat-valoracion">
+          <select id="cat-valoracion" onchange="onCatValoracionChange()">
             <option value="manual">Manual</option>
             <option value="automatico">Automático</option>
           </select>
@@ -10316,13 +10316,56 @@ async function asientoAnticipoOC(anticipoId) {
 }
 
 // 5. INVENTARIO — Al crear movimiento de inventario
+async function asientoMovInventarioManual(movId, cat, moneda='GTQ') {
+  const mov   = state.movimientos.find(x => x.mov_id === movId);
+  if (!mov) return;
+  if (mov.tipo === 'consignacion') return;
+
+  const prod      = state.productos.find(p => p.id === mov.producto_id);
+  const monto     = Number(mov.costo_total_gtq || mov.costo_total || 0);
+  if (!monto) return;
+
+  const isEntrada    = mov.tipo === 'entrada' || mov.tipo === 'ajuste_positivo';
+  const isDevolucion = mov.referencia_tipo === 'DEV-OC';
+
+  // For manual: use cta_ingresos for entries, cta_gasto for exits
+  const ctaIngresos = mov.snap_cta_ingresos || cat?.cta_ingresos || null;
+  const ctaGasto    = mov.snap_cta_gasto    || cat?.cta_gasto    || null;
+  const ctaNom      = id => state.nomenclatura.find(n => n.id === id);
+
+  let debe, haber;
+  if (isDevolucion) {
+    debe  = ctaIngresos; haber = ctaGasto;
+  } else if (isEntrada) {
+    debe  = ctaIngresos; haber = ctaGasto;
+  } else {
+    debe  = ctaGasto;    haber = ctaIngresos;
+  }
+
+  if (!debe && !haber) return; // no accounts configured
+
+  await crearAsiento({
+    diario: 'INVENTARIO', fecha: mov.fecha,
+    descripcion: `${isEntrada?'Entrada':'Salida'} inventario (manual) — ${prod?.description||''} (${mov.mov_id})`,
+    referencia: mov.mov_id, referencia_id: mov.id,
+    moneda: 'GTQ',
+    lineas: [
+      { cuenta_id: debe||null,  cuenta_codigo: ctaNom(debe)?.codigo||'INV-DEBE',   cuenta_nombre: ctaNom(debe)?.nombre||'Inventario',  debe: monto, haber: 0,     descripcion: mov.mov_id },
+      { cuenta_id: haber||null, cuenta_codigo: ctaNom(haber)?.codigo||'INV-HABER', cuenta_nombre: ctaNom(haber)?.nombre||'Contra inv.', debe: 0,     haber: monto, descripcion: mov.mov_id },
+    ],
+  });
+}
+
 async function asientoMovInventario(movId, monedaParam = null) {
   const mov  = state.movimientos.find(x => x.mov_id === movId);
   if (!mov) return;
 
   if (mov.tipo === 'consignacion') return;
 
+  // Check category valoracion — if manual, no accounting entry
   const prod = state.productos.find(p => p.id === mov.producto_id);
+  const cat  = prod?.categoria ? state.categorias?.find(c => c.id === prod.categoria) : null;
+  if (!cat || cat.valoracion === 'manual' || !cat.valoracion) return;
 
   const ctaValoracion = mov.snap_cta_valoracion || null;
   const ctaEntrada    = mov.snap_cta_entrada || null;
@@ -10991,12 +11034,24 @@ const _origCrearMovimiento = typeof crearMovimiento === 'function' ? crearMovimi
 
 // Wrapper para crearMovimiento que también genera asiento
 async function crearMovimientoConAsiento(params) {
+  // Check category valoracion
+  const prod = state.productos.find(p => p.id === params.producto_id);
+  const cat  = prod?.categoria ? state.categorias?.find(c => c.id === prod.categoria) : null;
+  const esManual = !cat || cat.valoracion === 'manual' || !cat.valoracion;
+
   const movId = await crearMovimiento(params);
   if (!movId) {
     throw new Error('crearMovimiento retornó null — revisar error de Supabase');
   }
   await loadAll();
-  await asientoMovInventario(movId, params.moneda || 'GTQ');
+
+  if (esManual) {
+    // Manual: use cta_ingresos for entries, cta_gasto for exits
+    await asientoMovInventarioManual(movId, cat, params.moneda || 'GTQ');
+  } else {
+    // Automatico: use stock accounts from category
+    await asientoMovInventario(movId, params.moneda || 'GTQ');
+  }
   return movId;
 }
 
@@ -15766,11 +15821,25 @@ function renderCategorias() {
   '<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">◈</div><p>Sin categorías registradas</p></div></td></tr>';
 }
 
+function onCatValoracionChange() {
+  const isManual = document.getElementById('cat-valoracion')?.value === 'manual';
+  const stockFields = ['cat-cta-valoracion','cat-diario-stock','cat-cta-entrada','cat-cta-salida','cat-cta-transito'];
+  stockFields.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.disabled = isManual;
+    el.style.opacity = isManual ? '0.4' : '1';
+    el.parentElement.style.opacity = isManual ? '0.5' : '1';
+    if (isManual) el.value = '';
+  });
+}
+
 function openNewCategoria() {
   document.getElementById('cat-id').value              = '';
   document.getElementById('cat-nombre').value          = '';
   document.getElementById('cat-metodo-coste').value    = 'precio_estandar';
   document.getElementById('cat-valoracion').value      = 'manual';
+  onCatValoracionChange();
   document.getElementById('cat-cta-ingresos').value = '';
   document.getElementById('cat-cta-gasto').value = '';
   document.getElementById('cat-cta-valoracion').value  = '';
@@ -15791,6 +15860,7 @@ function editCategoria(id) {
   document.getElementById('cat-nombre').value          = c.nombre||'';
   document.getElementById('cat-metodo-coste').value    = c.metodo_coste||'precio_estandar';
   document.getElementById('cat-valoracion').value      = c.valoracion||'manual';
+  onCatValoracionChange();
   document.getElementById('cat-notas').value           = c.notas||'';
   document.getElementById('modal-categoria-title').textContent = 'Editar Categoría';
   populateNomDropdowns();
