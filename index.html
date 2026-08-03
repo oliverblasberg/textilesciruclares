@@ -11169,10 +11169,11 @@ function renderEstadoResultados() {
     const cta = state.nomenclatura.find(n=>n.id===l.cuenta_id);
     if (!cta) return;
     if (!byTipo[cta.tipo]) byTipo[cta.tipo] = {};
-    if (!byTipo[cta.tipo][cta.nombre]) byTipo[cta.tipo][cta.nombre] = {debe:0,haber:0,net:0};
-    byTipo[cta.tipo][cta.nombre].debe  += Number(l.debe_gtq||l.debe||0);
-    byTipo[cta.tipo][cta.nombre].haber += Number(l.haber_gtq||l.haber||0);
-    byTipo[cta.tipo][cta.nombre].net   += Number(l.haber_gtq||l.haber||0)-Number(l.debe_gtq||l.debe||0);
+    const key = cta.id;
+    if (!byTipo[cta.tipo][key]) byTipo[cta.tipo][key] = {codigo:cta.codigo, nombre:cta.nombre, debe:0, haber:0, net:0};
+    byTipo[cta.tipo][key].debe  += Number(l.debe_gtq||l.debe||0);
+    byTipo[cta.tipo][key].haber += Number(l.haber_gtq||l.haber||0);
+    byTipo[cta.tipo][key].net   += Number(l.haber_gtq||l.haber||0)-Number(l.debe_gtq||l.debe||0);
   });
 
   const seccion = (tipos, titulo, esIngreso) => {
@@ -11180,11 +11181,13 @@ function renderEstadoResultados() {
     let rows = '';
     tipos.forEach(tipo => {
       const cuentas = byTipo[tipo]||{};
-      Object.entries(cuentas).forEach(([nombre,v]) => {
+      Object.values(cuentas).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||'')).forEach(v => {
         const val = esIngreso ? v.haber-v.debe : v.debe-v.haber;
         if (Math.abs(val)<0.01) return;
         total += val;
-        rows += `<tr><td style="padding:6px 24px;font-size:13px">${nombre}</td>
+        rows += `<tr><td style="padding:6px 24px;font-size:13px">
+            <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3);margin-right:8px">${v.codigo||''}</span>${v.nombre}
+          </td>
           <td style="text-align:right;font-family:'DM Mono',monospace;padding:6px 16px">${fmtGTQ(val)}</td></tr>`;
       });
     });
@@ -11270,16 +11273,19 @@ function renderBalanceGeneral() {
 
   const seccionBG = (grupos, titulo) => {
     let total = 0, rows = '';
-    Object.values(saldos).forEach(({cta,debe,haber}) => {
-      if (!grupos.includes(cta.tipo)) return;
-      // Activos: saldo débito; Pasivos/Capital: saldo crédito
-      const isActivo = grupos === grupoActivo;
-      const saldo = isActivo ? debe-haber : haber-debe;
-      if (Math.abs(saldo)<0.01) return;
-      total += saldo;
-      rows += `<tr><td style="padding:5px 24px;font-size:13px">${cta.codigo} — ${cta.nombre}</td>
-        <td style="text-align:right;font-family:'DM Mono',monospace;padding:5px 16px">${fmtGTQ(saldo)}</td></tr>`;
-    });
+    Object.values(saldos)
+      .sort((a,b)=>(a.cta.codigo||'').localeCompare(b.cta.codigo||''))
+      .forEach(({cta,debe,haber}) => {
+        if (!grupos.includes(cta.tipo)) return;
+        const isActivo = grupos === grupoActivo;
+        const saldo = isActivo ? debe-haber : haber-debe;
+        if (Math.abs(saldo)<0.01) return;
+        total += saldo;
+        rows += `<tr><td style="padding:5px 24px;font-size:13px">
+            <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3);margin-right:8px">${cta.codigo||''}</span>${cta.nombre}
+          </td>
+          <td style="text-align:right;font-family:'DM Mono',monospace;padding:5px 16px">${fmtGTQ(saldo)}</td></tr>`;
+      });
     if (!rows) rows = '<tr><td colspan="2" style="padding:6px 24px;color:var(--text3);font-size:12px">Sin movimientos</td></tr>';
     return {
       html:`<tr style="background:var(--surface2)"><td colspan="2" style="padding:10px 16px;font-weight:700;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text2)">${titulo}</td></tr>
