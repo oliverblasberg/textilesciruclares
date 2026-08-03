@@ -3861,51 +3861,170 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 
 <div class="modal-overlay" id="modal-factura-oc">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg" style="max-width:860px;width:95vw">
     <div class="modal-header">
-      <div class="modal-title">Ingresar Factura de Proveedor</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-secondary btn-sm" onclick="abrirScanFactura('compra')" style="display:flex;align-items:center;gap:6px">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-          Escanear Factura
-        </button>
-        <button class="modal-close" onclick="closeModal('modal-factura-oc')">✕</button>
+      <div>
+        <div class="modal-title">Ingresar Factura de Proveedor</div>
+        <div id="foc-header-sub" style="font-size:12px;color:var(--text3);margin-top:2px"></div>
       </div>
+      <button class="modal-close" onclick="closeModal('modal-factura-oc')">✕</button>
     </div>
-    <div class="modal-body">
+    <div class="modal-body" style="padding:0">
       <input type="hidden" id="foc-oc-id"/>
-      <div class="form-grid form-grid-2">
-        <div class="field"><label>Serie</label><input type="text" id="foc-serie" placeholder="Ej. A"/></div>
-        <div class="field"><label>No. Factura *</label><input type="text" id="foc-numero" placeholder="00001234"/></div>
-        <div class="field"><label>Fecha *</label><input type="date" id="foc-fecha"/></div>
-        <div class="field"><label>Tipo</label>
-          <select id="foc-tipo">
-            <option value="FC">Factura Cambiaria (FC)</option>
-            <option value="FE">Factura Especial (FE)</option>
-            <option value="NC">Nota de Crédito (NC)</option>
-            <option value="ND">Nota de Débito (ND)</option>
-          </select>
+      <input type="hidden" id="foc-factura-id"/>
+
+      <!-- TABS -->
+      <div style="display:flex;border-bottom:2px solid var(--border);background:var(--surface2)">
+        <button id="foc-tab-datos" onclick="focTab('datos')"
+          style="padding:12px 20px;font-size:13px;font-weight:600;border:none;background:var(--bg);border-bottom:2px solid var(--accent);color:var(--accent);cursor:pointer;margin-bottom:-2px">
+          📄 Datos de Factura
+        </button>
+        <button id="foc-tab-apuntes" onclick="focTab('apuntes')"
+          style="padding:12px 20px;font-size:13px;font-weight:600;border:none;background:transparent;color:var(--text3);cursor:pointer;margin-bottom:-2px">
+          📊 Apuntes Contables
+        </button>
+      </div>
+
+      <!-- TAB: DATOS -->
+      <div id="foc-panel-datos" style="padding:20px">
+
+        <!-- Sección 1: Identificación -->
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Identificación del Documento</div>
+        <div class="form-grid form-grid-2" style="margin-bottom:20px">
+          <div class="field">
+            <label>Proveedor</label>
+            <input type="text" id="foc-proveedor-nombre" readonly style="background:var(--surface2);font-weight:600"/>
+          </div>
+          <div class="field">
+            <label>No. Interno <span style="font-weight:400;color:var(--text3)">(auto)</span></label>
+            <input type="text" id="foc-num-interno" readonly style="background:var(--surface2);font-family:'DM Mono',monospace;font-weight:700;color:var(--accent)"/>
+          </div>
+          <div class="field">
+            <label>Tipo de Documento *</label>
+            <select id="foc-tipo">
+              <option value="FC">Factura Cambiaria (FC)</option>
+              <option value="FE">Factura Especial (FE)</option>
+              <option value="FX">Factura de Exportación (FX)</option>
+              <option value="NC">Nota de Crédito (NC)</option>
+              <option value="ND">Nota de Débito (ND)</option>
+              <option value="REC">Recibo (REC)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Método de Pago</label>
+            <select id="foc-metodo-pago">
+              <option value="">— Seleccionar —</option>
+              <option value="transferencia">Transferencia Bancaria</option>
+              <option value="cheque">Cheque</option>
+              <option value="efectivo">Efectivo</option>
+              <option value="tc">Tarjeta de Crédito</option>
+              <option value="deposito">Depósito</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Serie</label>
+            <input type="text" id="foc-serie" placeholder="Ej. A"/>
+          </div>
+          <div class="field">
+            <label>No. Factura del Proveedor *</label>
+            <input type="text" id="foc-numero" placeholder="00001234" style="font-family:'DM Mono',monospace;font-weight:600"/>
+          </div>
+          <div class="field">
+            <label>Referencia Factura <span style="font-weight:400;color:var(--text3)">(No. OC)</span></label>
+            <input type="text" id="foc-ref-factura" readonly style="background:var(--surface2);font-family:'DM Mono',monospace"/>
+          </div>
+          <div class="field">
+            <label>Referencia de Pago <span style="font-weight:400;color:var(--text3)">(No. Albarán)</span></label>
+            <input type="text" id="foc-ref-pago" placeholder="Ej. ALB-2026-001"/>
+          </div>
+          <div class="field field-full">
+            <label>Banco Destinatario <span style="font-weight:400;color:var(--text3)">(cuenta donde se deposita)</span></label>
+            <select id="foc-banco-dest">
+              <option value="">— Seleccionar cuenta —</option>
+            </select>
+          </div>
         </div>
-        <div class="field field-full">
-          <label>Productos a Facturar</label>
-          <div id="foc-items-display" style="border:1px solid var(--border);border-radius:8px;overflow:hidden"></div>
+
+        <!-- Sección 2: Fechas -->
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Fechas</div>
+        <div class="form-grid form-grid-2" style="margin-bottom:20px">
+          <div class="field">
+            <label>Fecha Factura *</label>
+            <input type="date" id="foc-fecha" onchange="calcFocVencimiento()"/>
+          </div>
+          <div class="field">
+            <label>Fecha Contable</label>
+            <input type="date" id="foc-fecha-contable"/>
+          </div>
+          <div class="field">
+            <label>Fecha de Vencimiento</label>
+            <input type="date" id="foc-fecha-vencimiento"/>
+          </div>
+          <div class="field">
+            <label>Tasa de Cambio</label>
+            <input type="number" id="foc-tc" step="0.0001" placeholder="Ej. 7.7500" style="font-family:'DM Mono',monospace"/>
+          </div>
         </div>
-        <div class="field field-full">
-          <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3)">Total Factura</span>
-            <span style="font-size:20px;font-weight:600;font-family:'DM Mono',monospace" id="foc-total-display">$0.00</span>
+
+        <!-- Sección 3: Detalle -->
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Detalle de Factura</div>
+        <div id="foc-items-display" style="border:1.5px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px"></div>
+
+        <!-- Totales -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:14px 16px;background:var(--surface2);border-radius:8px;margin-bottom:16px">
+          <div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Subtotal (Neto)</div>
+            <div id="foc-subtotal-display" style="font-family:'DM Mono',monospace;font-size:15px;font-weight:600">—</div>
+          </div>
+          <div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">IVA (12%)</div>
+            <div id="foc-iva-display" style="font-family:'DM Mono',monospace;font-size:15px">—</div>
+          </div>
+          <div style="background:var(--accent-bg,#EFF6FF);border-radius:6px;padding:8px 12px">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--accent);margin-bottom:3px">Total Factura</div>
+            <div id="foc-total-display" style="font-family:'DM Mono',monospace;font-size:20px;font-weight:700;color:var(--accent)">—</div>
             <input type="hidden" id="foc-total"/>
           </div>
         </div>
+
         <div class="field field-full"><label>Notas</label><textarea id="foc-notas" rows="2"></textarea></div>
       </div>
+
+      <!-- TAB: APUNTES CONTABLES -->
+      <div id="foc-panel-apuntes" style="display:none;padding:20px">
+        <div style="font-size:12px;color:var(--text3);font-style:italic;margin-bottom:12px">
+          Los apuntes contables se generan automáticamente al guardar la factura según la configuración de la categoría del producto.
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="background:var(--surface2)">
+            <th style="padding:8px 12px;text-align:left;font-size:11px">Cuenta</th>
+            <th style="padding:8px 12px;text-align:left;font-size:11px">Descripción</th>
+            <th style="padding:8px 12px;text-align:right;font-size:11px">Debe</th>
+            <th style="padding:8px 12px;text-align:right;font-size:11px">Haber</th>
+          </tr></thead>
+          <tbody id="foc-apuntes-tbody">
+            <tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
+              Guarda la factura para ver los apuntes contables generados.
+            </td></tr>
+          </tbody>
+          <tfoot>
+            <tr style="border-top:2px solid var(--border);font-weight:700">
+              <td colspan="2" style="padding:8px 12px">Total</td>
+              <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace" id="foc-total-debe">—</td>
+              <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace" id="foc-total-haber">—</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-factura-oc')">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveFacturaOC()">Guardar Factura</button>
+      <button class="btn btn-primary" onclick="saveFacturaOC()">💾 Guardar Factura</button>
     </div>
   </div>
 </div>
+
 
 <!-- ANTICIPO MODAL -->
 <div class="modal-overlay" id="modal-anticipo">
@@ -14960,101 +15079,201 @@ function renderScanEnviosCruce(envios, numeroOC, totalFactura) {
 }
 
 // ── Factura OC ──
+function focTab(tab) {
+  document.getElementById('foc-panel-datos').style.display    = tab==='datos'    ? '' : 'none';
+  document.getElementById('foc-panel-apuntes').style.display = tab==='apuntes'  ? '' : 'none';
+  document.getElementById('foc-tab-datos').style.background    = tab==='datos'    ? 'var(--bg)' : 'transparent';
+  document.getElementById('foc-tab-datos').style.color         = tab==='datos'    ? 'var(--accent)' : 'var(--text3)';
+  document.getElementById('foc-tab-datos').style.borderBottom  = tab==='datos'    ? '2px solid var(--accent)' : 'none';
+  document.getElementById('foc-tab-apuntes').style.background  = tab==='apuntes'  ? 'var(--bg)' : 'transparent';
+  document.getElementById('foc-tab-apuntes').style.color       = tab==='apuntes'  ? 'var(--accent)' : 'var(--text3)';
+  document.getElementById('foc-tab-apuntes').style.borderBottom= tab==='apuntes'  ? '2px solid var(--accent)' : 'none';
+}
+
+function nextFacturaInterna() {
+  const year  = new Date().getFullYear();
+  const month = String(new Date().getMonth()+1).padStart(2,'0');
+  const facts = (state.ocFacturas||[]).filter(f=>(f.num_interno||'').startsWith(`FACT/${year}/${month}/`));
+  const nums  = facts.map(f=>parseInt((f.num_interno||'').split('/').pop())||0);
+  const next  = ((nums.length ? Math.max(...nums) : 0) + 1);
+  return `FACT/${year}/${month}/${String(next).padStart(4,'0')}`;
+}
+
+function calcFocVencimiento() {
+  const fecha  = document.getElementById('foc-fecha').value;
+  const ocId   = document.getElementById('foc-oc-id').value;
+  const oc     = state.oc.find(o=>o.id===ocId);
+  const dias   = oc?.dias_credito ?? null;
+  if (!fecha || dias===null) return;
+  const d = new Date(fecha);
+  d.setDate(d.getDate() + Number(dias));
+  document.getElementById('foc-fecha-vencimiento').value = d.toISOString().split('T')[0];
+}
+
 function openFacturaOC() {
   if (!currentOCId) return;
-  const oc    = state.oc.find(x=>x.id===currentOCId);
-  const prov  = state.proveedores.find(p=>p.id===oc?.proveedor_id);
+  const oc     = state.oc.find(x=>x.id===currentOCId);
+  const prov   = state.proveedores.find(p=>p.id===oc?.proveedor_id);
   const monedaOC = getMonedaOC(currentOCId);
-  const items = state.ocItems.filter(i=>i.oc_id===currentOCId);
+  const items  = state.ocItems.filter(i=>i.oc_id===currentOCId);
   const esServicio = items.every(i => state.productos.find(p=>p.id===i.producto_id)?.tipo === 'servicio');
+  const tc     = state.tiposCambio?.[0]?.tc || '';
 
-  document.getElementById('foc-oc-id').value    = currentOCId;
-  document.getElementById('foc-serie').value    = '';
-  document.getElementById('foc-numero').value   = '';
-  document.getElementById('foc-fecha').value    = today();
-  document.getElementById('foc-tipo').value     = 'FC';
-  document.getElementById('foc-notas').value    = '';
-  document.getElementById('foc-total').value    = '';
-  document.getElementById('foc-total-display').textContent = 'Q0.00';
+  document.getElementById('foc-oc-id').value          = currentOCId;
+  document.getElementById('foc-factura-id').value      = '';
+  document.getElementById('foc-header-sub').textContent = `${oc?.numero||''} — ${prov?.name||''}`;
+  document.getElementById('foc-proveedor-nombre').value = prov?.name||'';
+  document.getElementById('foc-num-interno').value      = nextFacturaInterna();
+  document.getElementById('foc-serie').value            = '';
+  document.getElementById('foc-numero').value           = '';
+  document.getElementById('foc-tipo').value             = 'FC';
+  document.getElementById('foc-metodo-pago').value      = oc?.terminos_pago||'';
+  document.getElementById('foc-ref-factura').value      = oc?.numero||'';
+  document.getElementById('foc-ref-pago').value         = '';
+  document.getElementById('foc-fecha').value            = today();
+  document.getElementById('foc-fecha-contable').value   = today();
+  document.getElementById('foc-tc').value               = tc ? Number(tc).toFixed(4) : '';
+  document.getElementById('foc-notas').value            = '';
 
+  // Fecha vencimiento from OC
+  calcFocVencimiento();
+
+  // Banco destinatario — cuentas de nomenclatura tipo activo/banco
+  const ctaOpts = (state.nomenclatura||[])
+    .filter(n => (n.tipo||'').toLowerCase().includes('activo') || (n.codigo||'').startsWith('11'))
+    .map(n=>`<option value="${n.id}">${n.codigo} — ${n.nombre}</option>`).join('');
+  document.getElementById('foc-banco-dest').innerHTML =
+    '<option value="">— Seleccionar cuenta —</option>' + ctaOpts;
+
+  // Items display
   let totalDisp = 0;
   document.getElementById('foc-items-display').innerHTML = `
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead><tr style="background:var(--surface2)">
-        <th style="padding:8px 12px;text-align:left">Producto</th>
+        <th style="padding:8px 12px;text-align:left">Producto / Servicio</th>
         <th style="padding:8px 12px;text-align:right">Cantidad</th>
         <th style="padding:8px 12px;text-align:right">Precio Unit.</th>
         <th style="padding:8px 12px;text-align:right">Total</th>
       </tr></thead>
       <tbody>${items.map(i => {
         const prod = state.productos.find(p=>p.id===i.producto_id);
-        // Services: use OC quantity; physical: use received quantity
         const qty  = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(currentOCId, i.producto_id);
         const t    = parseFloat((qty * Number(i.precio_unit||0)).toFixed(2));
         totalDisp += t;
-        return `<tr>
-          <td style="padding:8px 12px">${prod?.description||prodName(i.producto_id)}${esServicio?'<span class="badge badge-blue" style="margin-left:6px;font-size:10px">Servicio</span>':''}</td>
-          <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${qty.toFixed(esServicio?0:3)} ${i.unidad||''}</td>
-          <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${fmtMoney(i.precio_unit, monedaOC)}</td>
-          <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtMoney(t, monedaOC)}</td>
+        return `<tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:8px 12px">${prod?.description||prodName(i.producto_id)}
+            ${esServicio?'<span class="badge badge-blue" style="margin-left:6px;font-size:10px">Servicio</span>':''}
+          </td>
+          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace">${qty.toFixed(esServicio?0:3)} ${i.unidad||''}</td>
+          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace">${fmtMoney(i.precio_unit, monedaOC)}</td>
+          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-weight:600">${fmtMoney(t, monedaOC)}</td>
         </tr>`;
-      }).join('')}
-    </tbody></table>`;
+      }).join('')}</tbody>
+    </table>`;
 
-  document.getElementById('foc-total').value = totalDisp.toFixed(2);
-  document.getElementById('foc-total-display').textContent = fmtMoney(totalDisp, monedaOC);
+  // Totals
+  const esExento = false; // adjust if needed
+  const neto = parseFloat((totalDisp / 1.12).toFixed(2));
+  const iva  = parseFloat((totalDisp - neto).toFixed(2));
+  document.getElementById('foc-total').value            = totalDisp.toFixed(2);
+  document.getElementById('foc-total-display').textContent  = fmtMoney(totalDisp, monedaOC);
+  document.getElementById('foc-subtotal-display').textContent = fmtMoney(neto, monedaOC);
+  document.getElementById('foc-iva-display').textContent     = fmtMoney(iva, monedaOC);
+
+  focTab('datos');
   openModal('modal-factura-oc');
 }
 
 async function saveFacturaOC() {
-  const oc_id  = document.getElementById('foc-oc-id').value;
-  const numero = document.getElementById('foc-numero').value.trim();
-  const serie  = document.getElementById('foc-serie').value.trim();
-  const fecha  = document.getElementById('foc-fecha').value;
-  const tipo   = document.getElementById('foc-tipo').value;
-  const total  = parseFloat(document.getElementById('foc-total').value);
-  const notas  = document.getElementById('foc-notas').value.trim();
+  const oc_id          = document.getElementById('foc-oc-id').value;
+  const numero         = document.getElementById('foc-numero').value.trim();
+  const serie          = document.getElementById('foc-serie').value.trim();
+  const fecha          = document.getElementById('foc-fecha').value;
+  const fecha_contable = document.getElementById('foc-fecha-contable').value;
+  const fecha_venc     = document.getElementById('foc-fecha-vencimiento').value;
+  const tipo           = document.getElementById('foc-tipo').value;
+  const metodo_pago    = document.getElementById('foc-metodo-pago').value;
+  const ref_pago       = document.getElementById('foc-ref-pago').value.trim();
+  const banco_dest_id  = document.getElementById('foc-banco-dest').value;
+  const tc             = parseFloat(document.getElementById('foc-tc').value)||null;
+  const total          = parseFloat(document.getElementById('foc-total').value);
+  const notas          = document.getElementById('foc-notas').value.trim();
+  const num_interno    = document.getElementById('foc-num-interno').value;
+
   if (!numero||!fecha) { toast('Número y fecha son requeridos','error'); return; }
 
-  const oc   = state.oc.find(o => o.id === oc_id);
-  const prov = state.proveedores.find(p => p.id === oc?.proveedor_id);
+  const oc   = state.oc.find(o=>o.id===oc_id);
+  const prov = state.proveedores.find(p=>p.id===oc?.proveedor_id);
   const monedaOC = getMonedaOC(oc_id);
 
-  // Calculate fecha_vencimiento based on OC terminos
   const diasCredito = oc?.dias_credito ?? null;
-  let fecha_vencimiento = null;
-  if (diasCredito !== null) {
-    const d = new Date(fecha);
-    d.setDate(d.getDate() + diasCredito);
-    fecha_vencimiento = d.toISOString().split('T')[0];
-  }
+  const fecha_vencimiento = fecha_venc || (() => {
+    if (!diasCredito) return null;
+    const d = new Date(fecha); d.setDate(d.getDate()+Number(diasCredito));
+    return d.toISOString().split('T')[0];
+  })();
 
-  // 1. Save to erp_oc_facturas
+  // Save to erp_oc_facturas
   const {data:focArr, error:e1} = await sb.from('erp_oc_facturas').insert({
-    oc_id, serie, numero, fecha, tipo, total, status:'pendiente', notas,
+    oc_id, serie, numero, fecha,
+    fecha_contable: fecha_contable||fecha,
     fecha_vencimiento,
-    dias_credito: diasCredito,
+    tipo, total, status:'pendiente', notas,
+    dias_credito:   diasCredito,
+    metodo_pago,
+    ref_pago,
+    banco_dest_id,
+    tc,
+    num_interno,
   }).select();
   if (e1) { toast('Error: '+e1.message,'error'); return; }
 
-  // 2. Also register in Libro de Compras (erp_compras)
-  const valor_neto  = tipo === 'FX' || monedaOC === 'USD' ? total : parseFloat((total / 1.12).toFixed(2));
-  const valor_iva   = tipo === 'FX' || monedaOC === 'USD' ? 0     : parseFloat((total - valor_neto).toFixed(2));
-  const {error:e2} = await sb.from('erp_compras').insert({
+  // Register in Libro de Compras
+  const valor_neto = tipo==='FX'||monedaOC==='USD' ? total : parseFloat((total/1.12).toFixed(2));
+  const valor_iva  = tipo==='FX'||monedaOC==='USD' ? 0    : parseFloat((total-valor_neto).toFixed(2));
+  await sb.from('erp_compras').insert({
     fecha, tipo: tipo||'FC', serie, numero,
     proveedor_id: prov?.id||null,
     valor_neto, valor_iva, valor_total: total,
     oc_id,
+    factura_id: focArr[0]?.id||null,
+    moneda: monedaOC||'GTQ',
     notas: notas||`Factura OC ${oc?.numero||''}`,
   });
-  if (e2) console.error('Error registrando en libro de compras:', e2.message);
 
-  // 3. Generate accounting entry
+  // Generate accounting entry
   await loadAll();
-  if (focArr?.length) await asientoFacturaCompra(focArr[0].id);
+  if (focArr?.length) {
+    await asientoFacturaCompra(focArr[0].id);
+    await loadAll();
 
-  toast('Factura registrada');
-  closeModal('modal-factura-oc');
+    // Show apuntes in tab
+    const asientoFact = (state.asientos||[]).find(a => a.referencia_id === focArr[0].id);
+    if (asientoFact) {
+      const lineas = (state.asientoLineas||[]).filter(l=>l.asiento_id===asientoFact.id);
+      let totalDebe=0, totalHaber=0;
+      document.getElementById('foc-apuntes-tbody').innerHTML = lineas.map(l => {
+        const cta = (state.nomenclatura||[]).find(n=>n.id===l.cuenta_id);
+        totalDebe  += Number(l.debe_gtq||l.debe||0);
+        totalHaber += Number(l.haber_gtq||l.haber||0);
+        return `<tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:7px 12px;font-size:12px;font-family:'DM Mono',monospace">${cta?.codigo||'—'} ${cta?.nombre||l.cuenta_nombre||'—'}</td>
+          <td style="padding:7px 12px;font-size:12px;color:var(--text3)">${l.descripcion||''}</td>
+          <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.debe_gtq||l.debe||0)>0?fmtGTQ(Number(l.debe_gtq||l.debe||0)):''}</td>
+          <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.haber_gtq||l.haber||0)>0?fmtGTQ(Number(l.haber_gtq||l.haber||0)):''}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('foc-total-debe').textContent  = fmtGTQ(totalDebe);
+      document.getElementById('foc-total-haber').textContent = fmtGTQ(totalHaber);
+      document.getElementById('foc-factura-id').value = focArr[0].id;
+      focTab('apuntes');
+      toast('✓ Factura registrada — revisa los apuntes contables');
+    } else {
+      toast('Factura registrada');
+      closeModal('modal-factura-oc');
+    }
+  }
+
   await loadAll();
   showOCPanel(oc_id);
 }
