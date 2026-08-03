@@ -6539,7 +6539,39 @@ async function savePago() {
 
   if (tipo === 'OC') {
     if (modo === 'single') {
-      await savePagoOC(facturaId, { fecha, metodo, cuenta_id, monto, referencia, notas });
+      // Single factura payment
+      const f    = state.ocFacturas.find(x=>x.id===facturaId);
+      const prov = state.proveedores.find(p=>p.id===document.getElementById('pago-proveedor-id').value);
+      const ctaBanco    = (state.nomenclatura||[]).find(n=>n.id===cuenta_id);
+      const ctaPorPagar = (state.nomenclatura||[]).find(n =>
+        n.codigo==='21101001' || ((n.nombre||'').toLowerCase().includes('proveedores') && n.tipo?.toLowerCase().includes('pasivo'))
+      );
+
+      const { error: ePago } = await sb.from('erp_pagos').insert({
+        factura_id: facturaId, fecha, metodo, cuenta_id, monto, referencia, notas, moneda:'GTQ',
+      });
+      if (ePago) { toast('Error guardando pago: '+ePago.message,'error'); return; }
+
+      // Update factura estado
+      await loadAll();
+      const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId).reduce((s,p)=>s+Number(p.monto||0),0);
+      const estadoPago = pagado >= Number(f?.total||0) ? 'pagado' : 'parcial';
+      await sb.from('erp_oc_facturas').update({ monto_pagado: pagado, estado_pago: estadoPago }).eq('id', facturaId);
+
+      // Accounting entry
+      await crearAsiento({
+        diario:'BANCOS', fecha,
+        descripcion: `Pago factura ${f?.serie||''}${f?.numero||''} — ${prov?.name||''} | ${metodo}${referencia?' Ref:'+referencia:''}`,
+        referencia: referencia||`PAGO-${f?.serie||''}${f?.numero||''}`, referencia_id: null, moneda:'GTQ',
+        lineas: [
+          { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: monto, haber: 0 },
+          { cuenta_id: cuenta_id||null, cuenta_codigo: ctaBanco?.codigo||'BANCO', cuenta_nombre: ctaBanco?.nombre||'Banco', debe: 0, haber: monto },
+        ],
+      });
+
+      await loadAll();
+      toast(estadoPago==='pagado' ? '✓ Factura pagada completamente' : `✓ Pago de ${fmtGTQ(monto)} registrado`);
+      closeModal('modal-pago');
     } else {
       // Multi-factura
       const distribs = [];
@@ -6564,7 +6596,7 @@ async function savePago() {
         const f    = state.ocFacturas.find(x=>x.id===d.factura_id);
         const ocF  = state.oc.find(o=>o.id===f?.oc_id);
         await sb.from('erp_pagos').insert({
-          factura_id: d.factura_id, oc_id: ocF?.id||null, proveedor_id: provId||null,
+          factura_id: d.factura_id,
           fecha, metodo, cuenta_id, monto: d.monto, referencia, notas, moneda:'GTQ',
         });
         // Update factura estado
@@ -6602,7 +6634,7 @@ async function savePago() {
     }
   } else {
     // OV pago (original logic)
-    const {error} = await sb.from('erp_pagos').insert({ factura_id: facturaId, fecha, forma: metodo, cuenta_id, monto, notas });
+    const {error} = await sb.from('erp_pagos').insert({ factura_id: facturaId, fecha, metodo, cuenta_id, monto, notas });
     if (error) { toast('Error: '+error.message,'error'); return; }
     await loadAll();
     const f      = state.facturas.find(x=>x.id===facturaId);
@@ -6669,7 +6701,7 @@ async function savePago() {
   if (!fecha || !forma || !cuenta_id || isNaN(monto) || monto <= 0) {
     toast('Todos los campos son requeridos','error'); return;
   }
-  const {error} = await sb.from('erp_pagos').insert({ factura_id, fecha, forma, cuenta_id, monto, notas });
+  const {error} = await sb.from('erp_pagos').insert({ factura_id, fecha, metodo: forma, cuenta_id, monto, notas });
   if (error) { toast('Error: '+error.message,'error'); return; }
   await loadAll();
   const f      = state.facturas.find(x => x.id === factura_id);
