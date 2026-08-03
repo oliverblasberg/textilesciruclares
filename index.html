@@ -9747,61 +9747,63 @@ function openPagoDesdeCompras() {
   const checked = [...document.querySelectorAll('.compra-check:checked')];
   if (!checked.length) { toast('Selecciona al menos una factura','error'); return; }
 
-  const provIds = [...new Set(checked.map(c=>c.dataset.proveedor))];
-  const monedas = [...new Set(checked.map(c=>c.dataset.moneda))];
+  const provIds = [...new Set(checked.map(c=>c.dataset.proveedor).filter(Boolean))];
+  const monedas = [...new Set(checked.map(c=>c.dataset.moneda||'GTQ'))];
   if (provIds.length > 1) { toast('Todas las facturas deben ser del mismo proveedor','error'); return; }
   if (monedas.length > 1) { toast('Todas las facturas deben ser de la misma moneda','error'); return; }
 
-  const provId  = provIds[0];
-  const moneda  = monedas[0];
+  const provId  = provIds[0]||'';
+  const moneda  = monedas[0]||'GTQ';
   const prov    = state.proveedores.find(p=>p.id===provId);
   const totalPend = checked.reduce((s,c)=>s+parseFloat(c.dataset.saldo||0),0);
 
-  document.getElementById('pago-modo').value        = 'multi';
-  document.getElementById('pago-factura-id').value  = '';
+  document.getElementById('pago-modo').value         = 'multi';
+  document.getElementById('pago-factura-id').value   = '';
   document.getElementById('pago-factura-id').dataset.tipo = 'OC';
-  document.getElementById('pago-proveedor-id').value = provId||'';
-  document.getElementById('modal-pago-title').textContent = `Registrar Pago — ${prov?.name||''}`;
-  document.getElementById('pago-fact-info').textContent   = `${prov?.name||''} · ${moneda} · ${checked.length} factura(s) seleccionada(s)`;
+  document.getElementById('pago-proveedor-id').value = provId;
+  document.getElementById('modal-pago-title').textContent = `Registrar Pago — ${prov?.name||'Proveedor'}`;
+  document.getElementById('pago-fact-info').textContent   = `${prov?.name||'—'} · ${moneda} · ${checked.length} factura(s)`;
   document.getElementById('pago-fact-total').textContent    = `${checked.length} facturas`;
   document.getElementById('pago-fact-pagado').textContent   = '—';
   document.getElementById('pago-fact-pendiente').textContent = fmtGTQ(totalPend);
-  document.getElementById('pago-fecha').value       = today();
-  document.getElementById('pago-forma').value       = '';
-  document.getElementById('pago-monto').value       = totalPend.toFixed(2);
-  document.getElementById('pago-referencia').value  = '';
-  document.getElementById('pago-notas').value       = '';
-  document.getElementById('pago-cuenta').innerHTML  = _pagoCtaOpts();
-  document.getElementById('pago-historial-wrap').style.display = 'none';
+  document.getElementById('pago-fecha').value        = today();
+  document.getElementById('pago-forma').value        = '';
+  document.getElementById('pago-monto').value        = totalPend.toFixed(2);
+  document.getElementById('pago-referencia').value   = '';
+  document.getElementById('pago-notas').value        = '';
+  document.getElementById('pago-cuenta').innerHTML   = _pagoCtaOpts();
+  document.getElementById('pago-historial-wrap').style.display   = 'none';
   document.getElementById('pago-distribucion-wrap').style.display = 'block';
 
-  // Build distribution table from selected compras
-  document.getElementById('pago-dist-tbody').innerHTML = checked.map(cb => {
-    const c      = state.compras.find(x=>x.id===cb.dataset.id);
-    const prov2  = state.proveedores.find(p=>p.id===c?.proveedor_id);
-    const saldo  = parseFloat(cb.dataset.saldo||0);
-    const oc     = c?.oc_id ? (state.oc||[]).find(o=>o.id===c.oc_id) : null;
-    return `<tr style="border-bottom:1px solid var(--border)">
+  // Build distribution table
+  let rows = '';
+  checked.forEach((cb, idx) => {
+    const compraId  = cb.dataset.id;
+    const facturaId = cb.dataset.factura||'';
+    const saldo     = parseFloat(cb.dataset.saldo||0);
+    const c         = state.compras.find(x=>x.id===compraId);
+    const oc        = c?.oc_id ? (state.oc||[]).find(o=>o.id===c.oc_id) : null;
+    const distId    = facturaId ? `dist-${facturaId}` : `dist-c-${compraId}`;
+    rows += `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:7px 10px;font-family:'DM Mono',monospace;font-size:11px">
         ${c?.serie||''}${c?.numero||''}<br>
         <span style="color:var(--text3);font-size:10px">${oc?.numero||''}</span>
       </td>
-      <td style="padding:7px 10px;font-size:11px">${c?.fecha ? fmtDate(c.fecha) : '—'}</td>
+      <td style="padding:7px 10px;font-size:11px">${c?.fecha?fmtDate(c.fecha):'—'}</td>
       <td style="padding:7px 10px;text-align:right;font-family:'DM Mono',monospace">${fmtGTQ(Number(c?.valor_total||0))}</td>
       <td style="padding:7px 10px;text-align:right;font-family:'DM Mono',monospace;color:var(--accent);font-weight:600">${fmtGTQ(saldo)}</td>
       <td style="padding:7px 8px">
         <input type="number" step="0.01" min="0" max="${saldo.toFixed(2)}"
-          id="dist-${cb.dataset.factura||cb.dataset.id}"
-          value="${saldo.toFixed(2)}" placeholder="0.00"
+          id="${distId}" value="${saldo.toFixed(2)}"
           data-saldo="${saldo.toFixed(2)}"
-          data-factura="${cb.dataset.factura||''}"
-          data-compra="${cb.dataset.id}"
+          data-factura="${facturaId}"
+          data-compra="${compraId}"
           oninput="calcDistribucion()"
           style="padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:12px;width:120px;text-align:right"/>
       </td>
     </tr>`;
-  }).join('');
-
+  });
+  document.getElementById('pago-dist-tbody').innerHTML = rows;
   calcDistribucion();
   openModal('modal-pago');
 }
