@@ -1603,7 +1603,16 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="NC">Nota de Crédito</option>
             <option value="ND">Nota de Débito</option>
           </select>
+          <select class="filter-select" id="filter-compras-estado" onchange="renderCompras()">
+            <option value="">Todos los estados</option>
+            <option value="pendiente">Pendiente</option>
+            <option value="parcial">Parcial</option>
+            <option value="pagado">Pagado</option>
+          </select>
           <input type="month" id="filter-compras-mes" class="filter-select" onchange="renderCompras()" style="max-width:160px"/>
+          <button class="btn btn-sm" id="btn-pago-compras" onclick="openPagoDesdeCompras()" style="background:#EFF6FF;color:#3B82F6;border:1px solid #BFDBFE;display:none">
+            💳 Registrar Pago (<span id="pago-compras-count">0</span>)
+          </button>
           <button class="btn btn-primary" onclick="openNewCompra()">+ Nuevo Registro</button>
         </div>
         <div class="card">
@@ -1611,6 +1620,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <table>
               <thead>
                 <tr>
+                  <th style="width:36px"><input type="checkbox" id="compras-check-all" onclick="toggleAllCompras(this)" style="width:15px;height:15px"/></th>
                   <th>Fecha</th>
                   <th>Tipo</th>
                   <th>Serie</th>
@@ -1621,6 +1631,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
                   <th class="hide-mobile" style="text-align:right">Valor Neto</th>
                   <th class="hide-mobile" style="text-align:right">IVA (12%)</th>
                   <th style="text-align:right">Total</th>
+                  <th style="text-align:right">Saldo</th>
                   <th></th>
                 </tr>
               </thead>
@@ -1736,6 +1747,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-sm btn-primary"  id="btn-confirmar-oc" onclick="confirmarOC()"  style="min-width:120px;justify-content:center">✓ Confirmar</button>
         <button class="btn btn-sm" id="btn-recibir" onclick="openRecepcion()" style="min-width:120px;justify-content:center;background:var(--green-bg);color:var(--green);border:1px solid #b8dfc8">📦 Recibir Pedido</button>
+        <button class="btn btn-sm" id="btn-pago-multi" onclick="openPagoProveedor(currentOCId)" style="min-width:120px;justify-content:center;background:#EFF6FF;color:#3B82F6;border:1px solid #BFDBFE">💳 Registrar Pago</button>
         <button class="btn btn-sm" id="btn-factura-oc" onclick="openFacturaOC()" style="min-width:120px;justify-content:center;background:#EFF6FF;color:var(--accent3);border:1px solid #BFDBFE">📄 Factura</button>
         <button class="btn btn-sm btn-ghost" id="btn-anticipo" onclick="openAnticipo()" style="min-width:120px;justify-content:center">💰 Anticipo</button>
         <button class="btn btn-sm btn-ghost" onclick="imprimirOC()" style="min-width:120px;justify-content:center">🖨 Imprimir OC</button>
@@ -2860,15 +2872,20 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 <!-- PAGO MODAL -->
 <div class="modal-overlay" id="modal-pago">
-  <div class="modal">
+  <div class="modal" style="max-width:680px;width:95vw">
     <div class="modal-header">
       <div class="modal-title" id="modal-pago-title">Registrar Pago</div>
       <button class="modal-close" onclick="closeModal('modal-pago')">✕</button>
     </div>
     <div class="modal-body">
       <input type="hidden" id="pago-factura-id"/>
-      <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:13px">
-        <div style="color:var(--text2);font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px">Factura</div>
+      <input type="hidden" id="pago-oc-id"/>
+      <input type="hidden" id="pago-proveedor-id"/>
+      <input type="hidden" id="pago-modo"/> <!-- 'single' | 'multi' -->
+
+      <!-- Info factura / proveedor -->
+      <div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px">
+        <div style="color:var(--text2);font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px">Factura / Proveedor</div>
         <div id="pago-fact-info" style="font-weight:500"></div>
         <div style="margin-top:6px;display:flex;gap:16px">
           <div><span style="color:var(--text3);font-size:11px">Total:</span> <strong id="pago-fact-total" style="font-family:'DM Mono',monospace"></strong></div>
@@ -2877,38 +2894,67 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         </div>
       </div>
 
-      <!-- Historial de pagos -->
-      <div id="pago-historial-wrap" style="margin-bottom:20px;display:none">
+      <!-- Historial de pagos anteriores -->
+      <div id="pago-historial-wrap" style="margin-bottom:16px;display:none">
         <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Pagos anteriores</div>
         <div id="pago-historial"></div>
       </div>
 
+      <!-- Campos del pago -->
       <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:12px">Nuevo Pago</div>
       <div class="form-grid form-grid-2">
-        <div class="field"><label>Fecha de Pago *</label><input type="date" id="pago-fecha"/></div>
+        <div class="field"><label>Fecha *</label><input type="date" id="pago-fecha"/></div>
         <div class="field"><label>Forma de Pago *</label>
           <select id="pago-forma">
             <option value="">— Seleccionar —</option>
-            <option value="transferencia">Transferencia bancaria</option>
+            <option value="transferencia">Transferencia Bancaria</option>
             <option value="cheque">Cheque</option>
             <option value="efectivo">Efectivo</option>
             <option value="deposito">Depósito</option>
           </select>
         </div>
-        <div class="field field-full"><label>Cuenta *</label>
-          <select id="pago-cuenta">
-            <option value="">— Seleccionar cuenta —</option>
-          </select>
+        <div class="field field-full"><label>Cuenta Bancaria *</label>
+          <select id="pago-cuenta"><option value="">— Seleccionar cuenta —</option></select>
         </div>
-        <div class="field"><label>Monto *</label>
-          <input type="number" id="pago-monto" step="0.01" min="0" placeholder="0.00"/>
+        <div class="field"><label>Monto Total del Pago *</label>
+          <input type="number" id="pago-monto" step="0.01" min="0" placeholder="0.00"
+            oninput="onPagoMontoChange()"/>
         </div>
-        <div class="field field-full"><label>Notas</label><textarea id="pago-notas" rows="2"></textarea></div>
+        <div class="field"><label>No. Referencia</label>
+          <input type="text" id="pago-referencia" placeholder="Ej. TRF-001"/>
+        </div>
+        <div class="field field-full"><label>Notas</label>
+          <textarea id="pago-notas" rows="2"></textarea>
+        </div>
       </div>
+
+      <!-- Distribución multi-factura -->
+      <div id="pago-distribucion-wrap" style="display:none;margin-top:4px">
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">
+          Distribución por Factura
+          <span style="font-weight:400;text-transform:none;color:var(--text3);margin-left:8px">— Ajusta los montos por factura</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="background:var(--surface2)">
+            <th style="padding:7px 10px;text-align:left">Factura</th>
+            <th style="padding:7px 10px;text-align:left">Fecha</th>
+            <th style="padding:7px 10px;text-align:right">Total</th>
+            <th style="padding:7px 10px;text-align:right">Saldo</th>
+            <th style="padding:7px 10px;text-align:right;width:130px">Aplicar</th>
+          </tr></thead>
+          <tbody id="pago-dist-tbody"></tbody>
+        </table>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 10px 0;margin-top:4px;border-top:1.5px solid var(--border)">
+          <span style="font-size:12px;color:var(--text3)">Total distribuido:</span>
+          <div style="font-family:'DM Mono',monospace;font-size:15px;font-weight:700" id="pago-dist-total">Q0.00</div>
+          <div id="pago-dist-diff" style="font-size:12px;font-weight:600"></div>
+        </div>
+      </div>
+
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-pago')">Cancelar</button>
-      <button class="btn btn-primary" onclick="savePago()">Registrar Pago</button>
+      <button class="btn btn-primary" onclick="savePago()">✓ Registrar Pago</button>
     </div>
   </div>
 </div>
@@ -4862,7 +4908,7 @@ function enterModule(hub) {
 // ═══ DATA LOAD ═══
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
-         sc, scI, oc, ocI, ocR, ocRI, plC, ocF, ocA, asi, asiL, dj, bod, tc,
+         sc, scI, oc, ocI, ocR, ocRI, plC, ocF, pagosOC, ocA, asi, asiL, dj, bod, tc,
          rec, recL, recC, op_, opC, opCo] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
@@ -4889,6 +4935,7 @@ async function loadAll() {
     sb.from('erp_oc_recepcion_items').select('*'),
     sb.from('erp_oc_pl').select('*').order('no_caja'),
     sb.from('erp_oc_facturas').select('*').order('fecha',{ascending:false}),
+    sb.from('erp_pagos').select('*').order('fecha',{ascending:false}),
     sb.from('erp_oc_anticipos').select('*').order('fecha',{ascending:false}),
     sb.from('erp_asientos').select('*').order('fecha',{ascending:false}),
     sb.from('erp_asiento_lineas').select('*'),
@@ -4926,7 +4973,8 @@ async function loadAll() {
   state.ocRecepciones      = ocR.data  || [];
   state.ocRecepcionItems   = ocRI.data || [];
   state.plCajas            = plC.data  || [];
-  state.ocFacturas         = ocF.data  || [];
+  state.ocFacturas         = ocF.data      || [];
+  state.pagosOC            = pagosOC.data  || [];
   state.ocAnticipos        = ocA.data  || [];
   state.asientos           = asi.data  || [];
   state.asientoLineas      = asiL.data || [];
@@ -6300,6 +6348,271 @@ async function syncOrderStatus(order_id) {
 
   if (newStatus !== order.status) {
     await sb.from('erp_ov').update({ status: newStatus }).eq('id', order_id);
+  }
+}
+
+// ═══ PAGOS OC ═══
+
+function _pagoCtaOpts() {
+  return '<option value="">— Seleccionar cuenta —</option>' +
+    (state.nomenclatura||[])
+      .filter(n => (n.tipo||'').toLowerCase().includes('activo') || (n.codigo||'').startsWith('11'))
+      .map(n => `<option value="${n.id}">${n.codigo} — ${n.nombre}</option>`).join('');
+}
+
+function _pagoHistorial(facturaId) {
+  const pagos = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
+  const wrap  = document.getElementById('pago-historial-wrap');
+  const hist  = document.getElementById('pago-historial');
+  if (pagos.length) {
+    wrap.style.display = 'block';
+    hist.innerHTML = pagos.map(p => {
+      const cta = (state.nomenclatura||[]).find(n=>n.id===p.cuenta_id);
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:7px;background:var(--surface2);margin-bottom:6px;font-size:12px">
+        <div>
+          <span style="font-weight:500">${fmtDate(p.fecha)}</span>
+          <span style="color:var(--text2);margin:0 8px">·</span>
+          <span>${p.metodo||p.forma||'—'}</span>
+          <span style="color:var(--text2);margin:0 8px">·</span>
+          <span>${cta?.codigo||''} ${cta?.nombre||'—'}</span>
+          ${p.referencia?`<span style="color:var(--text3);margin-left:8px;font-family:'DM Mono',monospace;font-size:11px">${p.referencia}</span>`:''}
+        </div>
+        <strong style="font-family:'DM Mono',monospace;color:var(--green)">${fmtGTQ(p.monto)}</strong>
+      </div>`;
+    }).join('');
+  } else { wrap.style.display = 'none'; }
+}
+
+// Single factura payment
+function openPagoOC(facturaId) {
+  const f      = state.ocFacturas.find(x=>x.id===facturaId);
+  if (!f) return;
+  const oc     = state.oc.find(o=>o.id===f.oc_id);
+  const prov   = state.proveedores.find(p=>p.id===oc?.proveedor_id);
+  const pagos  = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
+  const pagado = pagos.reduce((s,p)=>s+Number(p.monto||0),0);
+  const total  = Number(f.total||0);
+  const pend   = Math.max(0, total - pagado);
+
+  document.getElementById('pago-modo').value       = 'single';
+  document.getElementById('pago-factura-id').value = facturaId;
+  document.getElementById('pago-factura-id').dataset.tipo = 'OC';
+  document.getElementById('pago-proveedor-id').value = prov?.id||'';
+  document.getElementById('modal-pago-title').textContent = 'Registrar Pago';
+  document.getElementById('pago-fact-info').textContent =
+    `${f.serie||''}${f.numero||''} — ${prov?.name||''} | ${oc?.numero||''}`;
+  document.getElementById('pago-fact-total').textContent    = fmtGTQ(total);
+  document.getElementById('pago-fact-pagado').textContent   = fmtGTQ(pagado);
+  document.getElementById('pago-fact-pendiente').textContent = fmtGTQ(pend);
+  document.getElementById('pago-fecha').value      = today();
+  document.getElementById('pago-forma').value      = '';
+  document.getElementById('pago-monto').value      = pend > 0 ? pend.toFixed(2) : '';
+  document.getElementById('pago-referencia').value = '';
+  document.getElementById('pago-notas').value      = '';
+  document.getElementById('pago-cuenta').innerHTML = _pagoCtaOpts();
+  document.getElementById('pago-distribucion-wrap').style.display = 'none';
+  _pagoHistorial(facturaId);
+  openModal('modal-pago');
+}
+
+// Multi-factura payment — all pending facturas for a proveedor
+function openPagoProveedor(ocId) {
+  const oc   = state.oc.find(o=>o.id===ocId);
+  if (!oc) return;
+  const prov = state.proveedores.find(p=>p.id===oc.proveedor_id);
+
+  // Get ALL pending facturas for this proveedor
+  const provOCs    = (state.oc||[]).filter(o=>o.proveedor_id===oc.proveedor_id);
+  const provOCIds  = provOCs.map(o=>o.id);
+  const facturasP  = (state.ocFacturas||[])
+    .filter(f => provOCIds.includes(f.oc_id))
+    .sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+
+  const facturasPendientes = facturasP.filter(f => {
+    const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===f.id).reduce((s,p)=>s+Number(p.monto||0),0);
+    return Number(f.total||0) - pagado > 0;
+  });
+
+  if (!facturasPendientes.length) { toast('No hay facturas pendientes de pago','error'); return; }
+
+  document.getElementById('pago-modo').value        = 'multi';
+  document.getElementById('pago-factura-id').value  = '';
+  document.getElementById('pago-factura-id').dataset.tipo = 'OC';
+  document.getElementById('pago-proveedor-id').value = prov?.id||'';
+  document.getElementById('modal-pago-title').textContent = 'Registrar Pago — Múltiples Facturas';
+  document.getElementById('pago-fact-info').textContent   = prov?.name||'';
+  const totalPend = facturasPendientes.reduce((s,f) => {
+    const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===f.id).reduce((ss,p)=>ss+Number(p.monto||0),0);
+    return s + Math.max(0, Number(f.total||0)-pagado);
+  },0);
+  document.getElementById('pago-fact-total').textContent    = `${facturasPendientes.length} facturas`;
+  document.getElementById('pago-fact-pagado').textContent   = '—';
+  document.getElementById('pago-fact-pendiente').textContent = fmtGTQ(totalPend);
+  document.getElementById('pago-fecha').value       = today();
+  document.getElementById('pago-forma').value       = '';
+  document.getElementById('pago-monto').value       = '';
+  document.getElementById('pago-referencia').value  = '';
+  document.getElementById('pago-notas').value       = '';
+  document.getElementById('pago-cuenta').innerHTML  = _pagoCtaOpts();
+  document.getElementById('pago-historial-wrap').style.display = 'none';
+
+  // Render distribution table
+  document.getElementById('pago-distribucion-wrap').style.display = 'block';
+  document.getElementById('pago-dist-tbody').innerHTML = facturasPendientes.map(f => {
+    const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===f.id).reduce((s,p)=>s+Number(p.monto||0),0);
+    const saldo  = Math.max(0, Number(f.total||0) - pagado);
+    const fOC    = provOCs.find(o=>o.id===f.oc_id);
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:7px 10px;font-family:'DM Mono',monospace;font-size:11px">
+        ${f.serie||''}${f.numero||''}<br>
+        <span style="color:var(--text3);font-size:10px">${fOC?.numero||''}</span>
+      </td>
+      <td style="padding:7px 10px;font-size:11px">${fmtDate(f.fecha)}</td>
+      <td style="padding:7px 10px;text-align:right;font-family:'DM Mono',monospace">${fmtGTQ(Number(f.total||0))}</td>
+      <td style="padding:7px 10px;text-align:right;font-family:'DM Mono',monospace;color:var(--accent);font-weight:600">${fmtGTQ(saldo)}</td>
+      <td style="padding:7px 8px">
+        <input type="number" step="0.01" min="0" max="${saldo.toFixed(2)}"
+          id="dist-${f.id}" value="0.00" placeholder="0.00"
+          data-saldo="${saldo.toFixed(2)}" data-factura="${f.id}"
+          oninput="calcDistribucion()"
+          style="padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:12px;width:120px;text-align:right"/>
+      </td>
+    </tr>`;
+  }).join('');
+
+  openModal('modal-pago');
+}
+
+function onPagoMontoChange() {
+  const modo  = document.getElementById('pago-modo').value;
+  const monto = parseFloat(document.getElementById('pago-monto').value)||0;
+  if (modo !== 'multi') return;
+  // Auto-distribute oldest first
+  let restante = monto;
+  document.querySelectorAll('#pago-dist-tbody input').forEach(el => {
+    const saldo  = parseFloat(el.dataset.saldo)||0;
+    const aplicar = Math.min(saldo, restante);
+    el.value   = aplicar.toFixed(2);
+    restante   = Math.max(0, restante - aplicar);
+  });
+  calcDistribucion();
+}
+
+function calcDistribucion() {
+  const monto = parseFloat(document.getElementById('pago-monto').value)||0;
+  let total   = 0;
+  document.querySelectorAll('#pago-dist-tbody input').forEach(el => {
+    const v   = parseFloat(el.value)||0;
+    const max = parseFloat(el.dataset.saldo)||0;
+    if (v > max) { el.value = max.toFixed(2); }
+    total += parseFloat(el.value)||0;
+  });
+  document.getElementById('pago-dist-total').textContent = fmtGTQ(total);
+  const diff = monto - total;
+  const diffEl = document.getElementById('pago-dist-diff');
+  if (Math.abs(diff) < 0.01) {
+    diffEl.textContent = '✓ OK'; diffEl.style.color = 'var(--green)';
+  } else if (diff > 0) {
+    diffEl.textContent = `Sin asignar: ${fmtGTQ(diff)}`; diffEl.style.color = 'var(--accent)';
+  } else {
+    diffEl.textContent = `Excede: ${fmtGTQ(Math.abs(diff))}`; diffEl.style.color = 'var(--red)';
+  }
+}
+
+function calcPagoSaldo() { onPagoMontoChange(); }
+
+async function savePago() {
+  const modo       = document.getElementById('pago-modo').value;
+  const facturaId  = document.getElementById('pago-factura-id').value;
+  const tipo       = document.getElementById('pago-factura-id').dataset.tipo;
+  const fecha      = document.getElementById('pago-fecha').value;
+  const metodo     = document.getElementById('pago-forma').value;
+  const cuenta_id  = document.getElementById('pago-cuenta').value;
+  const monto      = parseFloat(document.getElementById('pago-monto').value);
+  const referencia = document.getElementById('pago-referencia')?.value.trim()||'';
+  const notas      = document.getElementById('pago-notas').value.trim();
+  const provId     = document.getElementById('pago-proveedor-id').value;
+
+  if (!fecha||!metodo||!cuenta_id||isNaN(monto)||monto<=0) {
+    toast('Completa fecha, forma de pago, cuenta y monto','error'); return;
+  }
+
+  if (tipo === 'OC') {
+    if (modo === 'single') {
+      await savePagoOC(facturaId, { fecha, metodo, cuenta_id, monto, referencia, notas });
+    } else {
+      // Multi-factura
+      const distribs = [];
+      document.querySelectorAll('#pago-dist-tbody input').forEach(el => {
+        const v = parseFloat(el.value)||0;
+        if (v > 0) distribs.push({ factura_id: el.dataset.factura, monto: v });
+      });
+      const totalDist = distribs.reduce((s,d)=>s+d.monto,0);
+      if (Math.abs(totalDist - monto) > 0.01) {
+        toast(`El total distribuido (${fmtGTQ(totalDist)}) no coincide con el monto (${fmtGTQ(monto)})`,'error'); return;
+      }
+      if (!distribs.length) { toast('Asigna al menos una factura','error'); return; }
+
+      // Save each factura pago + 1 combined accounting entry
+      const lineasAsiento = [];
+      const ctaBanco = (state.nomenclatura||[]).find(n=>n.id===cuenta_id);
+      const ctaPorPagar = (state.nomenclatura||[]).find(n =>
+        n.codigo==='21101001' || ((n.nombre||'').toLowerCase().includes('proveedores') && n.tipo?.toLowerCase().includes('pasivo'))
+      );
+
+      for (const d of distribs) {
+        const f    = state.ocFacturas.find(x=>x.id===d.factura_id);
+        const ocF  = state.oc.find(o=>o.id===f?.oc_id);
+        await sb.from('erp_pagos').insert({
+          factura_id: d.factura_id, oc_id: ocF?.id||null, proveedor_id: provId||null,
+          fecha, metodo, cuenta_id, monto: d.monto, referencia, notas, moneda:'GTQ',
+        });
+        // Update factura estado
+        const pagosAnt = (state.pagosOC||[]).filter(p=>p.factura_id===d.factura_id);
+        const totalPag = pagosAnt.reduce((s,p)=>s+Number(p.monto||0),0) + d.monto;
+        const totalFac = Number(f?.total||0);
+        const estadoPago = totalPag >= totalFac ? 'pagado' : 'parcial';
+        await sb.from('erp_oc_facturas').update({ monto_pagado: totalPag, estado_pago: estadoPago }).eq('id', d.factura_id);
+
+        lineasAsiento.push({
+          cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP',
+          cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar',
+          debe: d.monto, haber: 0,
+          descripcion: `${f?.serie||''}${f?.numero||''}`
+        });
+      }
+      // Single haber line for bank
+      lineasAsiento.push({
+        cuenta_id: cuenta_id||null, cuenta_codigo: ctaBanco?.codigo||'BANCO',
+        cuenta_nombre: ctaBanco?.nombre||'Banco',
+        debe: 0, haber: monto,
+        descripcion: referencia||'Pago múltiple'
+      });
+
+      await crearAsiento({
+        diario:'BANCOS', fecha,
+        descripcion: `Pago múltiple ${distribs.length} facturas — ${(state.proveedores||[]).find(p=>p.id===provId)?.name||''}${referencia?' Ref:'+referencia:''}`,
+        referencia: referencia||`PAGO-MULTI-${fecha}`, referencia_id: null, moneda:'GTQ',
+        lineas: lineasAsiento,
+      });
+
+      await loadAll();
+      toast(`✓ Pago registrado — ${distribs.length} facturas, ${fmtGTQ(monto)}`);
+      closeModal('modal-pago');
+    }
+  } else {
+    // OV pago (original logic)
+    const {error} = await sb.from('erp_pagos').insert({ factura_id: facturaId, fecha, forma: metodo, cuenta_id, monto, notas });
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    await loadAll();
+    const f      = state.facturas.find(x=>x.id===facturaId);
+    const pagado = totalPagado(facturaId);
+    if (pagado >= Number(f.total)) {
+      await sb.from('erp_invoices').update({status:'pagada'}).eq('id',facturaId);
+      await loadAll(); await syncOrderStatus(f?.order_id); await loadAll();
+      toast('¡Factura pagada completamente!');
+    } else { toast('Pago registrado'); }
+    closeModal('modal-pago');
   }
 }
 
@@ -9366,16 +9679,117 @@ async function deleteCompra(id) {
 
 const TIPO_LABEL = { FC:'FC', NC:'NC', ND:'ND' };
 
+function toggleAllCompras(el) {
+  document.querySelectorAll('.compra-check').forEach(cb => {
+    cb.checked = el.checked;
+  });
+  onCompraCheckChange();
+}
+
+function onCompraCheckChange() {
+  const checked = document.querySelectorAll('.compra-check:checked');
+  const btn     = document.getElementById('btn-pago-compras');
+  const count   = document.getElementById('pago-compras-count');
+  if (!btn) return;
+  if (checked.length === 0) { btn.style.display = 'none'; return; }
+
+  // Validate same proveedor and moneda
+  const provIds  = [...new Set([...checked].map(c=>c.dataset.proveedor))];
+  const monedas  = [...new Set([...checked].map(c=>c.dataset.moneda))];
+
+  if (provIds.length > 1) {
+    btn.style.background = '#FEF2F2'; btn.style.color = '#DC2626'; btn.style.borderColor = '#FECACA';
+    btn.title = 'Las facturas deben ser del mismo proveedor';
+  } else if (monedas.length > 1) {
+    btn.style.background = '#FEF2F2'; btn.style.color = '#DC2626'; btn.style.borderColor = '#FECACA';
+    btn.title = 'Las facturas deben ser de la misma moneda';
+  } else {
+    btn.style.background = '#EFF6FF'; btn.style.color = '#3B82F6'; btn.style.borderColor = '#BFDBFE';
+    btn.title = '';
+  }
+  count.textContent = checked.length;
+  btn.style.display = '';
+}
+
+function openPagoDesdeCompras() {
+  const checked = [...document.querySelectorAll('.compra-check:checked')];
+  if (!checked.length) { toast('Selecciona al menos una factura','error'); return; }
+
+  const provIds = [...new Set(checked.map(c=>c.dataset.proveedor))];
+  const monedas = [...new Set(checked.map(c=>c.dataset.moneda))];
+  if (provIds.length > 1) { toast('Todas las facturas deben ser del mismo proveedor','error'); return; }
+  if (monedas.length > 1) { toast('Todas las facturas deben ser de la misma moneda','error'); return; }
+
+  const provId  = provIds[0];
+  const moneda  = monedas[0];
+  const prov    = state.proveedores.find(p=>p.id===provId);
+  const totalPend = checked.reduce((s,c)=>s+parseFloat(c.dataset.saldo||0),0);
+
+  document.getElementById('pago-modo').value        = 'multi';
+  document.getElementById('pago-factura-id').value  = '';
+  document.getElementById('pago-factura-id').dataset.tipo = 'OC';
+  document.getElementById('pago-proveedor-id').value = provId||'';
+  document.getElementById('modal-pago-title').textContent = `Registrar Pago — ${prov?.name||''}`;
+  document.getElementById('pago-fact-info').textContent   = `${prov?.name||''} · ${moneda} · ${checked.length} factura(s) seleccionada(s)`;
+  document.getElementById('pago-fact-total').textContent    = `${checked.length} facturas`;
+  document.getElementById('pago-fact-pagado').textContent   = '—';
+  document.getElementById('pago-fact-pendiente').textContent = fmtGTQ(totalPend);
+  document.getElementById('pago-fecha').value       = today();
+  document.getElementById('pago-forma').value       = '';
+  document.getElementById('pago-monto').value       = totalPend.toFixed(2);
+  document.getElementById('pago-referencia').value  = '';
+  document.getElementById('pago-notas').value       = '';
+  document.getElementById('pago-cuenta').innerHTML  = _pagoCtaOpts();
+  document.getElementById('pago-historial-wrap').style.display = 'none';
+  document.getElementById('pago-distribucion-wrap').style.display = 'block';
+
+  // Build distribution table from selected compras
+  document.getElementById('pago-dist-tbody').innerHTML = checked.map(cb => {
+    const c      = state.compras.find(x=>x.id===cb.dataset.id);
+    const prov2  = state.proveedores.find(p=>p.id===c?.proveedor_id);
+    const saldo  = parseFloat(cb.dataset.saldo||0);
+    const oc     = c?.oc_id ? (state.oc||[]).find(o=>o.id===c.oc_id) : null;
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:7px 10px;font-family:'DM Mono',monospace;font-size:11px">
+        ${c?.serie||''}${c?.numero||''}<br>
+        <span style="color:var(--text3);font-size:10px">${oc?.numero||''}</span>
+      </td>
+      <td style="padding:7px 10px;font-size:11px">${c?.fecha ? fmtDate(c.fecha) : '—'}</td>
+      <td style="padding:7px 10px;text-align:right;font-family:'DM Mono',monospace">${fmtGTQ(Number(c?.valor_total||0))}</td>
+      <td style="padding:7px 10px;text-align:right;font-family:'DM Mono',monospace;color:var(--accent);font-weight:600">${fmtGTQ(saldo)}</td>
+      <td style="padding:7px 8px">
+        <input type="number" step="0.01" min="0" max="${saldo.toFixed(2)}"
+          id="dist-${cb.dataset.factura||cb.dataset.id}"
+          value="${saldo.toFixed(2)}" placeholder="0.00"
+          data-saldo="${saldo.toFixed(2)}"
+          data-factura="${cb.dataset.factura||''}"
+          data-compra="${cb.dataset.id}"
+          oninput="calcDistribucion()"
+          style="padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:12px;width:120px;text-align:right"/>
+      </td>
+    </tr>`;
+  }).join('');
+
+  calcDistribucion();
+  openModal('modal-pago');
+}
+
 function renderCompras() {
   const q   = (document.getElementById('search-compras')?.value||'').toLowerCase();
   const tp  = document.getElementById('filter-compras-tipo')?.value||'';
   const mes = document.getElementById('filter-compras-mes')?.value||'';
 
   let data = [...state.compras].sort((a,b) => new Date(a.fecha) - new Date(b.fecha));
+  const estadoFilt = document.getElementById('filter-compras-estado')?.value||'';
   data = data.filter(c => {
-    const prov = state.proveedores.find(p => p.id === c.proveedor_id);
+    const prov    = state.proveedores.find(p => p.id === c.proveedor_id);
+    const factura = c.factura_id ? state.ocFacturas.find(f=>f.id===c.factura_id) : null;
+    const pagado  = factura ? (state.pagosOC||[]).filter(p=>p.factura_id===factura.id).reduce((s,p)=>s+Number(p.monto||0),0) : 0;
+    const saldo   = factura ? Math.max(0, Number(factura.total||c.valor_total||0) - pagado) : Number(c.valor_total||0);
+    const estadoC = factura ? (saldo<=0?'pagado':pagado>0?'parcial':'pendiente') : (c.estado_pago||'pendiente');
     return (!tp  || c.tipo === tp) &&
            (!mes || (c.fecha||'').startsWith(mes)) &&
+           (!estadoFilt || estadoC === estadoFilt) &&
            (!q   || (c.numero||'').toLowerCase().includes(q) ||
                     (prov?.name||'').toLowerCase().includes(q) ||
                     (prov?.nit||'').toLowerCase().includes(q));
@@ -9386,14 +9800,28 @@ function renderCompras() {
   if (!tbody) return;
 
   tbody.innerHTML = data.length ? data.map(c => {
-    const prov = state.proveedores.find(p => p.id === c.proveedor_id);
-    const oc   = c.oc_id ? (state.oc||[]).find(o=>o.id===c.oc_id) : null;
+    const prov    = state.proveedores.find(p => p.id === c.proveedor_id);
+    const oc      = c.oc_id ? (state.oc||[]).find(o=>o.id===c.oc_id) : null;
+    const factura = c.factura_id ? state.ocFacturas.find(f=>f.id===c.factura_id) : null;
+    const pagado  = factura ? (state.pagosOC||[]).filter(p=>p.factura_id===factura.id).reduce((s,p)=>s+Number(p.monto||0),0) : 0;
+    const total   = Number(c.valor_total||0);
+    const saldo   = factura ? Math.max(0, Number(factura.total||total) - pagado) : total;
+    const esPagado = saldo <= 0.01;
+    const estadoColor = esPagado ? 'badge-green' : pagado>0 ? 'badge-yellow' : 'badge-gray';
+    const estadoLabel = esPagado ? 'Pagado' : pagado>0 ? 'Parcial' : 'Pendiente';
     sumNeto  += Number(c.valor_neto||0);
     sumIva   += Number(c.valor_iva||0);
-    sumTotal += Number(c.valor_total||0);
+    sumTotal += total;
     const [y,m,d] = (c.fecha||'').split('-');
     const fechaFmt = d && m && y ? `${d}/${m}/${y}` : c.fecha||'—';
-    return `<tr>
+    return `<tr id="compra-row-${c.id}" style="${esPagado?'opacity:0.7':''}">
+      <td style="padding:8px 10px;text-align:center">
+        ${!esPagado?`<input type="checkbox" class="compra-check" data-id="${c.id}"
+          data-proveedor="${c.proveedor_id||''}" data-moneda="${c.moneda||'GTQ'}"
+          data-saldo="${saldo.toFixed(2)}" data-factura="${c.factura_id||''}"
+          onclick="onCompraCheckChange()"
+          style="width:15px;height:15px;cursor:pointer;accent-color:var(--accent)"/>`:''}
+      </td>
       <td style="white-space:nowrap">${fechaFmt}</td>
       <td><span class="badge badge-blue">${c.tipo||'—'}</span></td>
       <td class="td-mono">${c.serie||'—'}</td>
@@ -9403,13 +9831,17 @@ function renderCompras() {
       <td class="td-mono hide-mobile" style="font-size:11px">${oc?`<span class="badge badge-gray">${oc.numero}</span>`:'—'}</td>
       <td class="td-mono hide-mobile" style="text-align:right">${fmtMoney(c.valor_neto)}</td>
       <td class="td-mono hide-mobile" style="text-align:right">${fmtMoney(c.valor_iva)}</td>
-      <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(c.valor_total)}</td>
+      <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(total)}</td>
+      <td class="td-mono" style="text-align:right;color:${esPagado?'var(--text3)':'var(--accent)'};font-weight:${esPagado?'400':'700'}">
+        ${esPagado?'✓':fmtMoney(saldo)}
+      </td>
       <td><div class="td-actions">
+        <span class="badge ${estadoColor}" style="font-size:10px">${estadoLabel}</span>
         <button class="btn btn-sm btn-ghost" onclick="editCompra('${c.id}')">Editar</button>
         <button class="btn btn-sm btn-danger" onclick="deleteCompra('${c.id}')">Eliminar</button>
       </div></td>
     </tr>`;
-  }).join('') : '<tr><td colspan="11"><div class="empty-state"><div class="empty-icon">▣</div><p>Sin registros de compra</p></div></td></tr>';
+  }).join('') : '<tr><td colspan="13"><div class="empty-state"><div class="empty-icon">▣</div><p>Sin registros de compra</p></div></td></tr>';
 
   // Totals row
   const tfoot = document.getElementById('tfoot-compras');
@@ -12350,13 +12782,22 @@ function renderOCPanel(ocId) {
 
   // Facturas
   const facts = state.ocFacturas.filter(f=>f.oc_id===ocId);
-  document.getElementById('oc-panel-facturas').innerHTML = facts.map(f=>`<tr>
-    <td class="td-mono">${f.serie||'—'}</td>
-    <td class="td-mono">${f.numero||'—'}</td>
-    <td>${fmtDate(f.fecha)}</td>
-    <td class="td-mono">${fmtMoney(f.total)}</td>
-    <td><span class="badge ${f.status==='pagada'?'badge-green':f.status==='cancelada'?'badge-gray':'badge-yellow'}">${f.status||'pendiente'}</span></td>
-  </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:12px">Sin facturas</td></tr>';
+  document.getElementById('oc-panel-facturas').innerHTML = facts.map(f=>{
+    const pagosF  = (state.pagosOC||[]).filter(p=>p.factura_id===f.id);
+    const pagado  = pagosF.reduce((s,p)=>s+Number(p.monto||0),0);
+    const saldo   = Math.max(0, Number(f.total||0) - pagado);
+    const esPagada = saldo <= 0;
+    return `<tr>
+      <td class="td-mono">${f.serie||'—'}</td>
+      <td class="td-mono">${f.numero||'—'}</td>
+      <td>${fmtDate(f.fecha)}</td>
+      <td class="td-mono">${fmtMoney(f.total)}</td>
+      <td class="td-mono" style="color:var(--green)">${pagado>0?fmtMoney(pagado):'—'}</td>
+      <td class="td-mono" style="color:${saldo>0?'var(--accent)':'var(--text3)'};font-weight:${saldo>0?'700':'400'}">${saldo>0?fmtMoney(saldo):'✓ Pagado'}</td>
+      <td><span class="badge ${esPagada?'badge-green':pagado>0?'badge-yellow':'badge-gray'}">${esPagada?'Pagada':pagado>0?'Parcial':'Pendiente'}</span></td>
+      <td>${!esPagada?`<button class="btn btn-sm btn-primary" onclick="openPagoOC('${f.id}')">💳 Pagar</button>`:''}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:12px">Sin facturas</td></tr>';
 
   // Anticipos
   const ants = state.ocAnticipos.filter(a=>a.oc_id===ocId);
