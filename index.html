@@ -11250,9 +11250,23 @@ function renderBalanceGeneral() {
     saldos[cta.id].haber += Number(l.haber_gtq||l.haber||0);
   });
 
-  const grupoActivo  = ['Activos Circulantes','Activos no-circulantes','Banco y efectivo','Por cobrar'];
-  const grupoPasivo  = ['Pasivos Circulantes','Pasivos no-circulantes','Por pagar'];
-  const grupoCapital = ['Capital','Ganancias del año actual'];
+  const grupoActivo   = ['Activos Circulantes','Activos no-circulantes','Banco y efectivo','Por cobrar'];
+  const grupoPasivo   = ['Pasivos Circulantes','Pasivos no-circulantes','Por pagar'];
+  const grupoCapital  = ['Capital','Ganancias del año actual'];
+  const grupoIngresos = ['Ingresos','Ventas'];
+  const grupoGastos   = ['Gastos','Costo de Ventas','Costos'];
+
+  // Calculate Resultado del Ejercicio = Ingresos - Gastos
+  let totalIngresos = 0, totalGastos = 0;
+  Object.values(saldos).forEach(({cta,debe,haber}) => {
+    if (grupoIngresos.some(g => (cta.tipo||'').toLowerCase().includes(g.toLowerCase()))) {
+      totalIngresos += haber - debe; // ingresos: saldo crédito
+    }
+    if (grupoGastos.some(g => (cta.tipo||'').toLowerCase().includes(g.toLowerCase()))) {
+      totalGastos += debe - haber; // gastos: saldo débito
+    }
+  });
+  const resultadoEjercicio = totalIngresos - totalGastos;
 
   const seccionBG = (grupos, titulo) => {
     let total = 0, rows = '';
@@ -11279,7 +11293,28 @@ function renderBalanceGeneral() {
   const activos  = seccionBG(grupoActivo, 'Activos');
   const pasivos  = seccionBG(grupoPasivo, 'Pasivos');
   const capital  = seccionBG(grupoCapital,'Capital');
-  const totalPasCap = pasivos.total + capital.total;
+
+  // Add Resultado del Ejercicio to capital section
+  const resultadoRow = Math.abs(resultadoEjercicio) > 0.01 ? `
+    <tr style="background:${resultadoEjercicio>=0?'#F0FDF4':'#FFF1F2'}">
+      <td style="padding:5px 24px;font-size:13px;font-weight:600;color:${resultadoEjercicio>=0?'var(--green)':'var(--red)'}">
+        Resultado del Ejercicio ${resultadoEjercicio>=0?'(Utilidad)':'(Pérdida)'}
+      </td>
+      <td style="text-align:right;font-family:'DM Mono',monospace;padding:5px 16px;font-weight:700;color:${resultadoEjercicio>=0?'var(--green)':'var(--red)'}">
+        ${fmtGTQ(resultadoEjercicio)}
+      </td>
+    </tr>` : '';
+
+  const capitalTotal = capital.total + resultadoEjercicio;
+  const capitalHtml  = capital.html.replace(
+    `<tr style="border-top:2px solid var(--border)"><td style="padding:8px 16px;font-weight:600">Total Capital</td>`,
+    `${resultadoRow}<tr style="border-top:2px solid var(--border)"><td style="padding:8px 16px;font-weight:600">Total Capital</td>`
+  ).replace(
+    `<td style="text-align:right;font-family:'DM Mono',monospace;font-weight:700;padding:8px 16px">${fmtGTQ(capital.total)}</td></tr>`,
+    `<td style="text-align:right;font-family:'DM Mono',monospace;font-weight:700;padding:8px 16px">${fmtGTQ(capitalTotal)}</td></tr>`
+  );
+
+  const totalPasCap = pasivos.total + capitalTotal;
   const diff = activos.total - totalPasCap;
 
   document.getElementById('bg-report').innerHTML = `
@@ -11295,7 +11330,7 @@ function renderBalanceGeneral() {
       <table style="width:100%;border-collapse:collapse">
         ${pasivos.html}
         <tr><td colspan="2" style="padding:8px 0"></td></tr>
-        ${capital.html}
+        ${capitalHtml}
         <tr style="border-top:3px solid var(--text)">
           <td style="padding:10px 16px;font-weight:700">Total Pasivos + Capital</td>
           <td style="text-align:right;font-family:'DM Mono',monospace;font-weight:700;padding:10px 16px">${fmtGTQ(totalPasCap)}</td>
