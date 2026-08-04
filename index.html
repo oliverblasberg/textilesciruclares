@@ -3931,8 +3931,12 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         </button>
       </div>
 
+      <!-- Ambos tabs se apilan en la misma celda de grid para que el modal
+           mantenga siempre la altura del contenido más alto (el de Datos) y
+           no se encoja/salte al cambiar a Apuntes Contables. -->
+      <div style="display:grid">
       <!-- TAB: DATOS -->
-      <div id="foc-panel-datos" style="padding:20px">
+      <div id="foc-panel-datos" style="grid-column:1;grid-row:1;padding:20px">
 
         <!-- Sección 1: Identificación -->
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Identificación del Documento</div>
@@ -4027,7 +4031,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       </div>
 
       <!-- TAB: APUNTES CONTABLES -->
-      <div id="foc-panel-apuntes" style="display:none;padding:20px">
+      <div id="foc-panel-apuntes" style="grid-column:1;grid-row:1;visibility:hidden;padding:20px">
         <div id="foc-apuntes-nota" style="font-size:12px;color:var(--text3);font-style:italic;margin-bottom:12px">
           Previsualización del asiento que se generará al guardar la factura, según la configuración de la categoría del producto. Los montos se confirman al guardar.
         </div>
@@ -4054,6 +4058,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           </tfoot>
         </table>
       </div>
+      </div><!-- /grid tabs wrapper -->
 
     </div>
     <div class="modal-footer">
@@ -15532,8 +15537,10 @@ function renderScanEnviosCruce(envios, numeroOC, totalFactura) {
 
 // ── Factura OC ──
 function focTab(tab) {
-  document.getElementById('foc-panel-datos').style.display    = tab==='datos'    ? '' : 'none';
-  document.getElementById('foc-panel-apuntes').style.display = tab==='apuntes'  ? '' : 'none';
+  // visibility (no display) para que ambos paneles sigan ocupando su celda del
+  // grid y el modal no cambie de tamaño al alternar tabs.
+  document.getElementById('foc-panel-datos').style.visibility   = tab==='datos'    ? 'visible' : 'hidden';
+  document.getElementById('foc-panel-apuntes').style.visibility = tab==='apuntes'  ? 'visible' : 'hidden';
   document.getElementById('foc-tab-datos').style.background    = tab==='datos'    ? 'var(--bg)' : 'transparent';
   document.getElementById('foc-tab-datos').style.color         = tab==='datos'    ? 'var(--accent)' : 'var(--text3)';
   document.getElementById('foc-tab-datos').style.borderBottom  = tab==='datos'    ? '2px solid var(--accent)' : 'none';
