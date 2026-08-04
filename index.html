@@ -1650,11 +1650,9 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
                   <th>NIT Proveedor</th>
                   <th>Proveedor</th>
                   <th class="hide-mobile">OC</th>
-                  <th class="hide-mobile" style="text-align:right">Valor Neto</th>
-                  <th class="hide-mobile" style="text-align:right">IVA (12%)</th>
                   <th style="text-align:right">Total</th>
                   <th style="text-align:right">Saldo</th>
-                  <th></th>
+                  <th>Estado</th>
                 </tr>
               </thead>
               <tbody id="tbl-compras"></tbody>
@@ -10275,7 +10273,7 @@ function renderCompras() {
                     (prov?.nit||'').toLowerCase().includes(q));
   });
 
-  let sumNeto = 0, sumIva = 0, sumTotal = 0;
+  let sumTotal = 0;
   const tbody = document.getElementById('tbl-compras');
   if (!tbody) return;
 
@@ -10289,8 +10287,6 @@ function renderCompras() {
     const esPagado = saldo <= 0.01;
     const estadoColor = esPagado ? 'badge-green' : pagado>0 ? 'badge-yellow' : 'badge-blue';
     const estadoLabel = esPagado ? 'Pagada' : pagado>0 ? 'Parcialmente Pagada' : 'Generada';
-    sumNeto  += Number(c.valor_neto||0);
-    sumIva   += Number(c.valor_iva||0);
     sumTotal += total;
     const [y,m,d] = (c.fecha||'').split('-');
     const fechaFmt = d && m && y ? `${d}/${m}/${y}` : c.fecha||'—';
@@ -10319,8 +10315,6 @@ function renderCompras() {
       <td class="td-mono" style="font-size:12px">${prov?.nit||'—'}</td>
       <td style="font-size:13px">${prov?.name||'—'}</td>
       <td class="td-mono hide-mobile" style="font-size:11px">${oc?`<span class="badge badge-gray">${oc.numero}</span>`:'—'}</td>
-      <td class="td-mono hide-mobile" style="text-align:right">${fmtMoney(c.valor_neto)}</td>
-      <td class="td-mono hide-mobile" style="text-align:right">${fmtMoney(c.valor_iva)}</td>
       <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(total)}</td>
       <td class="td-mono" style="text-align:right;color:${esPagado?'var(--text3)':'var(--accent)'};font-weight:${esPagado?'400':'700'}">
         ${esPagado?'✓':fmtMoney(saldo)}
@@ -10333,15 +10327,14 @@ function renderCompras() {
         ` : ''}
       </div></td>
     </tr>`;
-  }).join('') : '<tr><td colspan="13"><div class="empty-state"><div class="empty-icon">▣</div><p>Sin registros de compra</p></div></td></tr>';
+  }).join('') : '<tr><td colspan="12"><div class="empty-state"><div class="empty-icon">▣</div><p>Sin registros de compra</p></div></td></tr>';
 
-  // Totals row
+  // Totals row — colspan 9 covers checkbox..OC, then Total / Saldo / Estado
   const tfoot = document.getElementById('tfoot-compras');
   if (tfoot) tfoot.innerHTML = data.length ? `<tr style="background:var(--surface2);font-weight:600">
-    <td colspan="6" style="padding:10px 14px;font-size:12px;color:var(--text2)">TOTALES (${data.length} registro${data.length!==1?'s':''})</td>
-    <td class="td-mono hide-mobile" style="text-align:right;padding:10px 14px">${fmtMoney(sumNeto)}</td>
-    <td class="td-mono hide-mobile" style="text-align:right;padding:10px 14px">${fmtMoney(sumIva)}</td>
+    <td colspan="9" style="padding:10px 14px;font-size:12px;color:var(--text2)">TOTALES (${data.length} registro${data.length!==1?'s':''})</td>
     <td class="td-mono" style="text-align:right;padding:10px 14px">${fmtMoney(sumTotal)}</td>
+    <td></td>
     <td></td>
   </tr>` : '';
 }
