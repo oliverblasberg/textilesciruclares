@@ -2236,7 +2236,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 <!-- ═══ MODALS ═══ -->
 
 <!-- CLIENTE -->
-<div class="modal-overlay" id="modal-cliente">
+<div class="modal-overlay" id="modal-cliente" onclick="if(event.target===this)closeModal('modal-cliente')">
   <div class="modal modal-lg">
     <div class="modal-header">
       <div class="modal-title" id="modal-cliente-title">Nuevo Cliente</div>
@@ -2478,7 +2478,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modal-cliente')">Cancelar</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-cliente')">Cerrar</button>
       <button class="btn btn-primary" onclick="saveCliente()">Guardar</button>
     </div>
   </div>
@@ -4572,7 +4572,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 </div>
 
 <!-- PROVEEDOR MODAL -->
-<div class="modal-overlay" id="modal-proveedor">
+<div class="modal-overlay" id="modal-proveedor" onclick="if(event.target===this)closeModal('modal-proveedor')">
   <div class="modal modal-lg" style="max-width:700px;width:95vw">
     <div class="modal-header">
       <div class="modal-title" id="modal-proveedor-title">Nuevo Proveedor</div>
@@ -4695,7 +4695,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modal-proveedor')">Cancelar</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-proveedor')">Cerrar</button>
       <button class="btn btn-primary" onclick="saveProveedor()">Guardar</button>
     </div>
   </div>
@@ -5449,8 +5449,8 @@ function renderClientes() {
   tbody.innerHTML = data.length ? data.map(c => `
     <tr>
       <td class="td-mono">${c.code||'—'}</td>
-      <td>
-        <div style="font-weight:500">${c.name}</div>
+      <td style="cursor:pointer" onclick="editCliente('${c.id}')">
+        <div style="font-weight:500;color:var(--accent);text-decoration:underline dotted">${c.name}</div>
         ${c.address?`<div style="font-size:11px;color:var(--text3)">${c.address}</div>`:''}
       </td>
       <td class="hide-mobile" style="font-size:12px">
@@ -5461,7 +5461,6 @@ function renderClientes() {
       <td class="hide-mobile" style="font-size:12px">${c.phone||c.fact_tel||'—'}</td>
       <td class="hide-mobile" style="font-size:12px;color:var(--text2)">${c.email||'—'}</td>
       <td><div class="td-actions">
-        <button class="btn btn-sm btn-ghost" onclick="editCliente('${c.id}')">Editar</button>
         <button class="btn btn-sm btn-danger" onclick="deleteCliente('${c.id}')">Eliminar</button>
       </div></td>
     </tr>`).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">◎</div><p>Sin clientes registrados</p></div></td></tr>';
@@ -5558,10 +5557,9 @@ async function saveCliente() {
       alert('Error al guardar cliente:\n\n' + err.message + '\nCode: ' + (err.code||'') + '\nDetails: ' + (err.details||''));
       return;
     }
-    toast('Cliente guardado');
-    closeModal('modal-cliente');
-    resetClienteForm();
+    toast('✓ Cliente guardado');
     await loadAll();
+    document.getElementById('modal-cliente-title').textContent = 'Editar Cliente';
   } catch(e) {
     alert('Error inesperado en saveCliente:\n\n' + e.message + '\n\n' + e.stack);
   }
@@ -7885,8 +7883,8 @@ function renderProveedores() {
   if (!tbody) return;
   tbody.innerHTML = data.length ? data.map(p => `<tr>
     <td class="td-mono">${p.nit||'—'}</td>
-    <td style="font-weight:500">
-      <div>${p.name}</div>
+    <td style="font-weight:500;cursor:pointer" onclick="editProveedor('${p.id}')">
+      <div style="color:var(--accent);text-decoration:underline dotted">${p.name}</div>
       ${p.address?`<div style="font-size:11px;color:var(--text3)">${p.address}</div>`:''}
     </td>
     <td class="hide-mobile" style="font-size:12px">
@@ -7902,7 +7900,6 @@ function renderProveedores() {
       ${p.factura_configurada ? '<span title="Factura configurada" style="display:inline-block;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:700;background:#DCFCE7;color:#16A34A">🧾 Factura</span>' : '<span style="display:inline-block;padding:2px 7px;border-radius:99px;font-size:10px;background:var(--surface2);color:var(--text3)">🧾 —</span>'}
     </td>
     <td><div class="td-actions">
-      <button class="btn btn-sm btn-ghost" onclick="editProveedor('${p.id}')">Editar</button>
       <button class="btn btn-sm btn-danger" onclick="deleteProveedor('${p.id}')">Eliminar</button>
     </div></td>
   </tr>`).join('') :
@@ -8082,9 +8079,10 @@ async function saveProveedor() {
       alert('Error al guardar proveedor:\n\n' + err.message + '\nCode: ' + (err.code||'') + '\nDetails: ' + (err.details||''));
       return;
     }
-    toast('Proveedor guardado');
-    closeModal('modal-proveedor');
+    toast('✓ Proveedor guardado');
     await loadAll();
+    // Update title to show we're editing
+    document.getElementById('modal-proveedor-title').textContent = 'Editar Proveedor';
   } catch(e) {
     alert('Error inesperado en saveProveedor:\n\n' + e.message + '\n\n' + e.stack);
   }
