@@ -6602,10 +6602,22 @@ async function syncOrderStatus(order_id) {
 // ═══ PAGOS OC ═══
 
 function _pagoCtaOpts() {
+  // Generic: nomenclatura activos — used for OV payments
   return '<option value="">— Seleccionar cuenta —</option>' +
     (state.nomenclatura||[])
       .filter(n => (n.tipo||'').toLowerCase().includes('activo') || (n.codigo||'').startsWith('11'))
-      .map(n => `<option value="${n.id}">${n.codigo} — ${n.nombre}</option>`).join('');
+      .map(n=>`<option value="${n.id}">${n.codigo} — ${n.nombre}</option>`).join('');
+}
+
+function _pagoCtaOptsProveedor(provId) {
+  const prov = (state.proveedores||[]).find(p=>p.id===provId);
+  let opts = '<option value="">— Seleccionar cuenta —</option>';
+  if (prov?.banco || prov?.num_cuenta) {
+    const tipo  = prov.tipo_cuenta === 'monetaria' ? 'Monetaria' : prov.tipo_cuenta === 'ahorro' ? 'Ahorro' : prov.tipo_cuenta||'';
+    const label = [prov.banco, tipo, prov.num_cuenta].filter(Boolean).join(' · ');
+    opts += `<option value="prov-${prov.id}" selected data-banco="${prov.banco||''}" data-tipo="${prov.tipo_cuenta||''}" data-num="${prov.num_cuenta||''}">${label}</option>`;
+  }
+  return opts;
 }
 
 function _pagoHistorial(facturaId) {
@@ -6775,13 +6787,19 @@ async function savePago() {
   const tipo       = document.getElementById('pago-factura-id').dataset.tipo;
   const fecha      = document.getElementById('pago-fecha').value;
   const metodo     = document.getElementById('pago-forma').value;
-  const cuenta_id  = document.getElementById('pago-cuenta').value;
+  const cuenta_id_raw = document.getElementById('pago-cuenta').value;
+  const cuenta_id  = cuenta_id_raw.startsWith('prov-') ? null : cuenta_id_raw;
+  const cuentaEl   = document.getElementById('pago-cuenta');
+  const selOpt     = cuentaEl.options[cuentaEl.selectedIndex];
+  const bancoInfo  = cuenta_id_raw.startsWith('prov-')
+    ? [selOpt?.dataset?.banco, selOpt?.dataset?.tipo, selOpt?.dataset?.num].filter(Boolean).join(' · ')
+    : null;
   const monto      = parseFloat(document.getElementById('pago-monto').value);
   const referencia = document.getElementById('pago-referencia')?.value.trim()||'';
   const notas      = document.getElementById('pago-notas').value.trim();
   const provId     = document.getElementById('pago-proveedor-id').value;
 
-  if (!fecha||!metodo||!cuenta_id||isNaN(monto)||monto<=0) {
+  if (!fecha||!metodo||!cuenta_id_raw||isNaN(monto)||monto<=0) {
     toast('Completa fecha, forma de pago, cuenta y monto','error'); return;
   }
 
@@ -6796,7 +6814,9 @@ async function savePago() {
       );
 
       const { error: ePago } = await sb.from('erp_pagos').insert({
-        factura_id: facturaId, fecha, metodo, cuenta_id, monto, referencia, notas, moneda:'GTQ',
+        factura_id: facturaId, fecha, metodo, cuenta_id, monto, referencia,
+        notas: [notas, bancoInfo?`Banco: ${bancoInfo}`:''].filter(Boolean).join(' | ') || null,
+        moneda:'GTQ',
       });
       if (ePago) { toast('Error guardando pago: '+ePago.message,'error'); return; }
 
@@ -10053,7 +10073,8 @@ function openPagoDesdeCompras() {
   document.getElementById('pago-monto').value        = totalPend.toFixed(2);
   document.getElementById('pago-referencia').value   = '';
   document.getElementById('pago-notas').value        = '';
-  document.getElementById('pago-cuenta').innerHTML   = _pagoCtaOpts();
+  const _prov3 = state.proveedores.find(p=>p.id===provId);
+  document.getElementById('pago-cuenta').innerHTML = _pagoCtaOptsProveedor(_prov3?.id);
   document.getElementById('pago-historial-wrap').style.display   = 'none';
   document.getElementById('pago-distribucion-wrap').style.display = 'block';
 
