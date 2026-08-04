@@ -6609,6 +6609,18 @@ function _pagoCtaOpts() {
       .map(n=>`<option value="${n.id}">${n.codigo} — ${n.nombre}</option>`).join('');
 }
 
+function nextNumPago() {
+  const now   = new Date();
+  const year  = now.getFullYear();
+  const month = String(now.getMonth()+1).padStart(2,'0');
+  const prefix = `NP-${year}-${month}-`;
+  const nums  = (state.pagosOC||[])
+    .filter(p => (p.num_pago||'').startsWith(prefix))
+    .map(p => parseInt((p.num_pago||'').slice(-3))||0);
+  const next  = (nums.length ? Math.max(...nums) : 0) + 1;
+  return `${prefix}${String(next).padStart(3,'0')}`;
+}
+
 function _pagoCtaOptsProveedor(provId) {
   const prov = (state.proveedores||[]).find(p=>p.id===provId);
   let opts = '<option value="">— Seleccionar cuenta —</option>';
@@ -6630,11 +6642,12 @@ function _pagoHistorial(facturaId) {
       const cta = (state.nomenclatura||[]).find(n=>n.id===p.cuenta_id);
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:7px;background:var(--surface2);margin-bottom:6px;font-size:12px">
         <div>
+          ${p.num_pago?`<span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);margin-right:8px">${p.num_pago}</span>`:''}
           <span style="font-weight:500">${fmtDate(p.fecha)}</span>
           <span style="color:var(--text2);margin:0 8px">·</span>
           <span>${p.metodo||p.forma||'—'}</span>
           <span style="color:var(--text2);margin:0 8px">·</span>
-          <span>${cta?.codigo||''} ${cta?.nombre||'—'}</span>
+          <span>${cta?.codigo?cta.codigo+' '+cta.nombre:p.notas||'—'}</span>
           ${p.referencia?`<span style="color:var(--text3);margin-left:8px;font-family:'DM Mono',monospace;font-size:11px">${p.referencia}</span>`:''}
         </div>
         <strong style="font-family:'DM Mono',monospace;color:var(--green)">${fmtGTQ(p.monto)}</strong>
@@ -6813,8 +6826,9 @@ async function savePago() {
         n.codigo==='21101001' || ((n.nombre||'').toLowerCase().includes('proveedores') && n.tipo?.toLowerCase().includes('pasivo'))
       );
 
+      const num_pago = nextNumPago();
       const { error: ePago } = await sb.from('erp_pagos').insert({
-        factura_id: facturaId, fecha, metodo, cuenta_id, monto, referencia,
+        factura_id: facturaId, fecha, metodo, cuenta_id, monto, referencia, num_pago,
         notas: [notas, bancoInfo?`Banco: ${bancoInfo}`:''].filter(Boolean).join(' | ') || null,
         moneda:'GTQ',
       });
@@ -6865,6 +6879,7 @@ async function savePago() {
         const ocF  = state.oc.find(o=>o.id===f?.oc_id);
         await sb.from('erp_pagos').insert({
           factura_id: d.factura_id,
+          num_pago: nextNumPago(),
           fecha, metodo, cuenta_id, monto: d.monto, referencia, notas, moneda:'GTQ',
         });
         // Update factura estado
@@ -13269,7 +13284,7 @@ function renderOCPanel(ocId) {
       <td class="td-mono">${f.numero||'—'}</td>
       <td>${fmtDate(f.fecha)}</td>
       <td class="td-mono">${fmtMoney(f.total)}</td>
-      <td class="td-mono" style="color:var(--green)">${pagado>0?fmtMoney(pagado):'—'}</td>
+      <td class="td-mono" style="color:var(--green)">${pagado>0?pagosF.map(p=>p.num_pago||fmtMoney(p.monto)).join(', '):'—'}</td>
       <td class="td-mono" style="color:${saldo>0?'var(--accent)':'var(--text3)'};font-weight:${saldo>0?'700':'400'}">${saldo>0?fmtMoney(saldo):'✓ Pagado'}</td>
       <td><span class="badge ${esPagada?'badge-green':pagado>0?'badge-yellow':'badge-gray'}">${esPagada?'Pagada':pagado>0?'Parcial':'Pendiente'}</span></td>
       <td>${!esPagada?`<button class="btn btn-sm btn-primary" onclick="openPagoOC('${f.id}')">💳 Pagar</button>`:''}</td>
