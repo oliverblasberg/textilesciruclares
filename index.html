@@ -4021,6 +4021,8 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           </div>
         </div>
 
+        <div id="foc-saldo-oc-info" style="display:none;font-size:12px;padding:10px 12px;border-radius:8px;margin-bottom:16px"></div>
+
         <div class="field field-full"><label>Notas</label><textarea id="foc-notas" rows="2"></textarea></div>
       </div>
 
@@ -4056,7 +4058,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-factura-oc')">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveFacturaOC()">💾 Guardar Factura</button>
+      <button class="btn btn-primary" id="foc-btn-guardar" onclick="saveFacturaOC()">💾 Generar Factura</button>
     </div>
   </div>
 </div>
@@ -12924,6 +12926,15 @@ function ocFacturadoTotal(ocId) {
   return state.ocFacturas.filter(f=>f.oc_id===ocId && f.status!=='cancelada')
     .reduce((s,f)=>s+Number(f.total||0),0);
 }
+// Valor total de lo recibido en la OC (cantidad recibida × precio unitario, por item)
+function ocValorRecibido(ocId) {
+  return state.ocItems.filter(i=>i.oc_id===ocId)
+    .reduce((s,i)=>s + (ocRecibidoQty(ocId, i.producto_id) * Number(i.precio_unit||0)), 0);
+}
+// Saldo pendiente por facturar = valor recibido - lo ya facturado (no cancelado)
+function ocSaldoPorFacturar(ocId) {
+  return ocValorRecibido(ocId) - ocFacturadoTotal(ocId);
+}
 function ocAnticipoTotal(ocId) {
   return state.ocAnticipos.filter(a=>a.oc_id===ocId)
     .reduce((s,a)=>s+Number(a.monto||0),0);
@@ -15618,6 +15629,31 @@ function calcFocItemIva(idx, qty, precio) {
   document.getElementById('foc-iva-display').textContent      = fmtMoney(sumIva);
   document.getElementById('foc-total-display').textContent    = fmtMoney(sumTotal);
   document.getElementById('foc-total').value                  = sumTotal.toFixed(2);
+  renderFocSaldoOC();
+}
+
+// Muestra cuánto se ha recibido, cuánto ya se facturó y el saldo disponible
+// para facturar en esta OC — visible antes de intentar grabar.
+function renderFocSaldoOC() {
+  const el = document.getElementById('foc-saldo-oc-info');
+  if (!el) return;
+  const oc_id = document.getElementById('foc-oc-id').value;
+  if (!oc_id) { el.style.display = 'none'; return; }
+
+  const monedaOC      = getMonedaOC(oc_id);
+  const valorRecibido = ocValorRecibido(oc_id);
+  const yaFacturado    = ocFacturadoTotal(oc_id);
+  const saldo          = valorRecibido - yaFacturado;
+  const total          = parseFloat(document.getElementById('foc-total')?.value) || 0;
+  const excede         = total > saldo + 0.01;
+
+  el.style.display    = '';
+  el.style.background = excede ? 'var(--red-bg)' : 'var(--surface2)';
+  el.style.color      = excede ? 'var(--red)' : 'var(--text2)';
+  el.innerHTML = `Recibido en la OC: <strong>${fmtMoney(valorRecibido, monedaOC)}</strong>` +
+    (yaFacturado > 0.009 ? ` &nbsp;·&nbsp; Ya facturado: <strong>${fmtMoney(yaFacturado, monedaOC)}</strong>` : '') +
+    ` &nbsp;·&nbsp; Saldo por facturar: <strong>${fmtMoney(saldo, monedaOC)}</strong>` +
+    (excede ? ` &nbsp;·&nbsp; ⚠️ Esta factura excede el saldo recibido` : '');
 }
 
 function calcFocTotales(items, monedaOC, esServicio) {
@@ -15635,6 +15671,7 @@ function calcFocTotales(items, monedaOC, esServicio) {
   document.getElementById('foc-total-display').textContent    = fmtMoney(sumTotal, monedaOC);
   document.getElementById('foc-subtotal-display').textContent = fmtMoney(sumNeto, monedaOC);
   document.getElementById('foc-iva-display').textContent      = fmtMoney(sumIva, monedaOC);
+  renderFocSaldoOC();
 }
 
 function calcFocVencimiento() {
@@ -15659,6 +15696,10 @@ function openFacturaOC() {
 
   document.getElementById('foc-oc-id').value          = currentOCId;
   document.getElementById('foc-factura-id').value      = '';
+  const focBtn = document.getElementById('foc-btn-guardar');
+  if (focBtn) { focBtn.disabled = false; focBtn.textContent = '💾 Generar Factura'; }
+  const focBadge = document.getElementById('foc-balance-badge');
+  if (focBadge) focBadge.innerHTML = '';
   document.getElementById('foc-header-sub').textContent = `${oc?.numero||''} — ${prov?.name||''}`;
   document.getElementById('foc-proveedor-nombre').value = prov?.name||'';
   const numInterno = nextFacturaInterna();
@@ -15726,6 +15767,14 @@ function openFacturaOC() {
 }
 
 async function saveFacturaOC() {
+  // Evita doble-grabado: si ya se generó en esta apertura del modal, no permitir reenviar.
+  if (document.getElementById('foc-factura-id').value) {
+    toast('Esta factura ya fue generada. Cierra el modal para registrar otra.','error');
+    return;
+  }
+  const focBtn = document.getElementById('foc-btn-guardar');
+  if (focBtn?.disabled) return; // ya se está procesando (evita doble-click)
+
   const oc_id          = document.getElementById('foc-oc-id').value;
   const numero         = document.getElementById('foc-numero').value.trim();
   const serie          = document.getElementById('foc-serie').value.trim();
@@ -15744,12 +15793,21 @@ async function saveFacturaOC() {
   const prov = state.proveedores.find(p=>p.id===oc?.proveedor_id);
   const monedaOC = getMonedaOC(oc_id);
 
+  // No permitir facturar más de lo recibido en la OC (saldo = recibido - ya facturado)
+  const saldoPorFacturar = ocSaldoPorFacturar(oc_id);
+  if (total > saldoPorFacturar + 0.01) {
+    toast(`No puedes generar esta factura por ${fmtMoney(total, monedaOC)}: el saldo pendiente por facturar según lo recibido en la OC es ${fmtMoney(Math.max(saldoPorFacturar,0), monedaOC)}.`,'error');
+    return;
+  }
+
   const diasCredito = oc?.dias_credito ?? null;
   const fecha_vencimiento = fecha_venc || (() => {
     if (!diasCredito) return null;
     const d = new Date(fecha); d.setDate(d.getDate()+Number(diasCredito));
     return d.toISOString().split('T')[0];
   })();
+
+  if (focBtn) { focBtn.disabled = true; focBtn.textContent = 'Generando…'; }
 
   // Save to erp_oc_facturas
   const {data:focArr, error:e1} = await sb.from('erp_oc_facturas').insert({
@@ -15761,7 +15819,14 @@ async function saveFacturaOC() {
     tc,
     num_interno,
   }).select();
-  if (e1) { toast('Error: '+e1.message,'error'); return; }
+  if (e1) {
+    toast('Error: '+e1.message,'error');
+    if (focBtn) { focBtn.disabled = false; focBtn.textContent = '💾 Generar Factura'; }
+    return;
+  }
+
+  // Marcar como grabada de inmediato para bloquear reintentos aunque algo falle más abajo
+  document.getElementById('foc-factura-id').value = focArr[0].id;
 
   // Register in Libro de Compras
   // Calculate totals respecting IVA checkboxes per line
@@ -15809,14 +15874,17 @@ async function saveFacturaOC() {
       }).join('');
       document.getElementById('foc-total-debe').textContent  = fmtGTQ(totalDebe);
       document.getElementById('foc-total-haber').textContent = fmtGTQ(totalHaber);
-      document.getElementById('foc-factura-id').value = focArr[0].id;
+      const focBadge = document.getElementById('foc-balance-badge');
+      if (focBadge) focBadge.innerHTML = '<span class="badge badge-green" style="margin-left:8px">✓ Factura generada</span>';
       focTab('apuntes');
-      toast('✓ Factura registrada — revisa los apuntes contables');
+      toast('✓ Factura generada — revisa los apuntes contables');
     } else {
-      toast('Factura registrada');
+      toast('Factura generada');
       closeModal('modal-factura-oc');
     }
   }
+
+  if (focBtn) { focBtn.disabled = true; focBtn.textContent = '✓ Factura Generada'; }
 
   await loadAll();
   showOCPanel(oc_id);
