@@ -15558,16 +15558,6 @@ function openFacturaOC() {
   // Fecha vencimiento from OC
   calcFocVencimiento();
 
-
-  // Auto-fill banco destinatario from proveedor bank info
-  const bancoProv = [prov?.banco, prov?.tipo_cuenta ? `(${prov.tipo_cuenta})`:null, prov?.num_cuenta].filter(Boolean).join(' · ');
-  document.getElementById('foc-banco-prov-info').textContent = bancoProv ? `ℹ Datos del proveedor: ${bancoProv}` : '';
-  if (prov?.banco || prov?.num_cuenta) {
-    const ctaMatch = (state.nomenclatura||[]).find(n =>
-      (n.nombre||'').toLowerCase().includes((prov.banco||'').toLowerCase().split(' ')[0].toLowerCase())
-    );
-  }
-
   // Items display
   let totalDisp = 0;
   document.getElementById('foc-items-display').innerHTML = `
