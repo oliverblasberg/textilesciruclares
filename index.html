@@ -3947,7 +3947,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           </div>
           <div class="field">
             <label>Tipo de Documento *</label>
-            <select id="foc-tipo">
+            <select id="foc-tipo" onchange="renderFocApuntesPreview()">
               <option value="FC">Factura Cambiaria (FC)</option>
               <option value="FE">Factura Especial (FE)</option>
               <option value="FX">Factura de Exportación (FX)</option>
@@ -4026,8 +4026,8 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
       <!-- TAB: APUNTES CONTABLES -->
       <div id="foc-panel-apuntes" style="display:none;padding:20px">
-        <div style="font-size:12px;color:var(--text3);font-style:italic;margin-bottom:12px">
-          Los apuntes contables se generan automáticamente al guardar la factura según la configuración de la categoría del producto.
+        <div id="foc-apuntes-nota" style="font-size:12px;color:var(--text3);font-style:italic;margin-bottom:12px">
+          Previsualización del asiento que se generará al guardar la factura, según la configuración de la categoría del producto. Los montos se confirman al guardar.
         </div>
         <table style="width:100%;border-collapse:collapse">
           <thead><tr style="background:var(--surface2)">
@@ -4038,12 +4038,14 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           </tr></thead>
           <tbody id="foc-apuntes-tbody">
             <tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
-              Guarda la factura para ver los apuntes contables generados.
+              Completa los datos de la factura para previsualizar los apuntes contables.
             </td></tr>
           </tbody>
           <tfoot>
             <tr style="border-top:2px solid var(--border);font-weight:700">
-              <td colspan="2" style="padding:8px 12px">Total</td>
+              <td colspan="2" style="padding:8px 12px">
+                Total <span id="foc-balance-badge"></span>
+              </td>
               <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace" id="foc-total-debe">—</td>
               <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace" id="foc-total-haber">—</td>
             </tr>
@@ -11133,21 +11135,19 @@ async function asientoPagoVenta(pagoId) {
 }
 
 // 3. COMPRA — Al registrar factura de proveedor (OC) con conversión USD→GTQ
-async function asientoFacturaCompra(ocFacturaId) {
-  const fc   = state.ocFacturas.find(x => x.id === ocFacturaId);
-  if (!fc) return;
-  const oc   = state.oc.find(o => o.id === fc.oc_id);
-  const prov = state.proveedores.find(p => p.id === oc?.proveedor_id);
-
-  const monedaOC  = getMonedaOC(oc?.id);
-  const totalOrig = Number(fc.total||0);
-  const esIVA     = fc.tipo !== 'FX';
+// Calcula las líneas del asiento de una factura de compra (OC) a partir de
+// oc_id/tipo/total — sin depender de que la factura ya exista en la BD.
+// Usada tanto para la previsualización en el modal como para el asiento real
+// al guardar, para que nunca queden desincronizados.
+function buildLineasFacturaCompra({ oc_id, tipo, total }) {
+  const totalOrig = Number(total||0);
+  const esIVA     = tipo !== 'FX';
 
   // Get category from first OC item product
-  const ocItems    = state.ocItems.filter(i => i.oc_id === oc?.id);
+  const ocItems    = state.ocItems.filter(i => i.oc_id === oc_id);
   const firstProd  = state.productos.find(p => p.id === ocItems[0]?.producto_id);
   const cat        = firstProd?.categoria ? state.categorias?.find(c => c.id === firstProd.categoria) : null;
-  const esServicio = ocItems.every(i => state.productos.find(p=>p.id===i.producto_id)?.tipo === 'servicio');
+  const esServicio = ocItems.length > 0 && ocItems.every(i => state.productos.find(p=>p.id===i.producto_id)?.tipo === 'servicio');
 
   // Use category accounts
   const ctaGastoId     = cat?.cta_gasto     || null;
@@ -11184,6 +11184,18 @@ async function asientoFacturaCompra(ocFacturaId) {
     lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: totalOrig, haber: 0 });
   }
   lineas.push({ cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'POR-PAGAR', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas por Pagar Proveedores', debe: 0, haber: totalOrig });
+
+  return lineas;
+}
+
+async function asientoFacturaCompra(ocFacturaId) {
+  const fc   = state.ocFacturas.find(x => x.id === ocFacturaId);
+  if (!fc) return;
+  const oc   = state.oc.find(o => o.id === fc.oc_id);
+  const prov = state.proveedores.find(p => p.id === oc?.proveedor_id);
+  const monedaOC = getMonedaOC(oc?.id);
+
+  const lineas = buildLineasFacturaCompra({ oc_id: fc.oc_id, tipo: fc.tipo, total: fc.total });
 
   await crearAsiento({
     diario: 'COMPRAS', fecha: fc.fecha,
@@ -15517,6 +15529,59 @@ function focTab(tab) {
   document.getElementById('foc-tab-apuntes').style.background  = tab==='apuntes'  ? 'var(--bg)' : 'transparent';
   document.getElementById('foc-tab-apuntes').style.color       = tab==='apuntes'  ? 'var(--accent)' : 'var(--text3)';
   document.getElementById('foc-tab-apuntes').style.borderBottom= tab==='apuntes'  ? '2px solid var(--accent)' : 'none';
+  if (tab === 'apuntes') renderFocApuntesPreview();
+}
+
+// Previsualiza en vivo las líneas del asiento que se generará al guardar la
+// factura, con totales Debe/Haber para verificar que cuadra antes de grabar.
+// Si la factura ya fue guardada (foc-factura-id tiene valor), no se toca —
+// esa tabla ya muestra el asiento real generado en saveFacturaOC().
+function renderFocApuntesPreview() {
+  const tbody = document.getElementById('foc-apuntes-tbody');
+  if (!tbody) return;
+  if (document.getElementById('foc-factura-id')?.value) return; // ya guardada: no sobreescribir
+
+  const oc_id = document.getElementById('foc-oc-id').value;
+  const tipo  = document.getElementById('foc-tipo').value;
+  const total = parseFloat(document.getElementById('foc-total').value) || 0;
+  const monedaOC = getMonedaOC(oc_id);
+  const badgeEl = document.getElementById('foc-balance-badge');
+
+  if (!oc_id || !total) {
+    tbody.innerHTML = `<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
+      Completa los datos de la factura para previsualizar los apuntes contables.
+    </td></tr>`;
+    document.getElementById('foc-total-debe').textContent  = '—';
+    document.getElementById('foc-total-haber').textContent = '—';
+    if (badgeEl) badgeEl.innerHTML = '';
+    return;
+  }
+
+  const lineas = buildLineasFacturaCompra({ oc_id, tipo, total });
+
+  let totalDebe = 0, totalHaber = 0;
+  tbody.innerHTML = lineas.map(l => {
+    totalDebe  += Number(l.debe||0);
+    totalHaber += Number(l.haber||0);
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:7px 12px;font-size:12px;font-family:'DM Mono',monospace">${l.cuenta_codigo||'—'} ${l.cuenta_nombre||''}</td>
+      <td style="padding:7px 12px;font-size:12px;color:var(--text3)">${l.descripcion||'—'}</td>
+      <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.debe||0)>0  ? fmtMoney(Number(l.debe||0), monedaOC)  : ''}</td>
+      <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.haber||0)>0 ? fmtMoney(Number(l.haber||0), monedaOC) : ''}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('foc-total-debe').textContent  = fmtMoney(totalDebe, monedaOC);
+  document.getElementById('foc-total-haber').textContent = fmtMoney(totalHaber, monedaOC);
+
+  const cuadra = Math.abs(totalDebe - totalHaber) < 0.01;
+  document.getElementById('foc-total-debe').style.color  = cuadra ? '' : 'var(--red)';
+  document.getElementById('foc-total-haber').style.color = cuadra ? '' : 'var(--red)';
+  if (badgeEl) {
+    badgeEl.innerHTML = cuadra
+      ? '<span class="badge badge-green" style="margin-left:8px">✓ Cuadra</span>'
+      : `<span class="badge badge-red" style="margin-left:8px">✗ No cuadra (dif. ${fmtMoney(Math.abs(totalDebe-totalHaber), monedaOC)})</span>`;
+  }
 }
 
 function nextFacturaInterna() {
