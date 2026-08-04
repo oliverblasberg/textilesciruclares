@@ -3995,7 +3995,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Tasa de Cambio</div>
         <div class="form-grid form-grid-2" style="margin-bottom:20px">
           <div class="field">
-            <label>TC del Día <span style="font-weight:400;color:var(--text3)">(GTQ/USD — editable)</span></label>
+            <label>TC del Día <span style="font-weight:400;color:var(--text3)">(solo aplica si la OC es en USD)</span></label>
             <div style="position:relative">
               <input type="number" id="foc-tc" step="0.0001" placeholder="Ej. 7.7500"
                 style="font-family:'DM Mono',monospace;font-weight:600;padding-right:60px;width:100%"/>
@@ -10150,10 +10150,12 @@ function verDetalleFactura(facturaId) {
   const pagosF = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
   const pagado = pagosF.reduce((s,p)=>s+Number(p.monto||0),0);
   const saldo  = Math.max(0, Number(f.total||0)-pagado);
-  const esPagada = saldo<=0.01;
-  const esParcial = pagado>0 && !esPagada;
-  const statusLabel = esPagada?'Pagada':esParcial?'Parcialmente Pagada':'Generada';
-  const statusColor = esPagada?'#16A34A':esParcial?'#D97706':'#2563EB';
+  const esCancelada = f.status === 'cancelada';
+  const esPagada = !esCancelada && saldo<=0.01;
+  const esParcial = !esCancelada && pagado>0 && !esPagada;
+  const statusLabel = esCancelada?'Cancelada':esPagada?'Pagada':esParcial?'Parcialmente Pagada':'Generada';
+  const statusColor = esCancelada?'#9CA3AF':esPagada?'#16A34A':esParcial?'#D97706':'#2563EB';
+  const compra = (state.compras||[]).find(c => c.factura_id === facturaId);
 
   const itemsHtml = items.map(i=>{
     const prod = (state.productos||[]).find(p=>p.id===i.producto_id);
@@ -10236,7 +10238,9 @@ function verDetalleFactura(facturaId) {
       </div>
       <!-- Footer -->
       <div style="padding:14px 24px;display:flex;justify-content:flex-end;gap:8px">
-        ${!esPagada?`<button class="btn btn-primary btn-sm" onclick="this.closest('.modal-overlay').remove();openPagoOC('${facturaId}')">💳 Registrar Pago</button>`:''}
+        ${compra && !esCancelada ? `<button class="btn btn-ghost btn-sm" onclick="this.closest('.modal-overlay').remove();editCompra('${compra.id}')">✏️ Editar Factura</button>` : ''}
+        ${!esCancelada && !esPagada && pagado<=0 ? `<button class="btn btn-danger btn-sm" onclick="this.closest('.modal-overlay').remove();cancelarFacturaOC('${facturaId}')">✕ Cancelar Factura</button>` : ''}
+        ${!esCancelada && !esPagada ? `<button class="btn btn-primary btn-sm" onclick="this.closest('.modal-overlay').remove();openPagoOC('${facturaId}')">💳 Pagar Factura</button>` : ''}
         <button class="btn btn-ghost btn-sm" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
       </div>
     </div>`;
@@ -10323,8 +10327,10 @@ function renderCompras() {
       </td>
       <td><div class="td-actions">
         <span class="badge ${estadoColor}" style="font-size:10px">${estadoLabel}</span>
+        ${!c.factura_id ? `
         <button class="btn btn-sm btn-ghost" onclick="editCompra('${c.id}')">Editar</button>
         <button class="btn btn-sm btn-danger" onclick="deleteCompra('${c.id}')">Eliminar</button>
+        ` : ''}
       </div></td>
     </tr>`;
   }).join('') : '<tr><td colspan="13"><div class="empty-state"><div class="empty-icon">▣</div><p>Sin registros de compra</p></div></td></tr>';
@@ -13002,7 +13008,6 @@ function renderOC() {
       <td><span class="badge ${OC_STATUS_COLOR[o.status]||'badge-gray'}">${OC_STATUS_LABEL[o.status]||o.status}</span></td>
       <td><div class="td-actions">
         <button class="btn btn-sm btn-ghost" onclick="editOC('${o.id}')">Editar</button>
-        <button class="btn btn-sm btn-danger" onclick="deleteOC('${o.id}')">Eliminar</button>
       </div></td>
     </tr>`;
   }).join('') : '<tr><td colspan="6"><div class="empty-state"><p>Sin órdenes de compra</p></div></td></tr>';
@@ -13197,6 +13202,28 @@ async function cancelarOC() {
   toast(`OC ${oc.numero} cancelada`);
   await loadAll();
   showOCPanel(currentOCId);
+}
+
+// Cancelación "suave" de una factura de proveedor: solo cambia el status a
+// 'cancelada' (ya respetado por ocFacturadoTotal/ocSaldoPorFacturar). No
+// elimina el registro ni el asiento contable ya generado — si la factura ya
+// fue contabilizada, la reversión contable se hace con un asiento manual,
+// igual que en cualquier sistema contable (no se editan asientos posteados).
+async function cancelarFacturaOC(facturaId) {
+  const f = (state.ocFacturas||[]).find(x=>x.id===facturaId);
+  if (!f) { toast('Factura no encontrada','error'); return; }
+  if (f.status === 'cancelada') { toast('Esta factura ya está cancelada','error'); return; }
+  const pagosF = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
+  if (pagosF.length) { toast('No se puede cancelar — ya tiene pagos registrados','error'); return; }
+  const motivo = prompt(`¿Motivo de cancelación de la factura ${f.num_interno||f.numero}? (opcional)`);
+  if (motivo === null) return; // usuario canceló el prompt
+  const { error } = await sb.from('erp_oc_facturas').update({
+    status: 'cancelada',
+    notas: [f.notas, motivo ? `Cancelada: ${motivo}` : 'Cancelada'].filter(Boolean).join(' | ')
+  }).eq('id', facturaId);
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  toast(`Factura ${f.num_interno||f.numero} cancelada`);
+  await loadAll();
 }
 
 function imprimirOC() {
@@ -14707,15 +14734,8 @@ async function saveOC() {
   await loadAll();
 }
 
-async function deleteOC(id) {
-  if (!confirm('¿Eliminar esta orden de compra?')) return;
-  await sb.from('erp_oc_items').delete().eq('oc_id',id);
-  const {error}=await sb.from('erp_oc').delete().eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  if (currentOCId===id) closeOCPanel();
-  toast('OC eliminada');
-  await loadAll();
-}
+// Las órdenes de compra NO se pueden eliminar — solo editar (editOC) o
+// cancelar (cancelarOC). No existe función de borrado para erp_oc.
 
 // ── RECEPCION ──
 async function guardarRecepcionBorrador() {
@@ -15692,6 +15712,33 @@ function calcFocVencimiento() {
   document.getElementById('foc-fecha-vencimiento').value = d.toISOString().split('T')[0];
 }
 
+// TC solo aplica si la OC está en USD. En GTQ no hay tipo de cambio que
+// aplicar: el campo queda en 0 y deshabilitado. En USD se habilita y se
+// precarga con el TC más reciente registrado (Banguat).
+function updateFocTCState() {
+  const tcInput   = document.getElementById('foc-tc');
+  const tcFechaEl = document.getElementById('foc-tc-fecha');
+  if (!tcInput) return;
+
+  const ocId     = document.getElementById('foc-oc-id').value;
+  const monedaOC = getMonedaOC(ocId);
+
+  if (monedaOC === 'USD') {
+    tcInput.disabled = false;
+    tcInput.style.background = '';
+    tcInput.style.cursor = '';
+    const ultimo = state.tiposCambio?.[0];
+    tcInput.value = ultimo ? Number(ultimo.referencia).toFixed(4) : '';
+    if (tcFechaEl) tcFechaEl.textContent = ultimo?.fecha ? fmtDate(ultimo.fecha) : '';
+  } else {
+    tcInput.disabled = true;
+    tcInput.value = '0.0000';
+    tcInput.style.background = 'var(--surface2)';
+    tcInput.style.cursor = 'not-allowed';
+    if (tcFechaEl) tcFechaEl.textContent = '';
+  }
+}
+
 function openFacturaOC() {
   if (!currentOCId) return;
   const oc     = state.oc.find(x=>x.id===currentOCId);
@@ -15699,7 +15746,6 @@ function openFacturaOC() {
   const monedaOC = getMonedaOC(currentOCId);
   const items  = state.ocItems.filter(i=>i.oc_id===currentOCId);
   const esServicio = items.every(i => state.productos.find(p=>p.id===i.producto_id)?.tipo === 'servicio');
-  const tc     = state.tiposCambio?.[0]?.tc || '';
 
   document.getElementById('foc-oc-id').value          = currentOCId;
   document.getElementById('foc-factura-id').value      = '';
@@ -15718,10 +15764,7 @@ function openFacturaOC() {
   document.getElementById('foc-ref-factura').value      = oc?.numero||'';
   document.getElementById('foc-fecha').value            = today();
   document.getElementById('foc-fecha-contable').value   = today();
-  document.getElementById('foc-tc').value  = tc ? Number(tc).toFixed(4) : '';
-  const tcFecha = state.tiposCambio?.[0]?.fecha || '';
-  const tcFechaEl = document.getElementById('foc-tc-fecha');
-  if (tcFechaEl) tcFechaEl.textContent = tcFecha ? fmtDate(tcFecha) : '';
+  updateFocTCState();
   document.getElementById('foc-notas').value            = '';
 
   // Fecha vencimiento from OC
@@ -15789,7 +15832,8 @@ async function saveFacturaOC() {
   const fecha_contable = document.getElementById('foc-fecha-contable').value;
   const fecha_venc     = document.getElementById('foc-fecha-vencimiento').value;
   const tipo           = document.getElementById('foc-tipo').value;
-  const tc             = parseFloat(document.getElementById('foc-tc').value)||null;
+  const tcRaw          = document.getElementById('foc-tc').value;
+  const tc             = tcRaw==='' ? null : (parseFloat(tcRaw)||0); // 0 es válido (GTQ, sin TC aplicable)
   const total          = parseFloat(document.getElementById('foc-total').value);
   const notas          = document.getElementById('foc-notas').value.trim();
   const num_interno    = document.getElementById('foc-num-interno').value;
