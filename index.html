@@ -6833,8 +6833,8 @@ async function savePago() {
   const notas      = document.getElementById('pago-notas').value.trim();
   const provId     = document.getElementById('pago-proveedor-id').value;
 
-  if (!fecha||!metodo||!cuenta_id_raw||isNaN(monto)||monto<=0) {
-    toast('Completa fecha, forma de pago, cuenta y monto','error'); return;
+  if (!fecha||!metodo||isNaN(monto)||monto<=0) {
+    toast('Completa fecha, forma de pago y monto','error'); return;
   }
 
   if (modo === 'single') {
@@ -7004,33 +7004,6 @@ function openPago(facturaId) {
   } else { histWrap.style.display = 'none'; }
   document.getElementById('modal-pago-title').textContent = 'Registrar Pago';
   openModal('modal-pago');
-}
-
-async function savePago() {
-  const factura_id = document.getElementById('pago-factura-id').value;
-  const fecha      = document.getElementById('pago-fecha').value;
-  const forma      = document.getElementById('pago-forma').value;
-  const cuenta_id  = document.getElementById('pago-cuenta').value;
-  const monto      = parseFloat(document.getElementById('pago-monto').value);
-  const notas      = document.getElementById('pago-notas').value.trim();
-  if (!fecha || !forma || !cuenta_id || isNaN(monto) || monto <= 0) {
-    toast('Todos los campos son requeridos','error'); return;
-  }
-  const {error} = await sb.from('erp_pagos').insert({ factura_id, fecha, metodo: forma, cuenta_id, monto, notas });
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  await loadAll();
-  const f      = state.facturas.find(x => x.id === factura_id);
-  const pagado = totalPagado(factura_id);
-  if (pagado >= Number(f.total)) {
-    await sb.from('erp_invoices').update({status:'pagada'}).eq('id', factura_id);
-    await loadAll();
-    await syncOrderStatus(f?.order_id);
-    await loadAll();
-    toast('¡Factura pagada completamente!');
-  } else {
-    toast('Pago registrado');
-  }
-  closeModal('modal-pago');
 }
 
 // ═══ CUENTAS BANCARIAS ═══
