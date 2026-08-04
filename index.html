@@ -836,6 +836,25 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <span class="bc-item bc-home" onclick="showLauncher()">Inicio</span>
         </div>
       </div>
+
+      <!-- GLOBAL SEARCH -->
+      <div style="flex:1;max-width:400px;margin:0 16px;position:relative">
+        <div style="position:relative">
+          <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:14px;pointer-events:none">🔍</span>
+          <input type="text" id="global-search-input"
+            placeholder="Buscar en el sistema..."
+            autocomplete="off"
+            oninput="onGlobalSearch(this.value)"
+            onfocus="onGlobalSearch(this.value)"
+            onblur="setTimeout(()=>hideGlobalSearch(),200)"
+            style="width:100%;padding:8px 12px 8px 34px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--surface2);color:var(--text);outline:none;transition:border 0.15s"
+            onfocusin="this.style.borderColor='var(--accent)';this.style.background='var(--bg)'"
+            onfocusout="this.style.borderColor='var(--border)';this.style.background='var(--surface2)'"/>
+        </div>
+        <!-- Results dropdown -->
+        <div id="global-search-results" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--bg);border:1.5px solid var(--border);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.15);z-index:9999;max-height:480px;overflow-y:auto"></div>
+      </div>
+
       <div class="topbar-actions" id="page-actions">
         <div id="tc-topbar" onclick="showPage('tipo-cambio',null)"
           title="Tipo de Cambio Banguat — Click para ver historial"
@@ -7884,7 +7903,7 @@ function renderProveedores() {
   tbody.innerHTML = data.length ? data.map(p => `<tr>
     <td class="td-mono">${p.nit||'—'}</td>
     <td style="font-weight:500" onclick="editProveedor('${p.id}')">
-      <div style="color:var(--accent);text-decoration:underline dotted">${p.name}</div>
+      <div style="color:var(--accent)">${p.name}</div>
       ${p.address?`<div style="font-size:11px;color:var(--text3)">${p.address}</div>`:''}
     </td>
     <td class="hide-mobile" style="font-size:12px">
@@ -12802,6 +12821,105 @@ function renderOC() {
 }
 
 // ── OC PANEL ──
+// ══════════════════════════════════════════════
+// BÚSQUEDA GLOBAL
+// ══════════════════════════════════════════════
+function hideGlobalSearch() {
+  document.getElementById('global-search-results').style.display = 'none';
+}
+
+function onGlobalSearch(q) {
+  const box = document.getElementById('global-search-results');
+  q = (q||'').toLowerCase().trim();
+  if (!q) { box.style.display = 'none'; return; }
+
+  const results = [];
+
+  // Proveedores
+  (state.proveedores||[]).forEach(p => {
+    if ((p.name||'').toLowerCase().includes(q) || (p.nit||'').toLowerCase().includes(q))
+      results.push({ tipo:'Proveedor', icono:'🏭', titulo:p.name, sub:p.nit||'', action:`showPage('proveedores',null)`, color:'#7C3AED' });
+  });
+
+  // Clientes
+  (state.clientes||[]).forEach(c => {
+    if ((c.name||'').toLowerCase().includes(q) || (c.nit||'').toLowerCase().includes(q))
+      results.push({ tipo:'Cliente', icono:'👤', titulo:c.name, sub:c.nit||'', action:`showPage('clientes',null)`, color:'#0284C7' });
+  });
+
+  // Productos
+  (state.productos||[]).forEach(p => {
+    if ((p.description||'').toLowerCase().includes(q) || (p.codigo_interno||p.code||'').toLowerCase().includes(q))
+      results.push({ tipo:'Producto', icono:'📦', titulo:p.description, sub:p.codigo_interno||p.code||'', action:`showPage('productos',null)`, color:'#D97706' });
+  });
+
+  // OC
+  (state.oc||[]).forEach(o => {
+    const prov = (state.proveedores||[]).find(p=>p.id===o.proveedor_id);
+    if ((o.numero||'').toLowerCase().includes(q) || (prov?.name||'').toLowerCase().includes(q))
+      results.push({ tipo:'OC', icono:'🛒', titulo:o.numero||'—', sub:prov?.name||'', action:`showPage('compras',null);setTimeout(()=>showOCPanel('${o.id}'),400)`, color:'#059669' });
+  });
+
+  // OV
+  (state.pedidos||[]).forEach(o => {
+    const cli = (state.clientes||[]).find(c=>c.id===o.cliente_id);
+    if ((o.numero||String(o.order_number||'')).toLowerCase().includes(q) || (cli?.name||'').toLowerCase().includes(q))
+      results.push({ tipo:'OV', icono:'📋', titulo:`OV-${o.order_number||o.numero||''}`, sub:cli?.name||'', action:`showPage('ventas',null)`, color:'#DB2777' });
+  });
+
+  // Facturas OC
+  (state.ocFacturas||[]).forEach(f => {
+    const oc   = (state.oc||[]).find(o=>o.id===f.oc_id);
+    const prov = (state.proveedores||[]).find(p=>p.id===oc?.proveedor_id);
+    if ((f.numero||'').toLowerCase().includes(q) || (f.serie||'').toLowerCase().includes(q) || (prov?.name||'').toLowerCase().includes(q))
+      results.push({ tipo:'Factura', icono:'🧾', titulo:`${f.serie||''}${f.numero||''}`, sub:prov?.name||'', action:`showPage('compras',null);setTimeout(()=>showOCPanel('${oc?.id}'),400)`, color:'#DC2626' });
+  });
+
+  // Movimientos
+  (state.movimientos||[]).forEach(m => {
+    const prod = (state.productos||[]).find(p=>p.id===m.producto_id);
+    if ((m.mov_id||'').toLowerCase().includes(q) || (prod?.description||'').toLowerCase().includes(q) || (m.tipo||'').toLowerCase().includes(q) || (m.lote||'').toLowerCase().includes(q))
+      results.push({ tipo:'Movimiento', icono:'📊', titulo:m.mov_id||'—', sub:`${m.tipo||''} · ${prod?.description||''}`, action:`showPage('inventario',null)`, color:'#0891B2' });
+  });
+
+  if (!results.length) {
+    box.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">Sin resultados para "<strong>${q}</strong>"</div>`;
+    box.style.display = 'block';
+    return;
+  }
+
+  // Group by tipo
+  const grupos = {};
+  results.forEach(r => { if (!grupos[r.tipo]) grupos[r.tipo]=[]; grupos[r.tipo].push(r); });
+
+  let html = '';
+  Object.entries(grupos).forEach(([tipo, items]) => {
+    html += `<div style="padding:6px 14px 2px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);border-top:1px solid var(--border)">${items[0].icono} ${tipo}s</div>`;
+    items.slice(0,5).forEach(r => {
+      html += `<div onclick="${r.action};hideGlobalSearch();document.getElementById('global-search-input').value=''"
+        style="padding:10px 16px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:background 0.1s"
+        onmouseenter="this.style.background='var(--surface2)'"
+        onmouseleave="this.style.background='transparent'">
+        <div style="width:32px;height:32px;border-radius:8px;background:${r.color}18;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">${r.icono}</div>
+        <div style="min-width:0;flex:1">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.titulo}</div>
+          ${r.sub?`<div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.sub}</div>`:''}
+        </div>
+        <span style="font-size:10px;padding:2px 7px;border-radius:4px;font-weight:600;background:${r.color}18;color:${r.color};flex-shrink:0">${tipo}</span>
+      </div>`;
+    });
+    if (items.length>5) html += `<div style="padding:4px 16px 8px;font-size:11px;color:var(--text3)">+${items.length-5} más resultados</div>`;
+  });
+
+  box.innerHTML = html;
+  box.style.display = 'block';
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key==='Escape') hideGlobalSearch();
+  if ((e.ctrlKey||e.metaKey) && e.key==='k') { e.preventDefault(); document.getElementById('global-search-input')?.focus(); }
+});
+
 function showOCPanel(ocId) {
   currentOCId = ocId;
   const oc = state.oc.find(x=>x.id===ocId);
