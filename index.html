@@ -6713,7 +6713,7 @@ function openPagoProveedor(ocId) {
   document.getElementById('pago-monto').value       = '';
   document.getElementById('pago-referencia').value  = '';
   document.getElementById('pago-notas').value       = '';
-  document.getElementById('pago-cuenta').innerHTML  = _pagoCtaOpts();
+  document.getElementById('pago-cuenta').innerHTML  = _pagoCtaOptsProveedor(oc?.proveedor_id);
   document.getElementById('pago-historial-wrap').style.display = 'none';
 
   // Render distribution table
