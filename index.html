@@ -1626,9 +1626,9 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           </select>
           <select class="filter-select" id="filter-compras-estado" onchange="renderCompras()">
             <option value="">Todos los estados</option>
-            <option value="pendiente">Pendiente</option>
-            <option value="parcial">Parcial</option>
-            <option value="pagado">Pagado</option>
+            <option value="pendiente">Generada</option>
+            <option value="parcial">Parcialmente Pagada</option>
+            <option value="pagado">Pagada</option>
           </select>
           <input type="month" id="filter-compras-mes" class="filter-select" onchange="renderCompras()" style="max-width:160px"/>
           <button class="btn btn-sm" id="btn-pago-compras" onclick="openPagoDesdeCompras()" style="background:#EFF6FF;color:#3B82F6;border:1px solid #BFDBFE;display:none">
@@ -1797,7 +1797,16 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Facturas</div>
       <div class="table-wrap" style="margin-bottom:18px">
         <table>
-          <thead><tr><th>Serie</th><th>No. Factura</th><th>Fecha</th><th style="text-align:right">Total</th><th>Estado</th></tr></thead>
+          <thead><tr>
+            <th style="font-size:11px">No. Interno</th>
+            <th>Factura</th>
+            <th>Fecha</th>
+            <th style="text-align:right">Total</th>
+            <th>Pagos</th>
+            <th style="text-align:right">Saldo</th>
+            <th>Estatus</th>
+            <th></th>
+          </tr></thead>
           <tbody id="oc-panel-facturas"></tbody>
         </table>
       </div>
@@ -6828,6 +6837,16 @@ async function savePago() {
     toast('Completa fecha, forma de pago, cuenta y monto','error'); return;
   }
 
+  if (modo === 'single') {
+    // Validate factura is not fully paid
+    const fCheck  = state.ocFacturas.find(x=>x.id===facturaId);
+    const pagosCheck = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
+    const pagadoCheck = pagosCheck.reduce((s,p)=>s+Number(p.monto||0),0);
+    if (fCheck && pagadoCheck >= Number(fCheck.total||0)) {
+      toast('Esta factura ya está completamente pagada','error'); return;
+    }
+  }
+
   if (tipo === 'OC') {
     if (modo === 'single') {
       // Single factura payment
@@ -10175,8 +10194,8 @@ function renderCompras() {
     const total   = Number(c.valor_total||0);
     const saldo   = factura ? Math.max(0, Number(factura.total||total) - pagado) : total;
     const esPagado = saldo <= 0.01;
-    const estadoColor = esPagado ? 'badge-green' : pagado>0 ? 'badge-yellow' : 'badge-gray';
-    const estadoLabel = esPagado ? 'Pagado' : pagado>0 ? 'Parcial' : 'Pendiente';
+    const estadoColor = esPagado ? 'badge-green' : pagado>0 ? 'badge-yellow' : 'badge-blue';
+    const estadoLabel = esPagado ? 'Pagada' : pagado>0 ? 'Parcialmente Pagada' : 'Generada';
     sumNeto  += Number(c.valor_neto||0);
     sumIva   += Number(c.valor_iva||0);
     sumTotal += total;
@@ -13292,18 +13311,24 @@ function renderOCPanel(ocId) {
   const facts = state.ocFacturas.filter(f=>f.oc_id===ocId);
   document.getElementById('oc-panel-facturas').innerHTML = facts.map(f=>{
     const pagosF  = (state.pagosOC||[]).filter(p=>p.factura_id===f.id);
-    const pagado  = pagosF.reduce((s,p)=>s+Number(p.monto||0),0);
-    const saldo   = Math.max(0, Number(f.total||0) - pagado);
-    const esPagada = saldo <= 0;
-    return `<tr>
-      <td class="td-mono">${f.serie||'—'}</td>
-      <td class="td-mono">${f.numero||'—'}</td>
+    const pagado   = pagosF.reduce((s,p)=>s+Number(p.monto||0),0);
+    const saldo    = Math.max(0, Number(f.total||0) - pagado);
+    const esPagada = saldo <= 0.01;
+    const esParcial = pagado > 0 && !esPagada;
+    const statusLabel = esPagada ? 'Pagada' : esParcial ? 'Parcialmente Pagada' : 'Generada';
+    const statusColor = esPagada ? 'badge-green' : esParcial ? 'badge-yellow' : 'badge-blue';
+    return `<tr style="${esPagada?'opacity:0.75':''}">
+      <td class="td-mono" style="font-size:11px;color:var(--text3)">${f.num_interno||'—'}</td>
+      <td class="td-mono">${f.serie||'—'}${f.numero||'—'}</td>
       <td>${fmtDate(f.fecha)}</td>
       <td class="td-mono">${fmtMoney(f.total)}</td>
-      <td class="td-mono" style="color:var(--green)">${pagado>0?pagosF.map(p=>p.num_pago||fmtMoney(p.monto)).join(', '):'—'}</td>
-      <td class="td-mono" style="color:${saldo>0?'var(--accent)':'var(--text3)'};font-weight:${saldo>0?'700':'400'}">${saldo>0?fmtMoney(saldo):'✓ Pagado'}</td>
-      <td><span class="badge ${esPagada?'badge-green':pagado>0?'badge-yellow':'badge-gray'}">${esPagada?'Pagada':pagado>0?'Parcial':'Pendiente'}</span></td>
-      <td>${!esPagada?`<button class="btn btn-sm btn-primary" onclick="openPagoOC('${f.id}')">💳 Pagar</button>`:''}</td>
+      <td class="td-mono" style="color:var(--green)">${pagado>0?pagosF.map(p=>p.num_pago||'').filter(Boolean).join(', ')||fmtMoney(pagado):'—'}</td>
+      <td class="td-mono" style="color:${esPagada?'var(--text3)':'var(--accent)'};font-weight:${esPagada?'400':'700'}">${esPagada?'—':fmtMoney(saldo)}</td>
+      <td><span class="badge ${statusColor}">${statusLabel}</span></td>
+      <td>${!esPagada
+        ? `<button class="btn btn-sm btn-primary" onclick="openPagoOC('${f.id}')">💳 Pagar</button>`
+        : `<span style="font-size:11px;color:var(--green)">✓ Completada</span>`
+      }</td>
     </tr>`;
   }).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:12px">Sin facturas</td></tr>';
 
