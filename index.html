@@ -1642,6 +1642,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
               <thead>
                 <tr>
                   <th style="width:36px"><input type="checkbox" id="compras-check-all" onclick="toggleAllCompras(this)" style="width:15px;height:15px"/></th>
+                  <th style="color:var(--accent)">No. Factura Int.</th>
                   <th>Fecha</th>
                   <th>Tipo</th>
                   <th>Serie</th>
@@ -3906,7 +3907,13 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div class="modal-title">Ingresar Factura de Proveedor</div>
         <div id="foc-header-sub" style="font-size:12px;color:var(--text3);margin-top:2px"></div>
       </div>
-      <button class="modal-close" onclick="closeModal('modal-factura-oc')">✕</button>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="text-align:right">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:0.08em">No. Factura Interna</div>
+          <div id="foc-num-interno-display" style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--accent)">—</div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modal-factura-oc')">✕</button>
+      </div>
     </div>
     <div class="modal-body" style="padding:0">
       <input type="hidden" id="foc-oc-id"/>
@@ -6821,6 +6828,10 @@ async function savePago() {
   const tipo       = document.getElementById('pago-factura-id').dataset.tipo;
   const fecha      = document.getElementById('pago-fecha').value;
   const metodo     = document.getElementById('pago-forma').value;
+
+  // DEBUG
+  alert(`DEBUG savePago:\nmodo=${modo}\ntipo=${tipo}\nfacturaId=${facturaId}\nfecha=${fecha}\nmetodo=${metodo}`);
+
   const cuenta_id_raw = document.getElementById('pago-cuenta').value;
   const cuenta_id  = cuenta_id_raw.startsWith('prov-') ? null : cuenta_id_raw;
   const cuentaEl   = document.getElementById('pago-cuenta');
@@ -10134,6 +10145,115 @@ function openPagoDesdeCompras() {
   openModal('modal-pago');
 }
 
+function verDetalleFactura(facturaId) {
+  const f    = (state.ocFacturas||[]).find(x=>x.id===facturaId);
+  if (!f) { toast('Factura no encontrada','error'); return; }
+  const oc   = (state.oc||[]).find(o=>o.id===f.oc_id);
+  const prov = (state.proveedores||[]).find(p=>p.id===oc?.proveedor_id);
+  const items = (state.ocItems||[]).filter(i=>i.oc_id===f.oc_id);
+  const pagosF = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
+  const pagado = pagosF.reduce((s,p)=>s+Number(p.monto||0),0);
+  const saldo  = Math.max(0, Number(f.total||0)-pagado);
+  const esPagada = saldo<=0.01;
+  const esParcial = pagado>0 && !esPagada;
+  const statusLabel = esPagada?'Pagada':esParcial?'Parcialmente Pagada':'Generada';
+  const statusColor = esPagada?'#16A34A':esParcial?'#D97706':'#2563EB';
+
+  const itemsHtml = items.map(i=>{
+    const prod = (state.productos||[]).find(p=>p.id===i.producto_id);
+    const qty  = prod?.tipo==='servicio' ? Number(i.cantidad||0) : ocRecibidoQty(f.oc_id, i.producto_id);
+    const t    = qty * Number(i.precio_unit||0);
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 12px;font-size:13px">${prod?.description||'—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${qty.toFixed(3)} ${i.unidad||''}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${fmtMoney(i.precio_unit)}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtMoney(t)}</td>
+    </tr>`;
+  }).join('');
+
+  const pagosHtml = pagosF.length ? pagosF.map(p=>`
+    <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px">
+      <div>
+        <span style="font-family:'DM Mono',monospace;font-weight:700;color:var(--accent);margin-right:8px">${p.num_pago||'—'}</span>
+        <span>${fmtDate(p.fecha)}</span>
+        <span style="color:var(--text3);margin-left:8px">${p.metodo||'—'}</span>
+        ${p.referencia?`<span style="color:var(--text3);margin-left:8px;font-size:11px">${p.referencia}</span>`:''}
+        ${p.notas?`<span style="color:var(--text3);margin-left:8px;font-size:11px">${p.notas}</span>`:''}
+      </div>
+      <strong style="font-family:'DM Mono',monospace;color:var(--green)">${fmtGTQ(p.monto)}</strong>
+    </div>`).join('') : '<div style="color:var(--text3);font-size:12px;font-style:italic">Sin pagos registrados</div>';
+
+  const html = `
+    <div style="max-width:700px;width:95vw;background:var(--bg);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
+      <!-- Header -->
+      <div style="padding:20px 24px;display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1.5px solid var(--border)">
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:0.1em;margin-bottom:4px">Factura de Proveedor</div>
+          <div style="font-family:'DM Mono',monospace;font-size:22px;font-weight:700;color:var(--accent)">${f.num_interno||'—'}</div>
+          <div style="font-size:13px;color:var(--text2);margin-top:4px">${prov?.name||'—'} · ${oc?.numero||'—'}</div>
+        </div>
+        <div style="text-align:right">
+          <span style="padding:4px 12px;border-radius:99px;font-size:12px;font-weight:700;background:${statusColor}18;color:${statusColor}">${statusLabel}</span>
+          <button onclick="this.closest('.modal-overlay').remove()"
+            style="display:block;margin-top:10px;margin-left:auto;background:transparent;border:none;cursor:pointer;font-size:20px;color:var(--text3)">✕</button>
+        </div>
+      </div>
+      <!-- Datos -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px;border-bottom:1.5px solid var(--border)">
+        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Serie / No.</span>
+          <div style="font-family:'DM Mono',monospace;font-weight:600">${f.serie||''}${f.numero||'—'}</div></div>
+        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Tipo</span>
+          <div>${f.tipo||'—'}</div></div>
+        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Fecha Factura</span>
+          <div>${fmtDate(f.fecha)}</div></div>
+        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Fecha Vencimiento</span>
+          <div style="color:${f.fecha_vencimiento&&new Date(f.fecha_vencimiento)<new Date()&&!esPagada?'var(--red)':'inherit'}">${fmtDate(f.fecha_vencimiento)||'—'}</div></div>
+        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Método de Pago</span>
+          <div>${f.metodo_pago||'—'}</div></div>
+        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Ref. Pago</span>
+          <div style="font-family:'DM Mono',monospace">${f.ref_pago||'—'}</div></div>
+      </div>
+      <!-- Items -->
+      <div style="padding:16px 24px;border-bottom:1.5px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Detalle</div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="background:var(--surface2)">
+            <th style="padding:7px 12px;text-align:left;font-size:11px">Producto/Servicio</th>
+            <th style="padding:7px 12px;text-align:right;font-size:11px">Cantidad</th>
+            <th style="padding:7px 12px;text-align:right;font-size:11px">Precio Unit.</th>
+            <th style="padding:7px 12px;text-align:right;font-size:11px">Total</th>
+          </tr></thead>
+          <tbody>${itemsHtml}</tbody>
+        </table>
+        <div style="display:flex;justify-content:flex-end;gap:24px;padding:10px 12px;background:var(--surface2);border-radius:0 0 8px 8px;font-size:13px">
+          <span style="color:var(--text3)">Total: <strong style="font-family:'DM Mono',monospace;font-size:16px">${fmtMoney(f.total)}</strong></span>
+        </div>
+      </div>
+      <!-- Pagos -->
+      <div style="padding:16px 24px;border-bottom:1.5px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Pagos Registrados</div>
+        ${pagosHtml}
+        ${pagado>0?`<div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13px;font-weight:600">
+          <span>Saldo pendiente:</span>
+          <span style="font-family:'DM Mono',monospace;color:${esPagada?'var(--green)':'var(--accent)'}">${esPagada?'✓ Pagado':fmtGTQ(saldo)}</span>
+        </div>`:''}
+      </div>
+      <!-- Footer -->
+      <div style="padding:14px 24px;display:flex;justify-content:flex-end;gap:8px">
+        ${!esPagada?`<button class="btn btn-primary btn-sm" onclick="this.closest('.modal-overlay').remove();openPagoOC('${facturaId}')">💳 Registrar Pago</button>`:''}
+        <button class="btn btn-ghost btn-sm" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+      </div>
+    </div>`;
+
+  // Show as overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.cssText = 'display:flex;align-items:center;justify-content:center;z-index:2000';
+  overlay.innerHTML = html;
+  overlay.onclick = e => { if(e.target===overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
 function renderCompras() {
   const q   = (document.getElementById('search-compras')?.value||'').toLowerCase();
   const tp  = document.getElementById('filter-compras-tipo')?.value||'';
@@ -10181,6 +10301,16 @@ function renderCompras() {
           data-saldo="${saldo.toFixed(2)}" data-factura="${c.factura_id||''}"
           onclick="onCompraCheckChange()"
           style="width:15px;height:15px;cursor:pointer;accent-color:var(--accent)"/>`:''}
+      </td>
+      <td style="padding:8px 10px">
+        ${c.factura_id
+          ? `<span onclick="verDetalleFactura('${c.factura_id}')"
+              style="font-family:'DM Mono',monospace;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer"
+              title="Ver detalles de la factura">
+              ${(state.ocFacturas||[]).find(f=>f.id===c.factura_id)?.num_interno||'—'}
+            </span>`
+          : `<span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">—</span>`
+        }
       </td>
       <td style="white-space:nowrap">${fechaFmt}</td>
       <td><span class="badge badge-blue">${c.tipo||'—'}</span></td>
@@ -15435,7 +15565,9 @@ function openFacturaOC() {
   document.getElementById('foc-factura-id').value      = '';
   document.getElementById('foc-header-sub').textContent = `${oc?.numero||''} — ${prov?.name||''}`;
   document.getElementById('foc-proveedor-nombre').value = prov?.name||'';
-  document.getElementById('foc-num-interno').value      = nextFacturaInterna();
+  const numInterno = nextFacturaInterna();
+  document.getElementById('foc-num-interno').value          = numInterno;
+  document.getElementById('foc-num-interno-display').textContent = numInterno;
   document.getElementById('foc-serie').value            = '';
   document.getElementById('foc-numero').value           = '';
   document.getElementById('foc-tipo').value             = 'FC';
