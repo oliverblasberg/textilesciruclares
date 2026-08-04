@@ -5450,7 +5450,7 @@ function renderClientes() {
     <tr>
       <td class="td-mono">${c.code||'—'}</td>
       <td style="cursor:pointer" onclick="editCliente('${c.id}')">
-        <div style="font-weight:500;color:var(--accent);text-decoration:underline dotted">${c.name}</div>
+        <div style="font-weight:500;color:var(--accent)">${c.name}</div>
         ${c.address?`<div style="font-size:11px;color:var(--text3)">${c.address}</div>`:''}
       </td>
       <td class="hide-mobile" style="font-size:12px">
@@ -7883,7 +7883,7 @@ function renderProveedores() {
   if (!tbody) return;
   tbody.innerHTML = data.length ? data.map(p => `<tr>
     <td class="td-mono">${p.nit||'—'}</td>
-    <td style="font-weight:500;cursor:pointer" onclick="editProveedor('${p.id}')">
+    <td style="font-weight:500" onclick="editProveedor('${p.id}')">
       <div style="color:var(--accent);text-decoration:underline dotted">${p.name}</div>
       ${p.address?`<div style="font-size:11px;color:var(--text3)">${p.address}</div>`:''}
     </td>
