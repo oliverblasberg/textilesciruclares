@@ -2895,8 +2895,17 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 <div class="modal-overlay" id="modal-pago">
   <div class="modal" style="max-width:680px;width:95vw">
     <div class="modal-header">
-      <div class="modal-title" id="modal-pago-title">Registrar Pago</div>
-      <button class="modal-close" onclick="closeModal('modal-pago')">✕</button>
+      <div>
+        <div class="modal-title" id="modal-pago-title">Registrar Pago</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">Borrador hasta confirmar</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="text-align:right">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:0.08em">No. Pago</div>
+          <div id="pago-num-correlativo" style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--accent)">—</div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modal-pago')">✕</button>
+      </div>
     </div>
     <div class="modal-body">
       <input type="hidden" id="pago-factura-id"/>
@@ -6667,6 +6676,9 @@ function openPagoOC(facturaId) {
   const total  = Number(f.total||0);
   const pend   = Math.max(0, total - pagado);
 
+  const _numPago = nextNumPago();
+  document.getElementById('pago-num-correlativo').textContent = _numPago;
+  document.getElementById('pago-factura-id').dataset.numPago = _numPago;
   document.getElementById('pago-modo').value       = 'single';
   document.getElementById('pago-factura-id').value = facturaId;
   document.getElementById('pago-factura-id').dataset.tipo = 'OC';
@@ -6826,7 +6838,7 @@ async function savePago() {
         n.codigo==='21101001' || ((n.nombre||'').toLowerCase().includes('proveedores') && n.tipo?.toLowerCase().includes('pasivo'))
       );
 
-      const num_pago = nextNumPago();
+      const num_pago = document.getElementById('pago-factura-id').dataset.numPago || nextNumPago();
       const { error: ePago } = await sb.from('erp_pagos').insert({
         factura_id: facturaId, fecha, metodo, cuenta_id, monto, referencia, num_pago,
         notas: [notas, bancoInfo?`Banco: ${bancoInfo}`:''].filter(Boolean).join(' | ') || null,
@@ -6874,12 +6886,13 @@ async function savePago() {
         n.codigo==='21101001' || ((n.nombre||'').toLowerCase().includes('proveedores') && n.tipo?.toLowerCase().includes('pasivo'))
       );
 
+      const num_pago_multi = document.getElementById('pago-factura-id').dataset.numPago || nextNumPago();
       for (const d of distribs) {
         const f    = state.ocFacturas.find(x=>x.id===d.factura_id);
         const ocF  = state.oc.find(o=>o.id===f?.oc_id);
         await sb.from('erp_pagos').insert({
           factura_id: d.factura_id,
-          num_pago: nextNumPago(),
+          num_pago: num_pago_multi,
           fecha, metodo, cuenta_id, monto: d.monto, referencia, notas, moneda:'GTQ',
         });
         // Update factura estado
@@ -10074,9 +10087,12 @@ function openPagoDesdeCompras() {
   const prov    = state.proveedores.find(p=>p.id===provId);
   const totalPend = checked.reduce((s,c)=>s+parseFloat(c.dataset.saldo||0),0);
 
+  const _numPago3 = nextNumPago();
+  document.getElementById('pago-num-correlativo').textContent = _numPago3;
   document.getElementById('pago-modo').value         = 'multi';
   document.getElementById('pago-factura-id').value   = '';
   document.getElementById('pago-factura-id').dataset.tipo = 'OC';
+  document.getElementById('pago-factura-id').dataset.numPago = _numPago3;
   document.getElementById('pago-proveedor-id').value = provId;
   document.getElementById('modal-pago-title').textContent = `Registrar Pago — ${prov?.name||'Proveedor'}`;
   document.getElementById('pago-fact-info').textContent   = `${prov?.name||'—'} · ${moneda} · ${checked.length} factura(s)`;
