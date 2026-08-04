@@ -357,6 +357,8 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 }
 .modal-close:hover { background: var(--surface2); color: var(--text); }
 .modal-body { padding: 18px 20px; }
+.prov-tab { padding:12px 18px;font-size:13px;font-weight:600;border:none;background:transparent;color:var(--text3);cursor:pointer;margin-bottom:-2px;white-space:nowrap;border-bottom:2px solid transparent; }
+.prov-tab-active { background:var(--bg)!important;color:var(--accent)!important;border-bottom:2px solid var(--accent)!important; }
 .modal-footer {
   padding: 12px 20px; border-top: 1px solid var(--border);
   display: flex; justify-content: flex-end; gap: 8px;
@@ -4571,14 +4573,134 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 <!-- PROVEEDOR MODAL -->
 <div class="modal-overlay" id="modal-proveedor">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg" style="max-width:700px;width:95vw">
     <div class="modal-header">
       <div class="modal-title" id="modal-proveedor-title">Nuevo Proveedor</div>
       <button class="modal-close" onclick="closeModal('modal-proveedor')">✕</button>
     </div>
-    <div class="modal-body">
+    <div class="modal-body" style="padding:0">
       <input type="hidden" id="prov-id"/>
-      <div class="form-grid form-grid-2">
+
+      <!-- TABS -->
+      <div style="display:flex;border-bottom:2px solid var(--border);background:var(--surface2);overflow-x:auto">
+        <button id="prov-tab-general"     onclick="provTab('general')"     class="prov-tab prov-tab-active">🏢 General</button>
+        <button id="prov-tab-contab"      onclick="provTab('contab')"      class="prov-tab">💰 Contabilidad</button>
+        <button id="prov-tab-produccion"  onclick="provTab('produccion')"  class="prov-tab">🏭 Producción</button>
+        <button id="prov-tab-otros"       onclick="provTab('otros')"       class="prov-tab">⚙️ Otros</button>
+      </div>
+
+      <!-- TAB 1: GENERAL -->
+      <div id="prov-panel-general" style="padding:20px">
+        <div class="form-grid form-grid-2">
+          <div class="field"><label>NIT *</label><input type="text" id="prov-nit" placeholder="1234567-8"/></div>
+          <div class="field field-full"><label>Nombre / Razón Social *</label><input type="text" id="prov-name"/></div>
+          <div class="form-section-title">Dirección</div>
+          <div class="field field-full"><label>Dirección 1</label><input type="text" id="prov-address" placeholder="Calle, número, colonia"/></div>
+          <div class="field field-full"><label>Dirección 2</label><input type="text" id="prov-address2" placeholder="Edificio, oficina, zona (opcional)"/></div>
+          <div class="field"><label>Estado / Departamento</label><input type="text" id="prov-estado" placeholder="Ej. Guatemala"/></div>
+          <div class="field"><label>País</label>
+            <select id="prov-pais" onchange="onProvPaisChange()">
+              <option value="">— Seleccionar país —</option>
+              <option value="GT">🇬🇹 Guatemala (local)</option>
+              <option disabled>──────────────</option>
+              <option value="AF">Afganistán</option><option value="AL">Albania</option><option value="DE">Alemania</option><option value="AD">Andorra</option><option value="AO">Angola</option><option value="AG">Antigua y Barbuda</option><option value="SA">Arabia Saudita</option><option value="DZ">Argelia</option><option value="AR">Argentina</option><option value="AM">Armenia</option><option value="AU">Australia</option><option value="AT">Austria</option><option value="AZ">Azerbaiyán</option><option value="BS">Bahamas</option><option value="BD">Bangladés</option><option value="BB">Barbados</option><option value="BH">Baréin</option><option value="BZ">Belice</option><option value="BJ">Benín</option><option value="BY">Bielorrusia</option><option value="BO">Bolivia</option><option value="BA">Bosnia y Herzegovina</option><option value="BW">Botsuana</option><option value="BR">Brasil</option><option value="BN">Brunéi</option><option value="BG">Bulgaria</option><option value="BF">Burkina Faso</option><option value="BI">Burundi</option><option value="BT">Bután</option><option value="BE">Bélgica</option><option value="CV">Cabo Verde</option><option value="KH">Camboya</option><option value="CM">Camerún</option><option value="CA">Canadá</option><option value="QA">Catar</option><option value="TD">Chad</option><option value="CL">Chile</option><option value="CN">China</option><option value="CY">Chipre</option><option value="CO">Colombia</option><option value="KM">Comoras</option><option value="KP">Corea del Norte</option><option value="KR">Corea del Sur</option><option value="CR">Costa Rica</option><option value="CI">Costa de Marfil</option><option value="HR">Croacia</option><option value="CU">Cuba</option><option value="DK">Dinamarca</option><option value="DJ">Djibouti</option><option value="DM">Dominica</option><option value="EC">Ecuador</option><option value="EG">Egipto</option><option value="SV">El Salvador</option><option value="AE">Emiratos Árabes Unidos</option><option value="ER">Eritrea</option><option value="SK">Eslovaquia</option><option value="SI">Eslovenia</option><option value="ES">España</option><option value="US">Estados Unidos</option><option value="EE">Estonia</option><option value="ET">Etiopía</option><option value="PH">Filipinas</option><option value="FI">Finlandia</option><option value="FJ">Fiyi</option><option value="FR">Francia</option><option value="GA">Gabón</option><option value="GM">Gambia</option><option value="GE">Georgia</option><option value="GH">Ghana</option><option value="GD">Granada</option><option value="GR">Grecia</option><option value="GT">Guatemala</option><option value="GN">Guinea</option><option value="GQ">Guinea Ecuatorial</option><option value="GW">Guinea-Bisáu</option><option value="GY">Guyana</option><option value="HT">Haití</option><option value="HN">Honduras</option><option value="HU">Hungría</option><option value="IN">India</option><option value="ID">Indonesia</option><option value="IQ">Irak</option><option value="IE">Irlanda</option><option value="IR">Irán</option><option value="IS">Islandia</option><option value="MH">Islas Marshall</option><option value="SB">Islas Salomón</option><option value="IL">Israel</option><option value="IT">Italia</option><option value="JM">Jamaica</option><option value="JP">Japón</option><option value="JO">Jordania</option><option value="KZ">Kazajistán</option><option value="KE">Kenia</option><option value="KG">Kirguistán</option><option value="KI">Kiribati</option><option value="KW">Kuwait</option><option value="LA">Laos</option><option value="LS">Lesoto</option><option value="LV">Letonia</option><option value="LR">Liberia</option><option value="LY">Libia</option><option value="LI">Liechtenstein</option><option value="LT">Lituania</option><option value="LU">Luxemburgo</option><option value="LB">Líbano</option><option value="MK">Macedonia del Norte</option><option value="MG">Madagascar</option><option value="MY">Malasia</option><option value="MW">Malaui</option><option value="MV">Maldivas</option><option value="MT">Malta</option><option value="ML">Malí</option><option value="MA">Marruecos</option><option value="MU">Mauricio</option><option value="MR">Mauritania</option><option value="FM">Micronesia</option><option value="MD">Moldavia</option><option value="MN">Mongolia</option><option value="ME">Montenegro</option><option value="MZ">Mozambique</option><option value="MM">Myanmar</option><option value="MX">México</option><option value="MC">Mónaco</option><option value="NA">Namibia</option><option value="NR">Nauru</option><option value="NP">Nepal</option><option value="NI">Nicaragua</option><option value="NG">Nigeria</option><option value="NO">Noruega</option><option value="NZ">Nueva Zelanda</option><option value="NE">Níger</option><option value="OM">Omán</option><option value="PK">Pakistán</option><option value="PW">Palaos</option><option value="PA">Panamá</option><option value="PG">Papúa Nueva Guinea</option><option value="PY">Paraguay</option><option value="NL">Países Bajos</option><option value="PE">Perú</option><option value="PL">Polonia</option><option value="PT">Portugal</option><option value="GB">Reino Unido</option><option value="CF">República Centroafricana</option><option value="CZ">República Checa</option><option value="CD">República Democrática del Congo</option><option value="DO">República Dominicana</option><option value="RW">Ruanda</option><option value="RO">Rumanía</option><option value="RU">Rusia</option><option value="WS">Samoa</option><option value="KN">San Cristóbal y Nieves</option><option value="SM">San Marino</option><option value="VC">San Vicente y las Granadinas</option><option value="LC">Santa Lucía</option><option value="ST">Santo Tomé y Príncipe</option><option value="SN">Senegal</option><option value="RS">Serbia</option><option value="SC">Seychelles</option><option value="SL">Sierra Leona</option><option value="SG">Singapur</option><option value="SY">Siria</option><option value="SO">Somalia</option><option value="LK">Sri Lanka</option><option value="SZ">Suazilandia</option><option value="SD">Sudán</option><option value="SS">Sudán del Sur</option><option value="SE">Suecia</option><option value="CH">Suiza</option><option value="SR">Surinam</option><option value="TH">Tailandia</option><option value="TZ">Tanzania</option><option value="TJ">Tayikistán</option><option value="TL">Timor Oriental</option><option value="TG">Togo</option><option value="TO">Tonga</option><option value="TT">Trinidad y Tobago</option><option value="TM">Turkmenistán</option><option value="TR">Turquía</option><option value="TV">Tuvalu</option><option value="TN">Túnez</option><option value="UA">Ucrania</option><option value="UG">Uganda</option><option value="UY">Uruguay</option><option value="UZ">Uzbekistán</option><option value="VU">Vanuatu</option><option value="VE">Venezuela</option><option value="VN">Vietnam</option><option value="YE">Yemen</option><option value="ZM">Zambia</option><option value="ZW">Zimbabue</option>
+            </select>
+          </div>
+          <div class="form-section-title">General</div>
+          <div class="field"><label>Teléfono General</label><input type="text" id="prov-phone" placeholder="+502 0000-0000"/></div>
+          <div class="field"><label>Email General</label><input type="email" id="prov-email" placeholder="info@empresa.com"/></div>
+          <div class="field field-full"><label>Notas</label><textarea id="prov-notes" rows="2"></textarea></div>
+        </div>
+      </div>
+
+      <!-- TAB 2: CONTABILIDAD -->
+      <div id="prov-panel-contab" style="display:none;padding:20px">
+        <div class="form-grid form-grid-2">
+          <div class="form-section-title">Contacto de Facturación</div>
+          <div class="field field-full"><label>Nombre</label><input type="text" id="prov-fact-nombre" placeholder="Nombre del contacto"/></div>
+          <div class="field"><label>Email</label><input type="email" id="prov-fact-email" placeholder="facturacion@empresa.com"/></div>
+          <div class="field"><label>Teléfono</label><input type="text" id="prov-fact-tel" placeholder="+502 0000-0000"/></div>
+          <div class="form-section-title">Moneda</div>
+          <div class="field"><label>Moneda Principal *</label>
+            <select id="prov-moneda" onchange="onProvMonedaChange()">
+              <option value="GTQ">GTQ — Quetzal</option>
+              <option value="USD">USD — Dólar</option>
+            </select>
+          </div>
+          <div class="field"><label>También opera en</label>
+            <select id="prov-moneda2">
+              <option value="">— Solo moneda principal —</option>
+              <option value="GTQ">GTQ — Quetzal</option>
+              <option value="USD">USD — Dólar</option>
+            </select>
+          </div>
+          <div class="form-section-title">Datos Bancarios</div>
+          <div class="field field-full"><label>Banco</label><input type="text" id="prov-banco" placeholder="Ej. Banco Industrial"/></div>
+          <div class="field"><label>Tipo de Cuenta</label>
+            <select id="prov-tipo-cuenta">
+              <option value="">— Seleccionar —</option>
+              <option value="monetaria">Monetaria</option>
+              <option value="ahorro">Ahorro</option>
+            </select>
+          </div>
+          <div class="field"><label>No. de Cuenta</label><input type="text" id="prov-num-cuenta" placeholder="Ej. 123-456789-0" style="font-family:'DM Mono',monospace"/></div>
+          <div class="form-section-title">Términos</div>
+          <div class="field field-full"><label>Términos de Pago</label>
+            <select id="prov-terminos"><option value="">— Seleccionar —</option></select>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: PRODUCCIÓN -->
+      <div id="prov-panel-produccion" style="display:none;padding:20px">
+        <div class="form-grid form-grid-2">
+          <div class="form-section-title">Contacto de Producción</div>
+          <div class="field field-full"><label>Nombre</label><input type="text" id="prov-prod-nombre" placeholder="Nombre del contacto"/></div>
+          <div class="field"><label>Email</label><input type="email" id="prov-prod-email" placeholder="produccion@empresa.com"/></div>
+          <div class="field"><label>Teléfono</label><input type="text" id="prov-prod-tel" placeholder="+502 0000-0000"/></div>
+          <div class="form-section-title">Logística</div>
+          <div class="field field-full"><label>Bodega Predeterminada <span style="font-weight:400;color:var(--text3)">(destino de entregas)</span></label>
+            <select id="prov-bodega-pred"><option value="">— Seleccionar bodega —</option></select>
+          </div>
+          <div class="field field-full"><label>Incoterms Predeterminado</label>
+            <select id="prov-incoterms"><option value="">— Seleccionar —</option></select>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 4: OTROS -->
+      <div id="prov-panel-otros" style="display:none;padding:20px">
+        <div class="form-grid form-grid-2">
+          <div class="form-section-title">Integraciones Configuradas</div>
+          <div class="field field-full" style="padding:14px 16px;background:var(--surface2);border-radius:8px">
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                <input type="checkbox" id="prov-pl-configurado" style="width:16px;height:16px;accent-color:var(--green)"/>
+                <div>
+                  <div style="font-size:13px;font-weight:500">📦 Packing List configurado</div>
+                  <div style="font-size:11px;color:var(--text3)">El sistema puede escanear e interpretar automáticamente el PL de este proveedor</div>
+                </div>
+              </label>
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+                <input type="checkbox" id="prov-factura-configurada" style="width:16px;height:16px;accent-color:var(--green)"/>
+                <div>
+                  <div style="font-size:13px;font-weight:500">🧾 Factura / Invoice configurada</div>
+                  <div style="font-size:11px;color:var(--text3)">El sistema puede leer y registrar automáticamente facturas de este proveedor</div>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-proveedor')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveProveedor()">Guardar</button>
+    </div>
+  </div>
+</div>
+
         <div class="form-section-title">Identificación</div>
         <div class="field"><label id="prov-nit-label">NIT *</label><input type="text" id="prov-nit" placeholder="1234567-8"/></div>
         <div class="field field-full"><label>Nombre / Razón Social *</label><input type="text" id="prov-name"/></div>
@@ -4830,63 +4952,6 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
                 <option value="">— Seleccionar —</option>
                 <option value="monetaria">Monetaria</option>
                 <option value="ahorro">Ahorro</option>
-              </select>
-            </div>
-            <div>
-              <div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:4px">No. de Cuenta</div>
-              <input type="text" id="prov-num-cuenta" placeholder="Ej. 123-456789-0"
-                style="padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"/>
-            </div>
-          </div>
-        </div>
-        <div class="field"><label>Incoterms Predeterminado</label>
-          <select id="prov-incoterms"><option value="">— Seleccionar —</option></select>
-        </div>
-        <div class="field"><label>Términos de Pago</label>
-          <select id="prov-terminos"><option value="">— Seleccionar —</option></select>
-        </div>
-        <div class="field field-full" style="padding:12px 16px;background:var(--surface2);border-radius:8px">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;letter-spacing:0.08em">Datos Bancarios</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-            <div>
-              <div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:4px">Banco</div>
-              <input type="text" id="prov-banco" placeholder="Ej. Banco Industrial" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;width:100%"/>
-            </div>
-            <div>
-              <div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:4px">Tipo de Cuenta</div>
-              <select id="prov-tipo-cuenta" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;width:100%">
-                <option value="">— Seleccionar —</option>
-                <option value="monetaria">Monetaria</option>
-                <option value="ahorro">Ahorro</option>
-              </select>
-            </div>
-            <div>
-              <div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:4px">Número de Cuenta</div>
-              <input type="text" id="prov-num-cuenta" placeholder="Ej. 001-123456-7" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"/>
-            </div>
-          </div>
-        </div>
-        <div class="field field-full" style="padding:12px 16px;background:var(--surface2);border-radius:8px">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px;letter-spacing:0.08em">Integraciones Configuradas</div>
-          <div style="display:flex;gap:24px">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="prov-pl-configurado" style="width:16px;height:16px;accent-color:var(--green)"/>
-              <span style="font-size:13px;font-weight:500">📦 Packing List configurado</span>
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-              <input type="checkbox" id="prov-factura-configurada" style="width:16px;height:16px;accent-color:var(--green)"/>
-              <span style="font-size:13px;font-weight:500">🧾 Factura / Invoice configurada</span>
-            </label>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modal-proveedor')">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveProveedor()">Guardar</button>
-    </div>
-  </div>
-</div>
 
 <!-- COMPRA MODAL -->
 <div class="modal-overlay" id="modal-compra">
@@ -7844,6 +7909,16 @@ function renderProveedores() {
   '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">◎</div><p>Sin proveedores registrados</p></div></td></tr>';
 }
 
+function provTab(tab) {
+  ['general','contab','produccion','otros'].forEach(t => {
+    document.getElementById(`prov-panel-${t}`).style.display = t===tab ? '' : 'none';
+    const btn = document.getElementById(`prov-tab-${t}`);
+    btn.style.background   = t===tab ? 'var(--bg)' : 'transparent';
+    btn.style.color        = t===tab ? 'var(--accent)' : 'var(--text3)';
+    btn.style.borderBottom = t===tab ? '2px solid var(--accent)' : 'none';
+  });
+}
+
 function openNewProveedor() {
   document.getElementById('prov-id').value = '';
   ['prov-id','prov-nit','prov-name','prov-address','prov-address2','prov-estado','prov-pais','prov-fact-nombre','prov-fact-email','prov-fact-tel','prov-prod-nombre','prov-prod-email','prov-prod-tel','prov-phone','prov-email','prov-notes'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
@@ -7852,6 +7927,8 @@ function openNewProveedor() {
   document.getElementById('prov-moneda2').value = '';
   document.getElementById('prov-incoterms').innerHTML = incotermsOpts();
   document.getElementById('prov-terminos').innerHTML  = terminosPagoOpts();
+  provTab('general');
+  document.getElementById('prov-bodega-pred').innerHTML = '<option value="">— Seleccionar bodega —</option>' + (state.bodegas||[]).filter(b=>b.activa!==false).map(b=>`<option value="${b.id}">${(b.codigo?b.codigo+' — ':'')+b.nombre}</option>`).join('');
   document.getElementById('prov-banco').value          = '';
   document.getElementById('prov-tipo-cuenta').value   = '';
   document.getElementById('prov-num-cuenta').value    = '';
@@ -7886,6 +7963,9 @@ function editProveedor(id) {
   document.getElementById('prov-notes').value    = p.notes||'';
   document.getElementById('prov-incoterms').innerHTML = incotermsOpts(p.incoterms_default||'');
   document.getElementById('prov-terminos').innerHTML  = terminosPagoOpts(p.terminos_pago||'');
+  provTab('general');
+  provTab('general');
+  document.getElementById('prov-bodega-pred').innerHTML = '<option value="">— Seleccionar bodega —</option>' + (state.bodegas||[]).filter(b=>b.activa!==false).map(b=>`<option value="${b.id}"${b.id===p.bodega_id?' selected':''}>` + (b.codigo?b.codigo+' — ':'') + b.nombre + '</option>').join('');
   document.getElementById('prov-banco').value          = p.banco||'';
   document.getElementById('prov-tipo-cuenta').value   = p.tipo_cuenta||'';
   document.getElementById('prov-num-cuenta').value    = p.num_cuenta||'';
@@ -7985,6 +8065,7 @@ async function saveProveedor() {
       notes:             document.getElementById('prov-notes').value.trim(),
       incoterms_default:    document.getElementById('prov-incoterms')?.value||null,
       terminos_pago:        document.getElementById('prov-terminos')?.value||null,
+      bodega_id:           document.getElementById('prov-bodega-pred')?.value||null,
       banco:               document.getElementById('prov-banco')?.value.trim()||null,
       tipo_cuenta:         document.getElementById('prov-tipo-cuenta')?.value||null,
       num_cuenta:          document.getElementById('prov-num-cuenta')?.value.trim()||null,
