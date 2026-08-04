@@ -6823,15 +6823,12 @@ function calcDistribucion() {
 function calcPagoSaldo() { onPagoMontoChange(); }
 
 async function savePago() {
+  try {
   const modo       = document.getElementById('pago-modo').value;
   const facturaId  = document.getElementById('pago-factura-id').value;
   const tipo       = document.getElementById('pago-factura-id').dataset.tipo;
   const fecha      = document.getElementById('pago-fecha').value;
   const metodo     = document.getElementById('pago-forma').value;
-
-  // DEBUG
-  alert(`DEBUG savePago:\nmodo=${modo}\ntipo=${tipo}\nfacturaId=${facturaId}\nfecha=${fecha}\nmetodo=${metodo}`);
-
   const cuenta_id_raw = document.getElementById('pago-cuenta').value;
   const cuenta_id  = cuenta_id_raw.startsWith('prov-') ? null : cuenta_id_raw;
   const cuentaEl   = document.getElementById('pago-cuenta');
@@ -6971,6 +6968,9 @@ async function savePago() {
       toast('¡Factura pagada completamente!');
     } else { toast('Pago registrado'); }
     closeModal('modal-pago');
+  }
+  } catch(e) {
+    alert('Error en savePago:\n' + e.message + '\n\n' + e.stack?.substring(0,300));
   }
 }
 
