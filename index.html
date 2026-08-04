@@ -6669,7 +6669,7 @@ function openPagoOC(facturaId) {
   document.getElementById('pago-monto').value      = pend > 0 ? pend.toFixed(2) : '';
   document.getElementById('pago-referencia').value = '';
   document.getElementById('pago-notas').value      = '';
-  document.getElementById('pago-cuenta').innerHTML = _pagoCtaOpts();
+  document.getElementById('pago-cuenta').innerHTML = _pagoCtaOptsProveedor(prov?.id);
   document.getElementById('pago-distribucion-wrap').style.display = 'none';
   _pagoHistorial(facturaId);
   openModal('modal-pago');
