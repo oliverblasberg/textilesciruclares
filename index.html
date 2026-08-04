@@ -3957,16 +3957,16 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             </select>
           </div>
           <div class="field">
+            <label>Referencia Factura <span style="font-weight:400;color:var(--text3)">(No. OC)</span></label>
+            <input type="text" id="foc-ref-factura" readonly style="background:var(--surface2);font-family:'DM Mono',monospace"/>
+          </div>
+          <div class="field">
             <label>Serie</label>
             <input type="text" id="foc-serie" placeholder="Ej. A"/>
           </div>
           <div class="field">
             <label>No. Factura del Proveedor *</label>
             <input type="text" id="foc-numero" placeholder="00001234" style="font-family:'DM Mono',monospace;font-weight:600"/>
-          </div>
-          <div class="field">
-            <label>Referencia Factura <span style="font-weight:400;color:var(--text3)">(No. OC)</span></label>
-            <input type="text" id="foc-ref-factura" readonly style="background:var(--surface2);font-family:'DM Mono',monospace"/>
           </div>
         </div>
 
@@ -3985,9 +3985,18 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <label>Fecha de Vencimiento</label>
             <input type="date" id="foc-fecha-vencimiento"/>
           </div>
+        </div>
+
+        <!-- Sección: Tasa de Cambio -->
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Tasa de Cambio</div>
+        <div class="form-grid form-grid-2" style="margin-bottom:20px">
           <div class="field">
-            <label>Tasa de Cambio</label>
-            <input type="number" id="foc-tc" step="0.0001" placeholder="Ej. 7.7500" style="font-family:'DM Mono',monospace"/>
+            <label>TC del Día <span style="font-weight:400;color:var(--text3)">(GTQ/USD — editable)</span></label>
+            <div style="position:relative">
+              <input type="number" id="foc-tc" step="0.0001" placeholder="Ej. 7.7500"
+                style="font-family:'DM Mono',monospace;font-weight:600;padding-right:60px;width:100%"/>
+              <span id="foc-tc-fecha" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--text3)"></span>
+            </div>
           </div>
         </div>
 
@@ -15519,6 +15528,50 @@ function nextFacturaInterna() {
   return `FACT/${year}/${month}/${String(next).padStart(4,'0')}`;
 }
 
+function calcFocItemIva(idx, qty, precio) {
+  const conIva = document.getElementById(`foc-iva-${idx}`)?.checked;
+  const total  = parseFloat((qty * precio).toFixed(2));
+  const neto   = conIva ? parseFloat((total / 1.12).toFixed(2)) : total;
+  const iva    = conIva ? parseFloat((total - neto).toFixed(2)) : 0;
+
+  const netoEl = document.getElementById(`foc-neto-${idx}`);
+  const ivaEl  = document.getElementById(`foc-iva-val-${idx}`);
+  const totEl  = document.getElementById(`foc-total-${idx}`);
+
+  if (netoEl) netoEl.textContent = fmtMoney(neto);
+  if (ivaEl)  ivaEl.textContent  = conIva ? fmtMoney(iva) : '—';
+  if (totEl)  totEl.textContent  = fmtMoney(total);
+
+  // Recalculate grand totals
+  let sumNeto = 0, sumIva = 0, sumTotal = 0;
+  document.querySelectorAll('[id^="foc-neto-"]').forEach((el, i) => {
+    sumNeto  += parseFloat(el.textContent.replace(/[^0-9.]/g,''))||0;
+    sumIva   += parseFloat(document.getElementById(`foc-iva-val-${i}`)?.textContent.replace(/[^0-9.]/g,'')||0);
+    sumTotal += parseFloat(document.getElementById(`foc-total-${i}`)?.textContent.replace(/[^0-9.]/g,'')||0);
+  });
+  document.getElementById('foc-subtotal-display').textContent = fmtMoney(sumNeto);
+  document.getElementById('foc-iva-display').textContent      = fmtMoney(sumIva);
+  document.getElementById('foc-total-display').textContent    = fmtMoney(sumTotal);
+  document.getElementById('foc-total').value                  = sumTotal.toFixed(2);
+}
+
+function calcFocTotales(items, monedaOC, esServicio) {
+  let sumNeto = 0, sumIva = 0, sumTotal = 0;
+  items.forEach((i, idx) => {
+    const qty   = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(currentOCId, i.producto_id);
+    const total = parseFloat((qty * Number(i.precio_unit||0)).toFixed(2));
+    const neto  = parseFloat((total / 1.12).toFixed(2));
+    const iva   = parseFloat((total - neto).toFixed(2));
+    sumNeto  += neto;
+    sumIva   += iva;
+    sumTotal += total;
+  });
+  document.getElementById('foc-total').value                  = sumTotal.toFixed(2);
+  document.getElementById('foc-total-display').textContent    = fmtMoney(sumTotal, monedaOC);
+  document.getElementById('foc-subtotal-display').textContent = fmtMoney(sumNeto, monedaOC);
+  document.getElementById('foc-iva-display').textContent      = fmtMoney(sumIva, monedaOC);
+}
+
 function calcFocVencimiento() {
   const fecha  = document.getElementById('foc-fecha').value;
   const ocId   = document.getElementById('foc-oc-id').value;
@@ -15552,46 +15605,56 @@ function openFacturaOC() {
   document.getElementById('foc-ref-factura').value      = oc?.numero||'';
   document.getElementById('foc-fecha').value            = today();
   document.getElementById('foc-fecha-contable').value   = today();
-  document.getElementById('foc-tc').value               = tc ? Number(tc).toFixed(4) : '';
+  document.getElementById('foc-tc').value  = tc ? Number(tc).toFixed(4) : '';
+  const tcFecha = state.tiposCambio?.[0]?.fecha || '';
+  const tcFechaEl = document.getElementById('foc-tc-fecha');
+  if (tcFechaEl) tcFechaEl.textContent = tcFecha ? fmtDate(tcFecha) : '';
   document.getElementById('foc-notas').value            = '';
 
   // Fecha vencimiento from OC
   calcFocVencimiento();
 
-  // Items display
-  let totalDisp = 0;
+  // Items display with IVA per line
   document.getElementById('foc-items-display').innerHTML = `
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead><tr style="background:var(--surface2)">
         <th style="padding:8px 12px;text-align:left">Producto / Servicio</th>
         <th style="padding:8px 12px;text-align:right">Cantidad</th>
         <th style="padding:8px 12px;text-align:right">Precio Unit.</th>
+        <th style="padding:8px 12px;text-align:center">IVA</th>
+        <th style="padding:8px 12px;text-align:right">Subtotal</th>
+        <th style="padding:8px 12px;text-align:right">IVA Q</th>
         <th style="padding:8px 12px;text-align:right">Total</th>
       </tr></thead>
-      <tbody>${items.map(i => {
-        const prod = state.productos.find(p=>p.id===i.producto_id);
-        const qty  = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(currentOCId, i.producto_id);
-        const t    = parseFloat((qty * Number(i.precio_unit||0)).toFixed(2));
-        totalDisp += t;
-        return `<tr style="border-bottom:1px solid var(--border)">
+      <tbody>${items.map((i, idx) => {
+        const prod   = state.productos.find(p=>p.id===i.producto_id);
+        const qty    = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(currentOCId, i.producto_id);
+        const precio = Number(i.precio_unit||0);
+        const total  = parseFloat((qty * precio).toFixed(2));
+        const neto   = parseFloat((total / 1.12).toFixed(2));
+        const iva    = parseFloat((total - neto).toFixed(2));
+        return `<tr style="border-bottom:1px solid var(--border)" id="foc-item-row-${idx}">
           <td style="padding:8px 12px">${prod?.description||prodName(i.producto_id)}
             ${esServicio?'<span class="badge badge-blue" style="margin-left:6px;font-size:10px">Servicio</span>':''}
           </td>
           <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace">${qty.toFixed(esServicio?0:3)} ${i.unidad||''}</td>
-          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace">${fmtMoney(i.precio_unit, monedaOC)}</td>
-          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-weight:600">${fmtMoney(t, monedaOC)}</td>
+          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace">${fmtMoney(precio, monedaOC)}</td>
+          <td style="padding:8px 12px;text-align:center">
+            <label style="display:flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;font-size:11px;font-weight:600;color:var(--text2)">
+              <input type="checkbox" id="foc-iva-${idx}" checked
+                onchange="calcFocItemIva(${idx}, ${qty}, ${precio})"
+                style="width:14px;height:14px;accent-color:var(--accent);cursor:pointer"/>
+              IVA
+            </label>
+          </td>
+          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace" id="foc-neto-${idx}">${fmtMoney(neto, monedaOC)}</td>
+          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;color:#D97706" id="foc-iva-val-${idx}">${fmtMoney(iva, monedaOC)}</td>
+          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-weight:700" id="foc-total-${idx}">${fmtMoney(total, monedaOC)}</td>
         </tr>`;
       }).join('')}</tbody>
     </table>`;
 
-  // Totals
-  const esExento = false; // adjust if needed
-  const neto = parseFloat((totalDisp / 1.12).toFixed(2));
-  const iva  = parseFloat((totalDisp - neto).toFixed(2));
-  document.getElementById('foc-total').value            = totalDisp.toFixed(2);
-  document.getElementById('foc-total-display').textContent  = fmtMoney(totalDisp, monedaOC);
-  document.getElementById('foc-subtotal-display').textContent = fmtMoney(neto, monedaOC);
-  document.getElementById('foc-iva-display').textContent     = fmtMoney(iva, monedaOC);
+  calcFocTotales(items, monedaOC, esServicio);
 
   focTab('datos');
   openModal('modal-factura-oc');
@@ -15636,8 +15699,17 @@ async function saveFacturaOC() {
   if (e1) { toast('Error: '+e1.message,'error'); return; }
 
   // Register in Libro de Compras
-  const valor_neto = tipo==='FX'||monedaOC==='USD' ? total : parseFloat((total/1.12).toFixed(2));
-  const valor_iva  = tipo==='FX'||monedaOC==='USD' ? 0    : parseFloat((total-valor_neto).toFixed(2));
+  // Calculate totals respecting IVA checkboxes per line
+  let valor_neto = 0, valor_iva = 0;
+  document.querySelectorAll('[id^="foc-neto-"]').forEach((el, idx) => {
+    const n = parseFloat(el.textContent.replace(/[^0-9.,]/g,'').replace(',','.'))||0;
+    const ivaEl = document.getElementById(`foc-iva-val-${idx}`);
+    const v = ivaEl?.textContent==='—' ? 0 : parseFloat((ivaEl?.textContent||'').replace(/[^0-9.,]/g,'').replace(',','.'))||0;
+    valor_neto += n;
+    valor_iva  += v;
+  });
+  valor_neto = parseFloat(valor_neto.toFixed(2));
+  valor_iva  = parseFloat(valor_iva.toFixed(2));
   await sb.from('erp_compras').insert({
     fecha, tipo: tipo||'FC', serie, numero,
     proveedor_id: prov?.id||null,
