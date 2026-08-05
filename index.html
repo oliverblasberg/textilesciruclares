@@ -3980,8 +3980,8 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <input type="date" id="foc-fecha" onchange="calcFocVencimiento()"/>
           </div>
           <div class="field">
-            <label>Fecha Contable</label>
-            <input type="date" id="foc-fecha-contable"/>
+            <label>Fecha Contable <span style="font-weight:400;color:var(--text3)">(auto — al generar la factura)</span></label>
+            <input type="date" id="foc-fecha-contable" readonly disabled style="background:var(--surface2);cursor:not-allowed"/>
           </div>
           <div class="field">
             <label>Fecha de Vencimiento</label>
@@ -12930,10 +12930,17 @@ function ocFacturadoTotal(ocId) {
   return state.ocFacturas.filter(f=>f.oc_id===ocId && f.status!=='cancelada')
     .reduce((s,f)=>s+Number(f.total||0),0);
 }
-// Valor total de lo recibido en la OC (cantidad recibida × precio unitario, por item)
+// Valor total "recibido" en la OC, para efectos de saldo por facturar.
+// Productos físicos: cantidad realmente recibida × precio unitario.
+// Servicios: no hay recepción física — se cuenta la cantidad pedida completa
+// desde que la OC se confirma (igual criterio que en openFacturaOC/calcFocTotales).
 function ocValorRecibido(ocId) {
   return state.ocItems.filter(i=>i.oc_id===ocId)
-    .reduce((s,i)=>s + (ocRecibidoQty(ocId, i.producto_id) * Number(i.precio_unit||0)), 0);
+    .reduce((s,i) => {
+      const prod = state.productos.find(p => p.id === i.producto_id);
+      const qty  = prod?.tipo === 'servicio' ? Number(i.cantidad||0) : ocRecibidoQty(ocId, i.producto_id);
+      return s + (qty * Number(i.precio_unit||0));
+    }, 0);
 }
 // Saldo pendiente por facturar = valor recibido - lo ya facturado (no cancelado)
 function ocSaldoPorFacturar(ocId) {
@@ -13389,16 +13396,19 @@ function renderOCPanel(ocId) {
   const items = state.ocItems.filter(i=>i.oc_id===ocId);
   // Lines
   document.getElementById('oc-panel-lines').innerHTML = items.map(i=>{
+    const prod      = state.productos.find(p => p.id === i.producto_id);
+    const esServicioItem = prod?.tipo === 'servicio';
     const recibido  = ocRecibidoQty(ocId, i.producto_id);
     const pedido    = Number(i.cantidad||0);
     const pendiente = Math.max(0, pedido - recibido);
     const moneda    = i.moneda || 'GTQ';
     const totalOrig = Number(i.total_orig||0) || pedido * Number(i.precio_unit||0);
+    // Los servicios no se reciben físicamente — no aplica Pedido/Recibido/Pendiente
     return `<tr>
-      <td>${prodName(i.producto_id)}</td>
-      <td class="td-mono" style="text-align:right">${pedido.toFixed(3)} ${i.unidad||''}</td>
-      <td class="td-mono" style="text-align:right;color:var(--green)">${recibido.toFixed(3)}</td>
-      <td class="td-mono" style="text-align:right;color:${pendiente>0?'var(--accent)':'var(--text3)'}">${pendiente.toFixed(3)}</td>
+      <td>${prodName(i.producto_id)}${esServicioItem?' <span class="badge badge-blue" style="margin-left:6px;font-size:10px">Servicio</span>':''}</td>
+      <td class="td-mono" style="text-align:right">${esServicioItem?'—':`${pedido.toFixed(3)} ${i.unidad||''}`}</td>
+      <td class="td-mono" style="text-align:right;color:var(--green)">${esServicioItem?'—':recibido.toFixed(3)}</td>
+      <td class="td-mono" style="text-align:right;color:${pendiente>0?'var(--accent)':'var(--text3)'}">${esServicioItem?'—':pendiente.toFixed(3)}</td>
       <td class="td-mono" style="text-align:right">${fmtMoney(i.precio_unit, moneda)}</td>
       <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(totalOrig, moneda)}</td>
     </tr>`;
@@ -15822,7 +15832,10 @@ async function saveFacturaOC() {
   const numero         = document.getElementById('foc-numero').value.trim();
   const serie          = document.getElementById('foc-serie').value.trim();
   const fecha          = document.getElementById('foc-fecha').value;
-  const fecha_contable = document.getElementById('foc-fecha-contable').value;
+  // Fecha contable = fecha real de generación en el sistema (hoy), no editable
+  // por el usuario y calculada en este momento (no la que se mostró al abrir
+  // el modal, por si quedó abierto de un día para otro).
+  const fecha_contable = today();
   const fecha_venc     = document.getElementById('foc-fecha-vencimiento').value;
   const tipo           = document.getElementById('foc-tipo').value;
   const tcRaw          = document.getElementById('foc-tc').value;
@@ -15856,7 +15869,7 @@ async function saveFacturaOC() {
   // Save to erp_oc_facturas
   const {data:focArr, error:e1} = await sb.from('erp_oc_facturas').insert({
     oc_id, serie, numero, fecha,
-    fecha_contable: fecha_contable||fecha,
+    fecha_contable,
     fecha_vencimiento,
     tipo, total, status:'pendiente', notas,
     dias_credito:   diasCredito,
