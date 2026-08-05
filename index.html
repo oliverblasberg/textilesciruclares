@@ -18,6 +18,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Michroma&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 /* ═══════════════════════════════════════════
@@ -799,6 +800,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div class="nav-item" onclick="showPage('estado-resultados',this)">Estado de Resultados</div>
       <div class="nav-item" onclick="showPage('balance-general',this)">Balance General</div>
       <div class="nav-item" onclick="showPage('flujo-caja',this)">Flujo de Caja</div>
+      <div class="nav-item" onclick="showPage('conciliacion',this)">Conciliación Bancaria</div>
     </div>
 
     <div class="sidebar-section">
@@ -1521,7 +1523,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <span class="search-icon">⌕</span>
             <input type="text" id="search-cuentas" placeholder="Buscar cuenta..." oninput="renderCuentas()"/>
           </div>
-          <button class="btn btn-primary" onclick="openModal('modal-cuenta')">+ Nueva Cuenta</button>
+          <button class="btn btn-primary" onclick="openNewCuenta()">+ Nueva Cuenta</button>
         </div>
         <div class="card">
           <div class="table-wrap">
@@ -2170,6 +2172,53 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <button class="btn btn-ghost" onclick="renderFlujoCaja()">↻ Actualizar</button>
         </div>
         <div class="card"><div class="card-body" id="fc-report"></div></div>
+      </div>
+
+      <!-- CONCILIACIÓN BANCARIA -->
+      <div class="page" id="page-conciliacion">
+        <div class="filters-row">
+          <select class="filter-select" id="conc-cuenta" onchange="renderConciliacion()">
+            <option value="">Todas las cuentas</option>
+          </select>
+          <select class="filter-select" id="conc-estado" onchange="renderConciliacion()">
+            <option value="">Todos los estados</option>
+            <option value="pendiente">Pendiente</option>
+            <option value="conciliado">Conciliado</option>
+            <option value="ignorado">Ignorado</option>
+          </select>
+          <input type="month" id="conc-mes" class="filter-select" onchange="renderConciliacion()" style="max-width:160px"/>
+          <button class="btn btn-sm" onclick="autoMatchConciliacion()" style="background:#EFF6FF;color:#3B82F6;border:1px solid #BFDBFE">⚡ Auto-Conciliar</button>
+          <button class="btn btn-primary" onclick="openExtractoUpload()">+ Subir Extracto</button>
+        </div>
+
+        <div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1.5px solid var(--border)">
+          <div id="conc-tab-lineas" onclick="concTab('lineas')" style="padding:10px 18px;cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);border-bottom:2px solid var(--accent)">Líneas del Extracto</div>
+          <div id="conc-tab-reporte" onclick="concTab('reporte')" style="padding:10px 18px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text3)">Reporte: Saldo Banco vs Libros</div>
+        </div>
+
+        <div id="conc-panel-lineas">
+          <div id="conc-summary" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px"></div>
+          <div class="card">
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Fecha</th>
+                  <th>Descripción</th>
+                  <th class="hide-mobile">Referencia</th>
+                  <th style="text-align:right">Monto</th>
+                  <th>Estado</th>
+                  <th class="hide-mobile">Conciliado con</th>
+                  <th></th>
+                </tr></thead>
+                <tbody id="tbl-conciliacion"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="conc-panel-reporte" style="display:none">
+          <div class="card"><div class="card-body" id="conc-reporte-body"></div></div>
+        </div>
       </div>
 
       <!-- DIARIOS CONFIG -->
@@ -2942,6 +2991,9 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:12px">Nuevo Pago</div>
       <div class="form-grid form-grid-2">
         <div class="field"><label>Fecha *</label><input type="date" id="pago-fecha"/></div>
+        <div class="field"><label>Cuenta de Origen *</label>
+          <select id="pago-cuenta-origen"><option value="">— Seleccionar cuenta —</option></select>
+        </div>
         <div class="field"><label>Forma de Pago *</label>
           <select id="pago-forma">
             <option value="">— Seleccionar —</option>
@@ -2951,14 +3003,17 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="deposito">Depósito</option>
           </select>
         </div>
-        <div class="field field-full"><label>Cuenta Bancaria *</label>
-          <select id="pago-cuenta"><option value="">— Seleccionar cuenta —</option></select>
-        </div>
         <div class="field"><label>Monto Total del Pago *</label>
           <input type="number" id="pago-monto" step="0.01" min="0" placeholder="0.00"
             oninput="onPagoMontoChange()"/>
         </div>
-        <div class="field"><label>No. Referencia</label>
+        <div class="field field-full" id="pago-prov-title-wrap" style="margin-top:6px">
+          <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3)">Información Proveedor</div>
+        </div>
+        <div class="field field-full" id="pago-prov-cuenta-wrap"><label>Cuenta Bancaria Proveedor</label>
+          <select id="pago-cuenta"><option value="">— Seleccionar cuenta —</option></select>
+        </div>
+        <div class="field"><label>No. Referencia Banco</label>
           <input type="text" id="pago-referencia" placeholder="Ej. TRF-001"/>
         </div>
         <div class="field field-full"><label>Notas</label>
@@ -2997,6 +3052,90 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   </div>
 </div>
 
+<!-- SUBIR EXTRACTO BANCARIO -->
+<div class="modal-overlay" id="modal-extracto-upload">
+  <div class="modal" style="max-width:720px;width:95vw">
+    <div class="modal-header">
+      <div class="modal-title">Subir Extracto Bancario</div>
+      <button class="modal-close" onclick="closeModal('modal-extracto-upload')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid form-grid-2">
+        <div class="field"><label>Cuenta Bancaria *</label>
+          <select id="ext-cuenta" onchange="validarExtractoForm()"><option value="">— Seleccionar cuenta —</option></select>
+        </div>
+        <div class="field"><label>Archivo (CSV / Excel) *</label>
+          <input type="file" id="ext-file-input" accept=".csv,.xlsx,.xls" onchange="onExtractoFileSelected()"/>
+        </div>
+        <div class="field"><label>Fecha Inicio *</label><input type="date" id="ext-fecha-inicio" onchange="validarExtractoForm()"/></div>
+        <div class="field"><label>Fecha Fin *</label><input type="date" id="ext-fecha-fin" onchange="validarExtractoForm()"/></div>
+        <div class="field"><label>Saldo Inicial (según banco)</label><input type="number" step="0.01" id="ext-saldo-inicial" placeholder="0.00"/></div>
+        <div class="field"><label>Saldo Final (según banco) *</label><input type="number" step="0.01" id="ext-saldo-final" placeholder="0.00" oninput="validarExtractoForm()"/></div>
+      </div>
+      <div style="margin-top:10px;font-size:11px;color:var(--text3);line-height:1.5">
+        El archivo debe tener columnas de <strong>fecha</strong>, <strong>descripción</strong> y <strong>monto</strong> (una sola columna con signo — negativo para cargos — o columnas separadas de <strong>cargo</strong>/<strong>débito</strong> y <strong>abono</strong>/<strong>crédito</strong>). Columna de <strong>referencia</strong> es opcional.
+      </div>
+      <div id="ext-preview-wrap" style="display:none;margin-top:16px">
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">
+          Vista Previa (<span id="ext-preview-count">0</span> movimientos)
+        </div>
+        <div class="table-wrap" style="max-height:280px;overflow:auto">
+          <table style="width:100%;font-size:12px">
+            <thead><tr style="background:var(--surface2)">
+              <th style="padding:6px 10px;text-align:left">Fecha</th>
+              <th style="padding:6px 10px;text-align:left">Descripción</th>
+              <th style="padding:6px 10px;text-align:left">Referencia</th>
+              <th style="padding:6px 10px;text-align:right">Monto</th>
+            </tr></thead>
+            <tbody id="ext-preview-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-extracto-upload')">Cancelar</button>
+      <button class="btn btn-primary" id="ext-btn-importar" onclick="importarExtracto()" disabled>📥 Importar y Auto-Conciliar</button>
+    </div>
+  </div>
+</div>
+
+<!-- CONCILIAR LÍNEA DE EXTRACTO (MANUAL) -->
+<div class="modal-overlay" id="modal-conciliar-manual">
+  <div class="modal" style="max-width:680px;width:95vw">
+    <div class="modal-header">
+      <div class="modal-title">Conciliar Línea de Extracto</div>
+      <button class="modal-close" onclick="closeModal('modal-conciliar-manual')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="cm-extracto-id"/>
+      <div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px" id="cm-linea-info"></div>
+
+      <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Pagos Candidatos (misma cuenta)</div>
+      <div id="cm-candidatos" style="max-height:220px;overflow:auto;margin-bottom:16px"></div>
+
+      <div style="border-top:1.5px solid var(--border);padding-top:14px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">¿Movimiento propio del banco (comisión, interés)? Regístralo y concilia de una vez</div>
+        <div style="display:flex;gap:8px;align-items:flex-end">
+          <div class="field" style="flex:1;margin:0"><label>Cuenta Contable</label>
+            <select id="cm-gasto-cuenta"><option value="">— Seleccionar cuenta —</option></select>
+          </div>
+          <button class="btn btn-ghost" onclick="registrarGastoBancario()">Registrar y Conciliar</button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:flex-end;border-top:1.5px solid var(--border);padding-top:14px">
+        <div class="field" style="flex:1;margin:0"><label>¿No corresponde a nada de lo anterior? Ignorar con motivo</label>
+          <input type="text" id="cm-motivo-ignorar" placeholder="Ej. ya registrada manualmente, duplicado del banco..."/>
+        </div>
+        <button class="btn btn-ghost" onclick="ignorarLineaExtracto()">Ignorar Línea</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-conciliar-manual')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- CUENTA BANCARIA MODAL -->
 <div class="modal-overlay" id="modal-cuenta">
   <div class="modal">
@@ -3021,6 +3160,10 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="true">Activa</option>
             <option value="false">Inactiva</option>
           </select>
+        </div>
+        <div class="field field-full"><label>Cuenta Contable (Nomenclatura)</label>
+          <select id="cta-nomenclatura"><option value="">— Sin asignar (usa cualquier cuenta "Banco y efectivo") —</option></select>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">La cuenta del mayor a la que se contabilizan los pagos, anticipos y cobros hechos desde esta cuenta bancaria. Si la dejas sin asignar, el sistema podría tomar la cuenta equivocada cuando tengas varias cuentas bancarias en tu nomenclatura.</div>
         </div>
         <div class="field field-full"><label>Notas</label><textarea id="cta-notes" rows="2"></textarea></div>
       </div>
@@ -5178,7 +5321,7 @@ function enterModule(hub) {
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
          sc, scI, oc, ocI, ocR, ocRI, plC, ocF, pagosOC, ocA, asi, asiL, dj, bod, tc,
-         rec, recL, recC, op_, opC, opCo] = await Promise.all([
+         rec, recL, recC, op_, opC, opCo, extL, extB] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
     sb.from('erp_ov').select('*').order('order_number', {ascending:false}),
@@ -5217,6 +5360,8 @@ async function loadAll() {
     sb.from('erp_op').select('*').order('numero', {ascending:false}),
     sb.from('erp_op_consumos').select('*'),
     sb.from('erp_op_costos').select('*'),
+    sb.from('erp_extracto_lotes').select('*').order('fecha_fin', {ascending:false}),
+    sb.from('erp_extracto_bancario').select('*').order('fecha', {ascending:false}),
   ]);
   state.clientes      = c.data   || [];
   state.telas         = t.data   || [];
@@ -5256,6 +5401,8 @@ async function loadAll() {
   state.op                 = op_.data  || [];
   state.opConsumos         = opC.data  || [];
   state.opCostos           = opCo.data || [];
+  state.extractoLotes      = extL.data || [];
+  state.extractoBancario   = extB.data || [];
   updateTCTopbar();
   renderDashboard();
   renderClientes();
@@ -5282,6 +5429,7 @@ async function loadAll() {
   renderTipoCambio();
   renderRecetas();
   renderOP();
+  renderConciliacion();
   // Show pending TC badge if there are asientos waiting for TC
   const pendientesTC = (state.asientos||[]).filter(a => a.estado_tc === 'pendiente_tc');
   const badge = document.getElementById('tc-pending-badge');
@@ -5352,6 +5500,7 @@ function showPage(name, bnav) {
     pedidos:'Órdenes de Venta',
     bodegas:'Bodegas',
     'tipo-cambio':'Tipo de Cambio',
+    conciliacion:'Conciliación Bancaria',
   };
   document.getElementById('page-title').textContent = titles[name] || name;
   updateBreadcrumb(name);
@@ -5373,6 +5522,7 @@ function showPage(name, bnav) {
     kardex:              () => { refreshBodegaDropdowns(); if(kardexProductoId) renderKardex(); },
     sc:                  () => renderSC(),
     oc:                  () => renderOC(),
+    conciliacion:        () => renderConciliacion(),
   };
   if (pageRenders[name]) pageRenders[name]();
   syncBottomNav(name);
@@ -6651,6 +6801,38 @@ function _pagoCtaOptsProveedor(provId) {
   return opts;
 }
 
+// Cuentas propias de la empresa (cuenta de origen del pago)
+function _pagoCtaOrigenOpts() {
+  return (state.cuentas||[]).filter(c=>c.activa!==false)
+    .map(c=>`<option value="${c.id}">${c.name}${c.moneda?' ('+c.moneda+')':''}</option>`).join('');
+}
+
+// Cuenta de nomenclatura (mayor) que corresponde a una cuenta bancaria operativa
+// específica (erp_cuentas). Usa el mapeo explícito configurado en Cuentas
+// Bancarias (cuenta.nomenclatura_id); si no está configurado, cae de regreso a
+// "la primera cuenta activa con tipo Banco y efectivo" (comportamiento anterior,
+// solo confiable si tienes una única cuenta de ese tipo en tu nomenclatura).
+function bancoNomenclatura(cuentaId) {
+  const cuenta = (state.cuentas||[]).find(c => c.id === cuentaId);
+  if (cuenta?.nomenclatura_id) {
+    const cta = (state.nomenclatura||[]).find(n => n.id === cuenta.nomenclatura_id);
+    if (cta) return cta;
+  }
+  return (state.nomenclatura||[]).find(n => n.tipo === 'Banco y efectivo');
+}
+
+function _pagoSetCuentaOrigen() {
+  document.getElementById('pago-cuenta-origen').innerHTML = '<option value="">— Seleccionar cuenta —</option>'+_pagoCtaOrigenOpts();
+}
+
+// Muestra/oculta la sección "Información Proveedor" (solo aplica a pagos hacia proveedores — OC)
+function _pagoToggleInfoProveedor(show) {
+  const titleEl = document.getElementById('pago-prov-title-wrap');
+  const ctaEl   = document.getElementById('pago-prov-cuenta-wrap');
+  if (titleEl) titleEl.style.display = show ? '' : 'none';
+  if (ctaEl)   ctaEl.style.display   = show ? '' : 'none';
+}
+
 function _pagoHistorial(facturaId) {
   const pagos = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
   const wrap  = document.getElementById('pago-historial-wrap');
@@ -6704,7 +6886,9 @@ function openPagoOC(facturaId) {
   document.getElementById('pago-monto').value      = pend > 0 ? pend.toFixed(2) : '';
   document.getElementById('pago-referencia').value = '';
   document.getElementById('pago-notas').value      = '';
+  _pagoSetCuentaOrigen();
   document.getElementById('pago-cuenta').innerHTML = _pagoCtaOptsProveedor(prov?.id);
+  _pagoToggleInfoProveedor(true);
   document.getElementById('pago-distribucion-wrap').style.display = 'none';
   _pagoHistorial(facturaId);
   openModal('modal-pago');
@@ -6748,7 +6932,9 @@ function openPagoProveedor(ocId) {
   document.getElementById('pago-monto').value       = '';
   document.getElementById('pago-referencia').value  = '';
   document.getElementById('pago-notas').value       = '';
+  _pagoSetCuentaOrigen();
   document.getElementById('pago-cuenta').innerHTML  = _pagoCtaOptsProveedor(oc?.proveedor_id);
+  _pagoToggleInfoProveedor(true);
   document.getElementById('pago-historial-wrap').style.display = 'none';
 
   // Render distribution table
@@ -6823,8 +7009,10 @@ async function savePago() {
   const tipo       = document.getElementById('pago-factura-id').dataset.tipo;
   const fecha      = document.getElementById('pago-fecha').value;
   const metodo     = document.getElementById('pago-forma').value;
+  // Cuenta de Origen = cuenta propia de la empresa — es la que se usa para el asiento contable real
+  const cuenta_id  = document.getElementById('pago-cuenta-origen').value;
+  // Cuenta Bancaria Proveedor = solo informativa (se anexa a las notas del pago)
   const cuenta_id_raw = document.getElementById('pago-cuenta').value;
-  const cuenta_id  = cuenta_id_raw.startsWith('prov-') ? null : cuenta_id_raw;
   const cuentaEl   = document.getElementById('pago-cuenta');
   const selOpt     = cuentaEl.options[cuentaEl.selectedIndex];
   const bancoInfo  = cuenta_id_raw.startsWith('prov-')
@@ -6835,8 +7023,8 @@ async function savePago() {
   const notas      = document.getElementById('pago-notas').value.trim();
   const provId     = document.getElementById('pago-proveedor-id').value;
 
-  if (!fecha||!metodo||isNaN(monto)||monto<=0) {
-    toast('Completa fecha, forma de pago y monto','error'); return;
+  if (!fecha||!cuenta_id||!metodo||isNaN(monto)||monto<=0) {
+    toast('Completa fecha, cuenta de origen, forma de pago y monto','error'); return;
   }
 
   if (modo === 'single') {
@@ -6854,7 +7042,8 @@ async function savePago() {
       // Single factura payment
       const f    = state.ocFacturas.find(x=>x.id===facturaId);
       const prov = state.proveedores.find(p=>p.id===document.getElementById('pago-proveedor-id').value);
-      const ctaBanco    = (state.nomenclatura||[]).find(n=>n.id===cuenta_id);
+      const cuentaBancaria = (state.cuentas||[]).find(c=>c.id===cuenta_id);
+      const ctaBancoNom = bancoNomenclatura(cuenta_id);
       const ctaPorPagar = (state.nomenclatura||[]).find(n =>
         n.codigo==='21101001' || ((n.nombre||'').toLowerCase().includes('proveedores') && n.tipo?.toLowerCase().includes('pasivo'))
       );
@@ -6880,7 +7069,7 @@ async function savePago() {
         referencia: referencia||`PAGO-${f?.serie||''}${f?.numero||''}`, referencia_id: null, moneda:'GTQ',
         lineas: [
           { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: monto, haber: 0 },
-          { cuenta_id: cuenta_id||null, cuenta_codigo: ctaBanco?.codigo||'BANCO', cuenta_nombre: ctaBanco?.nombre||'Banco', debe: 0, haber: monto },
+          { cuenta_id: ctaBancoNom?.id||null, cuenta_codigo: ctaBancoNom?.codigo||'BANCO', cuenta_nombre: cuentaBancaria?.name||ctaBancoNom?.nombre||'Banco', debe: 0, haber: monto },
         ],
       });
 
@@ -6902,7 +7091,8 @@ async function savePago() {
 
       // Save each factura pago + 1 combined accounting entry
       const lineasAsiento = [];
-      const ctaBanco = (state.nomenclatura||[]).find(n=>n.id===cuenta_id);
+      const cuentaBancaria = (state.cuentas||[]).find(c=>c.id===cuenta_id);
+      const ctaBancoNom = bancoNomenclatura(cuenta_id);
       const ctaPorPagar = (state.nomenclatura||[]).find(n =>
         n.codigo==='21101001' || ((n.nombre||'').toLowerCase().includes('proveedores') && n.tipo?.toLowerCase().includes('pasivo'))
       );
@@ -6932,8 +7122,8 @@ async function savePago() {
       }
       // Single haber line for bank
       lineasAsiento.push({
-        cuenta_id: cuenta_id||null, cuenta_codigo: ctaBanco?.codigo||'BANCO',
-        cuenta_nombre: ctaBanco?.nombre||'Banco',
+        cuenta_id: ctaBancoNom?.id||null, cuenta_codigo: ctaBancoNom?.codigo||'BANCO',
+        cuenta_nombre: cuentaBancaria?.name||ctaBancoNom?.nombre||'Banco',
         debe: 0, haber: monto,
         descripcion: referencia||'Pago múltiple'
       });
@@ -6975,6 +7165,8 @@ function openPago(facturaId) {
   const pagado = totalPagado(facturaId);
   const pend   = Number(f.total) - pagado;
   document.getElementById('pago-factura-id').value = facturaId;
+  document.getElementById('pago-factura-id').dataset.tipo = 'OV';
+  document.getElementById('pago-modo').value = 'single';
   document.getElementById('pago-fact-info').textContent =
     `${f.invoice_number} — ${clientName(f.customer_id)}${order ? ' · OV-'+String(order.order_number).padStart(4,'0') : ''}`;
   document.getElementById('pago-fact-total').textContent   = fmtMoney(f.total);
@@ -6984,9 +7176,11 @@ function openPago(facturaId) {
   document.getElementById('pago-forma').value  = '';
   document.getElementById('pago-monto').value  = pend > 0 ? pend.toFixed(2) : '';
   document.getElementById('pago-notas').value  = '';
-  // Populate cuentas
-  const ctaOpts = state.cuentas.filter(c=>c.activa!==false).map(c=>`<option value="${c.id}">${c.name}${c.moneda?' ('+c.moneda+')':''}</option>`).join('');
-  document.getElementById('pago-cuenta').innerHTML = '<option value="">— Seleccionar cuenta —</option>'+ctaOpts;
+  document.getElementById('pago-referencia').value = '';
+  // Populate cuentas (cuenta de origen — cuentas propias de la empresa)
+  _pagoSetCuentaOrigen();
+  document.getElementById('pago-cuenta').innerHTML = '<option value="">— Seleccionar cuenta —</option>';
+  _pagoToggleInfoProveedor(false);
   // Historial de pagos
   const prevPagos = state.pagos.filter(p => p.factura_id === facturaId);
   const histWrap  = document.getElementById('pago-historial-wrap');
@@ -7011,6 +7205,560 @@ function openPago(facturaId) {
   openModal('modal-pago');
 }
 
+// ═══ CONCILIACIÓN BANCARIA ═══
+
+let _extParsedRows = [];
+
+// Determina el signo real de un pago (erp_pagos): + si es un cobro de venta
+// (OV, dinero entra al banco), - si es un pago a proveedor (OC, dinero sale).
+function signedPagoMonto(pago) {
+  const monto = Number(pago.monto||0);
+  if ((state.ocFacturas||[]).some(f=>f.id===pago.factura_id)) return -monto;
+  if ((state.facturas||[]).some(f=>f.id===pago.factura_id)) return monto;
+  return monto; // no se pudo determinar la dirección — se asume abono
+}
+
+function _concCuentaOpts(selectedId) {
+  return (state.cuentas||[]).filter(c=>c.activa!==false)
+    .map(c=>`<option value="${c.id}" ${c.id===selectedId?'selected':''}>${c.name}${c.moneda?' ('+c.moneda+')':''}</option>`).join('');
+}
+
+function concTab(tab) {
+  document.getElementById('conc-panel-lineas').style.display  = tab==='lineas'  ? '' : 'none';
+  document.getElementById('conc-panel-reporte').style.display = tab==='reporte' ? '' : 'none';
+  document.getElementById('conc-tab-lineas').style.color         = tab==='lineas'  ? 'var(--accent)' : 'var(--text3)';
+  document.getElementById('conc-tab-lineas').style.borderBottom  = tab==='lineas'  ? '2px solid var(--accent)' : 'none';
+  document.getElementById('conc-tab-reporte').style.color        = tab==='reporte' ? 'var(--accent)' : 'var(--text3)';
+  document.getElementById('conc-tab-reporte').style.borderBottom = tab==='reporte' ? '2px solid var(--accent)' : 'none';
+  if (tab === 'reporte') renderReporteSaldos();
+}
+
+function renderConciliacion() {
+  const selCuenta = document.getElementById('conc-cuenta');
+  if (!selCuenta) return;
+  const cuentaVal = selCuenta.value;
+  selCuenta.innerHTML = '<option value="">Todas las cuentas</option>' + _concCuentaOpts(cuentaVal);
+  selCuenta.value = cuentaVal;
+
+  const estadoVal = document.getElementById('conc-estado')?.value || '';
+  const mesVal    = document.getElementById('conc-mes')?.value || '';
+
+  let lineas = (state.extractoBancario||[]).slice();
+  if (cuentaVal) lineas = lineas.filter(l=>l.cuenta_id===cuentaVal);
+  if (estadoVal) lineas = lineas.filter(l=>l.estado===estadoVal);
+  if (mesVal)    lineas = lineas.filter(l=>(l.fecha||'').slice(0,7)===mesVal);
+  lineas.sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||''));
+
+  const pendientes  = lineas.filter(l=>l.estado==='pendiente');
+  const conciliadas = lineas.filter(l=>l.estado==='conciliado');
+  const ignoradas   = lineas.filter(l=>l.estado==='ignorado');
+  const lotesCuenta = cuentaVal ? (state.extractoLotes||[]).filter(x=>x.cuenta_id===cuentaVal) : (state.extractoLotes||[]);
+  const ultimoLote  = lotesCuenta.slice().sort((a,b)=>(b.fecha_fin||'').localeCompare(a.fecha_fin||''))[0];
+
+  const summaryEl = document.getElementById('conc-summary');
+  if (summaryEl) summaryEl.innerHTML = `
+    <div style="background:var(--yellow-bg);border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:11px;color:var(--yellow);text-transform:uppercase;font-weight:600;letter-spacing:0.06em;margin-bottom:6px">Pendientes</div>
+      <div style="font-size:20px;font-weight:700;font-family:'DM Mono',monospace;color:var(--yellow)">${pendientes.length}</div>
+    </div>
+    <div style="background:var(--green-bg);border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:11px;color:var(--green);text-transform:uppercase;font-weight:600;letter-spacing:0.06em;margin-bottom:6px">Conciliadas</div>
+      <div style="font-size:20px;font-weight:700;font-family:'DM Mono',monospace;color:var(--green)">${conciliadas.length}</div>
+    </div>
+    <div style="background:var(--surface2);border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:11px;color:var(--text2);text-transform:uppercase;font-weight:600;letter-spacing:0.06em;margin-bottom:6px">Ignoradas</div>
+      <div style="font-size:20px;font-weight:700;font-family:'DM Mono',monospace;color:var(--text2)">${ignoradas.length}</div>
+    </div>
+    <div style="background:#EFF6FF;border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:11px;color:var(--accent3);text-transform:uppercase;font-weight:600;letter-spacing:0.06em;margin-bottom:6px">Última Carga</div>
+      <div style="font-size:14px;font-weight:700;font-family:'DM Mono',monospace;color:var(--accent3)">${ultimoLote ? fmtDate(ultimoLote.fecha_fin)+' · '+fmtGTQ(ultimoLote.saldo_final) : '—'}</div>
+    </div>
+  `;
+
+  const tbody = document.getElementById('tbl-conciliacion');
+  if (tbody) tbody.innerHTML = lineas.map(l => {
+    const pago = l.pago_id ? (state.pagos||[]).find(p=>p.id===l.pago_id) : null;
+    const estadoBadge = l.estado==='conciliado' ? '<span class="badge badge-green">Conciliado</span>'
+      : l.estado==='ignorado' ? '<span class="badge badge-gray">Ignorado</span>'
+      : '<span class="badge badge-yellow">Pendiente</span>';
+    const conciliadoInfo = pago
+      ? `${pago.num_pago||''} ${fmtDate(pago.fecha)} — ${fmtGTQ(pago.monto)}${l.match_tipo==='auto'?' <span style="color:var(--text3);font-size:10px">(auto)</span>':''}`
+      : (l.estado==='ignorado' ? (l.motivo_ignorado||'—') : '—');
+    const montoOk = Number(l.monto||0) >= 0;
+    return `<tr>
+      <td>${fmtDate(l.fecha)}</td>
+      <td>${l.descripcion||'—'}</td>
+      <td class="hide-mobile td-mono" style="font-size:11px">${l.referencia||'—'}</td>
+      <td class="td-mono" style="text-align:right;font-weight:600;color:${montoOk?'var(--green)':'var(--red)'}">${montoOk?'+':'-'}${fmtGTQ(Math.abs(Number(l.monto||0)))}</td>
+      <td>${estadoBadge}</td>
+      <td class="hide-mobile" style="font-size:11px">${conciliadoInfo}</td>
+      <td>
+        ${l.estado==='pendiente' ? `<button class="btn btn-sm" onclick="openConciliarManual('${l.id}')">Conciliar</button>` : `<button class="btn btn-sm btn-ghost" onclick="deshacerConciliacion('${l.id}')">Deshacer</button>`}
+      </td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:20px">Sin movimientos — sube un extracto para comenzar</td></tr>`;
+
+  const panelReporte = document.getElementById('conc-panel-reporte');
+  if (panelReporte && panelReporte.style.display !== 'none') renderReporteSaldos();
+}
+
+// ── Auto-match por monto + fecha contra erp_pagos ──
+async function autoMatchConciliacion(cuentaIdParam) {
+  const cuentaId = cuentaIdParam || document.getElementById('conc-cuenta')?.value || '';
+  const TOLERANCIA_DIAS = 6;
+
+  const cuentasAProcesar = cuentaId ? [cuentaId]
+    : [...new Set((state.extractoBancario||[]).filter(l=>l.estado==='pendiente').map(l=>l.cuenta_id))];
+  if (!cuentasAProcesar.length) { toast('No hay líneas pendientes para conciliar','error'); return; }
+
+  let totalMatched = 0;
+  for (const ctaId of cuentasAProcesar) {
+    const pendientesExt = (state.extractoBancario||[]).filter(l=>l.estado==='pendiente' && l.cuenta_id===ctaId);
+    if (!pendientesExt.length) continue;
+
+    const yaVinculados = new Set((state.extractoBancario||[]).filter(l=>l.pago_id).map(l=>l.pago_id));
+    const candidatosPago = (state.pagos||[]).filter(p=>p.cuenta_id===ctaId && !yaVinculados.has(p.id))
+      .map(p => ({ pago: p, signed: signedPagoMonto(p) }));
+
+    const usados = new Set();
+    const pendientesOrdenadas = pendientesExt.slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
+    for (const linea of pendientesOrdenadas) {
+      const montoLinea = Number(linea.monto||0);
+      let mejor = null, mejorDiff = Infinity;
+      for (const cand of candidatosPago) {
+        if (usados.has(cand.pago.id)) continue;
+        if (Math.abs(cand.signed - montoLinea) > 0.01) continue;
+        const dias = Math.abs((new Date(linea.fecha) - new Date(cand.pago.fecha)) / 86400000);
+        if (dias > TOLERANCIA_DIAS) continue;
+        if (dias < mejorDiff) { mejorDiff = dias; mejor = cand; }
+      }
+      if (mejor) {
+        usados.add(mejor.pago.id);
+        const { error } = await sb.from('erp_extracto_bancario').update({
+          pago_id: mejor.pago.id, estado: 'conciliado', match_tipo: 'auto', conciliado_at: new Date().toISOString(),
+        }).eq('id', linea.id);
+        if (!error) totalMatched++;
+      }
+    }
+  }
+
+  if (totalMatched > 0) toast(`✓ ${totalMatched} movimiento${totalMatched!==1?'s':''} conciliado${totalMatched!==1?'s':''} automáticamente`);
+  else toast('No se encontraron coincidencias automáticas','error');
+  await loadAll();
+  renderConciliacion();
+}
+
+// ── Subir extracto ──
+function openExtractoUpload() {
+  document.getElementById('ext-cuenta').innerHTML = '<option value="">— Seleccionar cuenta —</option>' + _concCuentaOpts('');
+  document.getElementById('ext-file-input').value = '';
+  document.getElementById('ext-fecha-inicio').value = '';
+  document.getElementById('ext-fecha-fin').value = '';
+  document.getElementById('ext-saldo-inicial').value = '';
+  document.getElementById('ext-saldo-final').value = '';
+  document.getElementById('ext-preview-wrap').style.display = 'none';
+  document.getElementById('ext-preview-tbody').innerHTML = '';
+  const btn = document.getElementById('ext-btn-importar');
+  btn.disabled = true; btn.textContent = '📥 Importar y Auto-Conciliar';
+  _extParsedRows = [];
+  openModal('modal-extracto-upload');
+}
+
+function _normKeyExt(k) { return String(k||'').toLowerCase().trim().normalize('NFD').replace(/[̀-ͯ]/g,''); }
+
+function _parseNumeroExtracto(v) {
+  if (v === '' || v === null || v === undefined) return 0;
+  if (typeof v === 'number') return v;
+  const s = String(v).trim().replace(/[Qq$\s]/g,'').replace(/,/g,'');
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+function _parseFechaExtracto(v) {
+  if (!v) return '';
+  if (v instanceof Date && !isNaN(v)) return v.toISOString().split('T')[0];
+  const s = String(v).trim();
+  let m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`; // dd/mm/yyyy
+  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  return '';
+}
+
+function normalizarFilasExtracto(rows) {
+  if (!rows.length) return [];
+  const keys = Object.keys(rows[0]);
+  const findKey = (...candidates) => keys.find(k => candidates.some(c => _normKeyExt(k).includes(c)));
+
+  const kFecha = findKey('fecha');
+  const kDesc  = findKey('descripcion','concepto','detalle','glosa');
+  const kRef   = findKey('referencia','documento','doc');
+  const kMonto = findKey('monto','importe','valor');
+  const kCargo = findKey('cargo','debito','debe');
+  const kAbono = findKey('abono','credito','haber');
+
+  const out = [];
+  for (const row of rows) {
+    const fecha = kFecha ? _parseFechaExtracto(row[kFecha]) : '';
+    if (!fecha) continue; // fila sin fecha válida (encabezados, totales, etc.)
+
+    let monto = null;
+    if (kMonto) {
+      monto = _parseNumeroExtracto(row[kMonto]);
+    } else if (kCargo || kAbono) {
+      const cargo = _parseNumeroExtracto(kCargo ? row[kCargo] : 0);
+      const abono = _parseNumeroExtracto(kAbono ? row[kAbono] : 0);
+      monto = (abono||0) - Math.abs(cargo||0);
+    }
+    if (monto === null || isNaN(monto) || monto === 0) continue;
+
+    out.push({
+      fecha,
+      descripcion: kDesc ? String(row[kDesc]||'').trim() : '',
+      referencia: kRef ? String(row[kRef]||'').trim() : '',
+      monto: parseFloat(monto.toFixed(2)),
+    });
+  }
+  return out;
+}
+
+function onExtractoFileSelected() {
+  const file = document.getElementById('ext-file-input').files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type:'array', cellDates:true });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+      _extParsedRows = normalizarFilasExtracto(rows);
+      renderExtPreview();
+    } catch (err) {
+      toast('No se pudo leer el archivo: '+err.message,'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderExtPreview() {
+  const wrap  = document.getElementById('ext-preview-wrap');
+  const tbody = document.getElementById('ext-preview-tbody');
+  if (!_extParsedRows.length) {
+    wrap.style.display = 'none';
+    toast('No se detectaron movimientos válidos en el archivo — revisa el formato','error');
+    validarExtractoForm();
+    return;
+  }
+  document.getElementById('ext-preview-count').textContent = _extParsedRows.length;
+  tbody.innerHTML = _extParsedRows.slice(0,300).map(r => `<tr>
+    <td style="padding:5px 10px">${fmtDate(r.fecha)}</td>
+    <td style="padding:5px 10px">${r.descripcion||'—'}</td>
+    <td style="padding:5px 10px">${r.referencia||'—'}</td>
+    <td style="padding:5px 10px;text-align:right;font-family:'DM Mono',monospace;color:${r.monto>=0?'var(--green)':'var(--red)'}">${r.monto>=0?'+':'-'}${fmtGTQ(Math.abs(r.monto))}</td>
+  </tr>`).join('');
+  wrap.style.display = 'block';
+
+  const fechas = _extParsedRows.map(r=>r.fecha).sort();
+  if (!document.getElementById('ext-fecha-inicio').value) document.getElementById('ext-fecha-inicio').value = fechas[0];
+  if (!document.getElementById('ext-fecha-fin').value)    document.getElementById('ext-fecha-fin').value    = fechas[fechas.length-1];
+
+  validarExtractoForm();
+}
+
+function validarExtractoForm() {
+  const ok = document.getElementById('ext-cuenta').value &&
+             document.getElementById('ext-fecha-inicio').value &&
+             document.getElementById('ext-fecha-fin').value &&
+             document.getElementById('ext-saldo-final').value !== '' &&
+             _extParsedRows.length > 0;
+  document.getElementById('ext-btn-importar').disabled = !ok;
+}
+
+async function importarExtracto() {
+  const cuenta_id = document.getElementById('ext-cuenta').value;
+  const fecha_inicio = document.getElementById('ext-fecha-inicio').value;
+  const fecha_fin = document.getElementById('ext-fecha-fin').value;
+  const saldoInicialRaw = document.getElementById('ext-saldo-inicial').value;
+  const saldo_inicial = saldoInicialRaw === '' ? null : parseFloat(saldoInicialRaw);
+  const saldo_final = parseFloat(document.getElementById('ext-saldo-final').value);
+  const archivo_nombre = document.getElementById('ext-file-input').files[0]?.name || null;
+
+  if (!cuenta_id || !fecha_inicio || !fecha_fin || isNaN(saldo_final) || !_extParsedRows.length) {
+    toast('Completa cuenta, fechas, saldo final y adjunta un archivo válido','error'); return;
+  }
+
+  const btn = document.getElementById('ext-btn-importar');
+  btn.disabled = true; btn.textContent = 'Importando…';
+
+  const { data: lote, error: eLote } = await sb.from('erp_extracto_lotes').insert({
+    cuenta_id, fecha_inicio, fecha_fin, saldo_inicial, saldo_final, archivo_nombre,
+  }).select().single();
+  if (eLote) { toast('Error creando el lote: '+eLote.message,'error'); btn.disabled=false; btn.textContent='📥 Importar y Auto-Conciliar'; return; }
+
+  const filas = _extParsedRows.map(r => ({
+    lote_id: lote.id, cuenta_id, fecha: r.fecha, descripcion: r.descripcion||null,
+    referencia: r.referencia||null, monto: r.monto, tipo: r.monto>=0?'abono':'cargo',
+  }));
+  const { error: eLineas } = await sb.from('erp_extracto_bancario').insert(filas);
+  if (eLineas) { toast('Error guardando movimientos: '+eLineas.message,'error'); btn.disabled=false; btn.textContent='📥 Importar y Auto-Conciliar'; return; }
+
+  toast(`✓ Extracto importado — ${filas.length} movimientos`);
+  closeModal('modal-extracto-upload');
+  await loadAll();
+  document.getElementById('conc-cuenta').value = cuenta_id;
+  await autoMatchConciliacion(cuenta_id);
+}
+
+// ── Conciliación manual ──
+function openConciliarManual(extractoId) {
+  const linea = (state.extractoBancario||[]).find(l=>l.id===extractoId);
+  if (!linea) return;
+  document.getElementById('cm-extracto-id').value = extractoId;
+  document.getElementById('cm-motivo-ignorar').value = '';
+  const cuenta = (state.cuentas||[]).find(c=>c.id===linea.cuenta_id);
+  const montoOk = Number(linea.monto||0) >= 0;
+  document.getElementById('cm-linea-info').innerHTML = `
+    <div style="color:var(--text2);font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px">Línea del Extracto</div>
+    <div style="font-weight:500">${fmtDate(linea.fecha)} — ${linea.descripcion||'—'}${linea.referencia?' · '+linea.referencia:''}</div>
+    <div style="margin-top:6px"><span style="color:var(--text3);font-size:11px">Cuenta:</span> ${cuenta?.name||'—'} &nbsp; <span style="color:var(--text3);font-size:11px">Monto:</span>
+      <strong style="font-family:'DM Mono',monospace;color:${montoOk?'var(--green)':'var(--red)'}">${montoOk?'+':'-'}${fmtGTQ(Math.abs(Number(linea.monto||0)))}</strong>
+    </div>`;
+
+  const yaVinculados = new Set((state.extractoBancario||[]).filter(l=>l.pago_id).map(l=>l.pago_id));
+  const montoLinea = Number(linea.monto||0);
+  const candidatos = (state.pagos||[]).filter(p=>p.cuenta_id===linea.cuenta_id && !yaVinculados.has(p.id))
+    .map(p => ({ pago:p, signed: signedPagoMonto(p) }))
+    .filter(c => Math.abs((new Date(linea.fecha) - new Date(c.pago.fecha))/86400000) <= 45)
+    .sort((a,b) => {
+      const da = Math.abs(a.signed-montoLinea), db = Math.abs(b.signed-montoLinea);
+      if (Math.abs(da-db) > 0.001) return da - db;
+      return Math.abs(new Date(linea.fecha)-new Date(a.pago.fecha)) - Math.abs(new Date(linea.fecha)-new Date(b.pago.fecha));
+    });
+
+  const cont = document.getElementById('cm-candidatos');
+  cont.innerHTML = candidatos.length ? candidatos.map(c => {
+    const f = (state.ocFacturas||[]).find(x=>x.id===c.pago.factura_id) || (state.facturas||[]).find(x=>x.id===c.pago.factura_id);
+    const exacto = Math.abs(c.signed - montoLinea) < 0.01;
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:7px;background:var(--surface2);margin-bottom:6px;font-size:12px">
+      <div>
+        ${c.pago.num_pago?`<span style="font-family:'DM Mono',monospace;font-weight:700;color:var(--accent);margin-right:8px">${c.pago.num_pago}</span>`:''}
+        <span style="font-weight:500">${fmtDate(c.pago.fecha)}</span>
+        <span style="color:var(--text2);margin:0 6px">·</span>
+        <span>${c.pago.forma||c.pago.metodo||'—'}</span>
+        ${f ? `<span style="color:var(--text3);margin-left:6px">${f.serie||''}${f.numero||f.invoice_number||''}</span>` : ''}
+        ${exacto?' <span class="badge badge-green" style="margin-left:6px">monto exacto</span>':''}
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <strong style="font-family:'DM Mono',monospace;color:${c.signed>=0?'var(--green)':'var(--red)'}">${c.signed>=0?'+':'-'}${fmtGTQ(Math.abs(c.signed))}</strong>
+        <button class="btn btn-sm btn-primary" onclick="vincularManual('${extractoId}','${c.pago.id}')">Vincular</button>
+      </div>
+    </div>`;
+  }).join('') : `<div style="color:var(--text3);font-size:12px;padding:10px">No hay pagos sin conciliar en esta cuenta con fecha cercana.</div>`;
+
+  document.getElementById('cm-gasto-cuenta').innerHTML = '<option value="">— Seleccionar cuenta —</option>' +
+    (state.nomenclatura||[]).filter(n=>n.activo!==false).map(n=>`<option value="${n.id}">${n.codigo?n.codigo+' — ':''}${n.nombre}</option>`).join('');
+
+  openModal('modal-conciliar-manual');
+}
+
+async function vincularManual(extractoId, pagoId) {
+  const { error } = await sb.from('erp_extracto_bancario').update({
+    pago_id: pagoId, estado:'conciliado', match_tipo:'manual', conciliado_at: new Date().toISOString(), motivo_ignorado: null,
+  }).eq('id', extractoId);
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  toast('✓ Línea conciliada');
+  closeModal('modal-conciliar-manual');
+  await loadAll();
+  renderConciliacion();
+}
+
+async function ignorarLineaExtracto() {
+  const extractoId = document.getElementById('cm-extracto-id').value;
+  const motivo = document.getElementById('cm-motivo-ignorar').value.trim();
+  if (!motivo) { toast('Escribe un motivo para ignorar la línea','error'); return; }
+  const { error } = await sb.from('erp_extracto_bancario').update({
+    estado:'ignorado', match_tipo:null, pago_id:null, motivo_ignorado: motivo, conciliado_at: new Date().toISOString(),
+  }).eq('id', extractoId);
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  toast('Línea marcada como ignorada');
+  closeModal('modal-conciliar-manual');
+  await loadAll();
+  renderConciliacion();
+}
+
+async function deshacerConciliacion(extractoId) {
+  if (!confirm('¿Deshacer la conciliación de esta línea? Volverá a quedar pendiente.')) return;
+  const { error } = await sb.from('erp_extracto_bancario').update({
+    estado:'pendiente', pago_id:null, match_tipo:null, motivo_ignorado:null, conciliado_at:null,
+  }).eq('id', extractoId);
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  toast('Conciliación deshecha');
+  await loadAll();
+  renderConciliacion();
+}
+
+// Movimiento propio del banco sin contraparte en el sistema (comisiones, intereses, etc.):
+// genera un asiento simple Banco vs la cuenta contable elegida, y concilia la línea.
+async function registrarGastoBancario() {
+  const extractoId = document.getElementById('cm-extracto-id').value;
+  const cuentaContableId = document.getElementById('cm-gasto-cuenta').value;
+  if (!cuentaContableId) { toast('Selecciona una cuenta contable','error'); return; }
+  const linea = (state.extractoBancario||[]).find(l=>l.id===extractoId);
+  if (!linea) return;
+
+  const cuentaBancaria = (state.cuentas||[]).find(c=>c.id===linea.cuenta_id);
+  const ctaBancoNom = bancoNomenclatura(linea.cuenta_id);
+  const ctaOtra = (state.nomenclatura||[]).find(n=>n.id===cuentaContableId);
+  const monto = Math.abs(Number(linea.monto||0));
+  const esAbono = Number(linea.monto||0) >= 0;
+
+  await crearAsiento({
+    diario:'BANCOS', fecha: linea.fecha,
+    descripcion: `Movimiento bancario — ${linea.descripcion||(esAbono?'Abono':'Cargo')} (${cuentaBancaria?.name||'Banco'})`,
+    referencia: linea.referencia||`EXTRACTO-${linea.fecha}`, referencia_id: extractoId, moneda:'GTQ',
+    lineas: esAbono ? [
+      { cuenta_id: ctaBancoNom?.id||null, cuenta_codigo: ctaBancoNom?.codigo||'BANCO', cuenta_nombre: cuentaBancaria?.name||'Banco', debe: monto, haber: 0 },
+      { cuenta_id: ctaOtra?.id||null, cuenta_codigo: ctaOtra?.codigo||'', cuenta_nombre: ctaOtra?.nombre||'', debe: 0, haber: monto },
+    ] : [
+      { cuenta_id: ctaOtra?.id||null, cuenta_codigo: ctaOtra?.codigo||'', cuenta_nombre: ctaOtra?.nombre||'', debe: monto, haber: 0 },
+      { cuenta_id: ctaBancoNom?.id||null, cuenta_codigo: ctaBancoNom?.codigo||'BANCO', cuenta_nombre: cuentaBancaria?.name||'Banco', debe: 0, haber: monto },
+    ],
+  });
+
+  const { error } = await sb.from('erp_extracto_bancario').update({
+    estado:'conciliado', match_tipo:'gasto', motivo_ignorado: `Registrado como movimiento bancario — ${ctaOtra?.nombre||''}`, conciliado_at: new Date().toISOString(),
+  }).eq('id', extractoId);
+  if (error) { toast('Error: '+error.message,'error'); return; }
+
+  toast('✓ Movimiento registrado y conciliado');
+  closeModal('modal-conciliar-manual');
+  await loadAll();
+  renderConciliacion();
+}
+
+// ── Reporte: Saldo Banco vs Saldo Libros ──
+function calcSaldoLibros(cuentaId, fechaCorte) {
+  const cuenta = (state.cuentas||[]).find(c=>c.id===cuentaId);
+  let saldo = Number(cuenta?.saldo_inicial||0);
+  (state.pagos||[]).filter(p=>p.cuenta_id===cuentaId && (!fechaCorte || p.fecha<=fechaCorte))
+    .forEach(p => saldo += signedPagoMonto(p));
+  (state.ocAnticipos||[]).filter(a=>a.cuenta_id===cuentaId && (!fechaCorte || a.fecha<=fechaCorte))
+    .forEach(a => saldo -= Number(a.monto||0));
+  return saldo;
+}
+
+function renderReporteSaldos() {
+  const body = document.getElementById('conc-reporte-body');
+  if (!body) return;
+  const cuentaId = document.getElementById('conc-cuenta')?.value || '';
+
+  if (!cuentaId) {
+    const filas = (state.cuentas||[]).filter(c=>c.activa!==false).map(cuenta => {
+      const lotes = (state.extractoLotes||[]).filter(l=>l.cuenta_id===cuenta.id).sort((a,b)=>(b.fecha_fin||'').localeCompare(a.fecha_fin||''));
+      const ultimoLote  = lotes[0];
+      const saldoBanco  = ultimoLote ? Number(ultimoLote.saldo_final) : null;
+      const saldoLibros = calcSaldoLibros(cuenta.id, ultimoLote?.fecha_fin);
+      const dif = saldoBanco !== null ? saldoBanco - saldoLibros : null;
+      return { cuenta, ultimoLote, saldoBanco, saldoLibros, dif };
+    });
+
+    body.innerHTML = `
+      <div style="text-align:center;margin-bottom:20px">
+        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em">MTG Textiles</div>
+        <div style="font-size:18px;font-weight:700;margin:4px 0">Saldo Banco vs Saldo Libros — Todas las Cuentas</div>
+        <div style="font-size:12px;color:var(--text2)">Selecciona una cuenta específica arriba para ver el detalle de la conciliación</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:var(--surface2)">
+          <th style="padding:8px 14px;text-align:left">Cuenta</th>
+          <th style="padding:8px 14px;text-align:left">Último Extracto</th>
+          <th style="padding:8px 14px;text-align:right">Saldo Banco</th>
+          <th style="padding:8px 14px;text-align:right">Saldo Libros</th>
+          <th style="padding:8px 14px;text-align:right">Diferencia</th>
+        </tr></thead>
+        <tbody>
+        ${filas.map(f => `<tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:8px 14px;font-weight:500">${f.cuenta.name}</td>
+          <td style="padding:8px 14px;font-size:12px;color:var(--text2)">${f.ultimoLote?fmtDate(f.ultimoLote.fecha_fin):'Sin cargas'}</td>
+          <td class="td-mono" style="padding:8px 14px;text-align:right">${f.saldoBanco!==null?fmtGTQ(f.saldoBanco):'—'}</td>
+          <td class="td-mono" style="padding:8px 14px;text-align:right">${fmtGTQ(f.saldoLibros)}</td>
+          <td class="td-mono" style="padding:8px 14px;text-align:right;font-weight:700;color:${f.dif===null?'var(--text3)':Math.abs(f.dif)<0.01?'var(--green)':'var(--red)'}">${f.dif!==null?fmtGTQ(f.dif):'—'}</td>
+        </tr>`).join('')}
+        </tbody>
+      </table>`;
+    return;
+  }
+
+  const cuenta = (state.cuentas||[]).find(c=>c.id===cuentaId);
+  const lotes  = (state.extractoLotes||[]).filter(l=>l.cuenta_id===cuentaId).sort((a,b)=>(b.fecha_fin||'').localeCompare(a.fecha_fin||''));
+  const ultimoLote = lotes[0];
+
+  if (!ultimoLote) {
+    body.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text3)">Aún no se ha subido ningún extracto para <strong>${cuenta?.name||''}</strong>.</div>`;
+    return;
+  }
+
+  const fechaCorte  = ultimoLote.fecha_fin;
+  const saldoBanco  = Number(ultimoLote.saldo_final);
+  const saldoLibros = calcSaldoLibros(cuentaId, fechaCorte);
+
+  const vinculadosSet = new Set((state.extractoBancario||[]).filter(l=>l.pago_id).map(l=>l.pago_id));
+  const pagosSinConciliar = (state.pagos||[]).filter(p=>p.cuenta_id===cuentaId && p.fecha<=fechaCorte && !vinculadosSet.has(p.id));
+  const sumaPagosSinConciliar = pagosSinConciliar.reduce((s,p)=>s+signedPagoMonto(p),0);
+
+  const extractoSinConciliar = (state.extractoBancario||[]).filter(l=>l.cuenta_id===cuentaId && l.fecha<=fechaCorte && l.estado==='pendiente');
+  const sumaExtractoSinConciliar = extractoSinConciliar.reduce((s,l)=>s+Number(l.monto||0),0);
+
+  const saldoBancoAjustado  = saldoBanco  + sumaPagosSinConciliar;
+  const saldoLibrosAjustado = saldoLibros + sumaExtractoSinConciliar;
+  const diferenciaFinal = saldoBancoAjustado - saldoLibrosAjustado;
+  const cuadra = Math.abs(diferenciaFinal) < 0.01;
+
+  const filaPago = r => {
+    const f = (state.ocFacturas||[]).find(x=>x.id===r.factura_id) || (state.facturas||[]).find(x=>x.id===r.factura_id);
+    const signed = signedPagoMonto(r);
+    return `<tr><td style="padding:6px 10px;font-size:12px">${fmtDate(r.fecha)}</td><td style="padding:6px 10px;font-size:12px">${r.num_pago||''} ${f?.serie||''}${f?.numero||f?.invoice_number||''}</td><td class="td-mono" style="padding:6px 10px;text-align:right;font-size:12px;color:${signed>=0?'var(--green)':'var(--red)'}">${signed>=0?'+':'-'}${fmtGTQ(Math.abs(signed))}</td></tr>`;
+  };
+  const filaExtracto = r => `<tr><td style="padding:6px 10px;font-size:12px">${fmtDate(r.fecha)}</td><td style="padding:6px 10px;font-size:12px">${r.descripcion||'—'}</td><td class="td-mono" style="padding:6px 10px;text-align:right;font-size:12px;color:${Number(r.monto)>=0?'var(--green)':'var(--red)'}">${Number(r.monto)>=0?'+':'-'}${fmtGTQ(Math.abs(Number(r.monto)))}</td></tr>`;
+
+  body.innerHTML = `
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em">MTG Textiles</div>
+      <div style="font-size:18px;font-weight:700;margin:4px 0">Conciliación Bancaria — ${cuenta?.name||''}</div>
+      <div style="font-size:12px;color:var(--text2)">Corte al ${fmtDate(fechaCorte)} · último extracto cargado</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px">
+      <div>
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Saldo Según Banco</div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <tr><td style="padding:6px 4px">Saldo extracto (${fmtDate(fechaCorte)})</td><td class="td-mono" style="padding:6px 4px;text-align:right">${fmtGTQ(saldoBanco)}</td></tr>
+          <tr><td style="padding:6px 4px">+ Pagos registrados en libros, aún no reflejados en banco</td><td class="td-mono" style="padding:6px 4px;text-align:right">${fmtGTQ(sumaPagosSinConciliar)}</td></tr>
+          <tr style="border-top:1.5px solid var(--border);font-weight:700"><td style="padding:8px 4px">= Saldo Bancario Conciliado</td><td class="td-mono" style="padding:8px 4px;text-align:right">${fmtGTQ(saldoBancoAjustado)}</td></tr>
+        </table>
+        ${pagosSinConciliar.length ? `<div style="margin-top:10px;max-height:160px;overflow:auto"><table style="width:100%">${pagosSinConciliar.map(filaPago).join('')}</table></div>` : '<div style="font-size:12px;color:var(--text3);margin-top:8px">Todos los pagos están conciliados con el banco.</div>'}
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Saldo Según Libros</div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <tr><td style="padding:6px 4px">Saldo en libros (${fmtDate(fechaCorte)})</td><td class="td-mono" style="padding:6px 4px;text-align:right">${fmtGTQ(saldoLibros)}</td></tr>
+          <tr><td style="padding:6px 4px">+ Movimientos del banco aún no registrados en libros</td><td class="td-mono" style="padding:6px 4px;text-align:right">${fmtGTQ(sumaExtractoSinConciliar)}</td></tr>
+          <tr style="border-top:1.5px solid var(--border);font-weight:700"><td style="padding:8px 4px">= Saldo en Libros Conciliado</td><td class="td-mono" style="padding:8px 4px;text-align:right">${fmtGTQ(saldoLibrosAjustado)}</td></tr>
+        </table>
+        ${extractoSinConciliar.length ? `<div style="margin-top:10px;max-height:160px;overflow:auto"><table style="width:100%">${extractoSinConciliar.map(filaExtracto).join('')}</table></div>` : '<div style="font-size:12px;color:var(--text3);margin-top:8px">No hay movimientos del banco pendientes de registrar.</div>'}
+      </div>
+    </div>
+
+    <div style="background:${cuadra?'var(--green-bg)':'var(--red-bg)'};border-radius:10px;padding:18px;text-align:center">
+      <div style="font-size:11px;text-transform:uppercase;font-weight:600;letter-spacing:0.06em;margin-bottom:6px;color:${cuadra?'var(--green)':'var(--red)'}">${cuadra?'✓ Concilia Correctamente':'✗ Diferencia Sin Explicar'}</div>
+      <div style="font-size:24px;font-weight:700;font-family:'DM Mono',monospace;color:${cuadra?'var(--green)':'var(--red)'}">${fmtGTQ(diferenciaFinal)}</div>
+      ${!cuadra?'<div style="font-size:11px;color:var(--text2);margin-top:6px">Revisa montos duplicados, pagos con cuenta bancaria incorrecta, o movimientos del extracto sin conciliar ni ignorar.</div>':''}
+    </div>
+  `;
+}
+
 // ═══ CUENTAS BANCARIAS ═══
 function renderCuentas() {
   const q = (document.getElementById('search-cuentas')?.value||'').toLowerCase();
@@ -7030,6 +7778,27 @@ function renderCuentas() {
   </tr>`).join('') : '<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">◉</div><p>Sin cuentas registradas</p></div></td></tr>';
 }
 
+// Cuentas de nomenclatura tipo "Banco y efectivo" — para mapear cada cuenta
+// bancaria operativa (erp_cuentas) a SU cuenta contable real del mayor.
+function _cuentaNomenclaturaOpts(selectedId) {
+  return (state.nomenclatura||[]).filter(n=>n.tipo==='Banco y efectivo' && n.activo!==false)
+    .sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))
+    .map(n=>`<option value="${n.id}" ${n.id===selectedId?'selected':''}>${n.codigo?n.codigo+' — ':''}${n.nombre}</option>`).join('');
+}
+
+function openNewCuenta() {
+  document.getElementById('cta-id').value = '';
+  document.getElementById('cta-name').value = '';
+  document.getElementById('cta-banco').value = '';
+  document.getElementById('cta-numero').value = '';
+  document.getElementById('cta-moneda').value = 'GTQ';
+  document.getElementById('cta-activa').value = 'true';
+  document.getElementById('cta-notes').value = '';
+  document.getElementById('cta-nomenclatura').innerHTML = '<option value="">— Sin asignar (usa cualquier cuenta "Banco y efectivo") —</option>' + _cuentaNomenclaturaOpts('');
+  document.getElementById('modal-cuenta-title').textContent = 'Nueva Cuenta';
+  openModal('modal-cuenta');
+}
+
 function editCuenta(id) {
   const c = state.cuentas.find(x => x.id === id);
   document.getElementById('cta-id').value    = c.id;
@@ -7039,6 +7808,7 @@ function editCuenta(id) {
   document.getElementById('cta-moneda').value= c.moneda||'GTQ';
   document.getElementById('cta-activa').value= String(c.activa !== false);
   document.getElementById('cta-notes').value = c.notes||'';
+  document.getElementById('cta-nomenclatura').innerHTML = '<option value="">— Sin asignar (usa cualquier cuenta "Banco y efectivo") —</option>' + _cuentaNomenclaturaOpts(c.nomenclatura_id||'');
   document.getElementById('modal-cuenta-title').textContent = 'Editar Cuenta';
   openModal('modal-cuenta');
 }
@@ -7054,6 +7824,7 @@ async function saveCuenta() {
     moneda: document.getElementById('cta-moneda').value,
     activa: document.getElementById('cta-activa').value === 'true',
     notes:  document.getElementById('cta-notes').value.trim(),
+    nomenclatura_id: document.getElementById('cta-nomenclatura').value || null,
   };
   let err;
   if (id) { ({error:err} = await sb.from('erp_cuentas').update(row).eq('id',id)); }
@@ -7063,6 +7834,7 @@ async function saveCuenta() {
   ['cta-id','cta-name','cta-banco','cta-numero','cta-notes'].forEach(x => document.getElementById(x).value='');
   document.getElementById('cta-moneda').value = 'GTQ';
   document.getElementById('cta-activa').value = 'true';
+  document.getElementById('cta-nomenclatura').innerHTML = '<option value="">— Sin asignar (usa cualquier cuenta "Banco y efectivo") —</option>' + _cuentaNomenclaturaOpts('');
   document.getElementById('modal-cuenta-title').textContent = 'Nueva Cuenta';
   toast('Cuenta guardada');
   closeModal('modal-cuenta');
@@ -10102,7 +10874,9 @@ function openPagoDesdeCompras() {
   document.getElementById('pago-referencia').value   = '';
   document.getElementById('pago-notas').value        = '';
   const _prov3 = state.proveedores.find(p=>p.id===provId);
+  _pagoSetCuentaOrigen();
   document.getElementById('pago-cuenta').innerHTML = _pagoCtaOptsProveedor(_prov3?.id);
+  _pagoToggleInfoProveedor(true);
   document.getElementById('pago-historial-wrap').style.display   = 'none';
   document.getElementById('pago-distribucion-wrap').style.display = 'block';
 
@@ -11081,7 +11855,8 @@ async function asientoFacturaVenta(facturaId) {
 
   const ctaPorCobrar = state.nomenclatura.find(n => n.tipo === 'Por cobrar');
   const ctaIngresos  = state.nomenclatura.find(n => n.tipo === 'Ingreso');
-  const ctaIVA       = state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('iva') && n.tipo === 'Pasivos Circulantes');
+  const ctaIVA       = state.nomenclatura.find(n => n.codigo === '21104004')
+    || state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('iva') && n.tipo === 'Pasivos Circulantes');
 
   await crearAsiento({
     diario: 'VENTAS', fecha: f.date,
@@ -11110,7 +11885,7 @@ async function asientoPagoVenta(pagoId) {
   const montoGTQ  = esUSD ? montoOrig * tcCobro : montoOrig;
 
   const ctaPorCobrar = state.nomenclatura.find(n => n.tipo === 'Por cobrar');
-  const ctaBanco     = state.nomenclatura.find(n => n.tipo === 'Banco y efectivo');
+  const ctaBanco     = bancoNomenclatura(pg.cuenta_id);
 
   await crearAsiento({
     diario: 'COBROS', fecha: pg.fecha,
@@ -11171,11 +11946,19 @@ function buildLineasFacturaCompra({ oc_id, tipo, total }) {
     ((n.nombre||'').toLowerCase().includes('iva') && (n.nombre||'').toLowerCase().includes('cr'))
   );
 
-  // Cuentas por Pagar Proveedores — find by code 21101001 or by name
-  const ctaPorPagar = state.nomenclatura.find(n =>
-    n.codigo === '21101001' ||
-    ((n.nombre||'').toLowerCase().includes('proveedores') && n.tipo?.toLowerCase().includes('pasivo'))
-  );
+  // Cuentas por Pagar Proveedores — separada por moneda/origen del proveedor:
+  // Locales GTQ (21101001) / Locales USD (21101002) / Extranjero USD (21102011).
+  // Cae de regreso al código genérico 21101001 si la cuenta específica no existe.
+  const ocForPP       = state.oc.find(o => o.id === oc_id);
+  const provForPP     = state.proveedores.find(p => p.id === ocForPP?.proveedor_id);
+  const esExtranjeroPP = !!(provForPP?.pais && provForPP.pais !== 'GT' && provForPP.pais !== 'Guatemala');
+  const monedaOCPP     = getMonedaOC(oc_id);
+  const codigoPorPagar = esExtranjeroPP ? '21102011' : (monedaOCPP === 'USD' ? '21101002' : '21101001');
+  const ctaPorPagar = state.nomenclatura.find(n => n.codigo === codigoPorPagar)
+    || state.nomenclatura.find(n =>
+         n.codigo === '21101001' ||
+         ((n.nombre||'').toLowerCase().includes('proveedores') && n.tipo?.toLowerCase().includes('pasivo'))
+       );
 
   const ctaNom = id => state.nomenclatura.find(n => n.id === id);
   const ctaDebe = ctaNom(ctaDebeId);
@@ -11225,8 +12008,9 @@ async function asientoAnticipoOC(anticipoId) {
   const tcPago     = getTCFecha(ant.fecha);
   const montoGTQ   = esUSD ? montoOrig * tcPago : montoOrig;
 
-  const ctaBanco    = state.nomenclatura.find(n => n.tipo === 'Banco y efectivo');
-  const ctaAnticipo = state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('anticipo'));
+  const ctaBanco    = bancoNomenclatura(ant.cuenta_id);
+  const ctaAnticipo = state.nomenclatura.find(n => n.codigo === '11204001')
+    || state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('anticipo') && (n.nombre||'').toLowerCase().includes('proveedor'));
 
   // Si hay factura previa de OC, calcular diferencial
   const facturaOC = state.ocFacturas.find(f => f.oc_id === oc?.id);
@@ -15820,9 +16604,10 @@ function openFacturaOC() {
 }
 
 async function saveFacturaOC() {
-  // Evita doble-grabado: si ya se generó en esta apertura del modal, no permitir reenviar.
+  // Evita doble-grabado: si ya se generó en esta apertura del modal, el botón
+  // ahora funciona como "Cerrar" — no se debe reintentar el guardado.
   if (document.getElementById('foc-factura-id').value) {
-    toast('Esta factura ya fue generada. Cierra el modal para registrar otra.','error');
+    closeModal('modal-factura-oc');
     return;
   }
   const focBtn = document.getElementById('foc-btn-guardar');
@@ -15941,7 +16726,9 @@ async function saveFacturaOC() {
     }
   }
 
-  if (focBtn) { focBtn.disabled = true; focBtn.textContent = '✓ Factura Generada'; }
+  // El botón queda habilitado pero ahora funciona como "Cerrar" (ver guard
+  // al inicio de esta función, que detecta foc-factura-id ya seteado).
+  if (focBtn) { focBtn.disabled = false; focBtn.textContent = 'Cerrar'; }
 
   await loadAll();
   showOCPanel(oc_id);
