@@ -4550,6 +4550,96 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   </div>
 </div>
 
+<!-- ENVÍO A TERCEROS MODAL (Fase 2) -->
+<div class="modal-overlay" id="modal-op-envio">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <div class="modal-title">📦 Enviar Material a Subcontratista</div>
+      <button class="modal-close" onclick="closeModal('modal-op-envio')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="envio-op-id"/>
+      <div id="envio-op-info" style="margin-bottom:20px"></div>
+      <div class="form-grid form-grid-2">
+        <div class="field"><label>Fecha de Envío *</label><input type="date" id="envio-fecha"/></div>
+        <div class="field"><label>Peso Enviado (kg) *</label><input type="number" step="0.0001" min="0" id="envio-peso"/></div>
+        <div class="field field-full"><label>Notas</label><textarea id="envio-notas" rows="2" placeholder="Guía, transportista, etc."></textarea></div>
+      </div>
+      <div style="font-size:12px;color:var(--text3);margin-top:10px">
+        El material sigue contabilizado en Inventario en Proceso — este envío solo traslada su ubicación física a la bodega del subcontratista, no genera asiento contable.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-op-envio')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarEnvioOP()">Confirmar Envío</button>
+    </div>
+  </div>
+</div>
+
+<!-- RECEPCIÓN DE TERCEROS MODAL (Fase 2) -->
+<div class="modal-overlay" id="modal-op-recepcion">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <div class="modal-title">📥 Recibir Material de Subcontratista</div>
+      <button class="modal-close" onclick="closeModal('modal-op-recepcion')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="recepcion-op-id"/>
+      <input type="hidden" id="recepcion-envio-id"/>
+      <input type="hidden" id="recepcion-peso-enviado"/>
+      <div id="recepcion-op-info" style="margin-bottom:20px"></div>
+      <div class="form-grid form-grid-2">
+        <div class="field"><label>Fecha de Recepción *</label><input type="date" id="recepcion-fecha"/></div>
+        <div class="field"><label>Peso Recibido (kg) *</label><input type="number" step="0.0001" min="0" id="recepcion-peso"/></div>
+        <div class="field field-full"><label>Notas</label><textarea id="recepcion-notas" rows="2"></textarea></div>
+      </div>
+      <div style="font-size:12px;color:var(--text3);margin-top:10px">
+        La diferencia entre lo enviado y lo recibido es la merma real de conversión — queda registrada en el envío y se resuelve contra el costo estándar al completar la OP.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-op-recepcion')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarRecepcionOP()">Confirmar Recepción</button>
+    </div>
+  </div>
+</div>
+
+<!-- COMPLETAR OP MODAL (Fase 2) -->
+<div class="modal-overlay" id="modal-op-completar">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">✓ Completar Orden de Producción</div>
+      <button class="modal-close" onclick="closeModal('modal-op-completar')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="completar-op-id"/>
+      <div class="form-grid form-grid-2" style="margin-bottom:20px">
+        <div class="field"><label>Cantidad Programada</label>
+          <div id="completar-op-cantprog" style="padding:9px 12px;background:var(--surface2);border-radius:7px;font-size:13px;font-weight:600">—</div>
+        </div>
+        <div class="field"><label>Cantidad Real Producida (kg) *</label>
+          <input type="number" step="0.0001" min="0" id="completar-op-cantreal"/>
+        </div>
+      </div>
+
+      <div class="form-section-title" style="margin-bottom:12px">Consumo Real de Materiales vs. Estándar</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:10px">
+        Por defecto se asume el consumo estándar de la receta (incluye merma). Ajusta solo si el consumo real fue distinto — la diferencia genera un ajuste contable entre Proceso y la cuenta de origen del material.
+      </div>
+      <div class="line-items">
+        <table>
+          <thead><tr><th>Insumo</th><th style="text-align:right">Cant. Estándar</th><th style="text-align:right">Cant. Real</th></tr></thead>
+          <tbody id="tbl-completar-consumos"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-op-completar')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarCompletarOP()">✓ Completar OP</button>
+    </div>
+  </div>
+</div>
+
 <!-- BODEGA MODAL -->
 <div class="modal-overlay" id="modal-bodega">
   <div class="modal">
@@ -4573,6 +4663,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="producto_terminado">Producto Terminado</option>
             <option value="transito">Tránsito</option>
             <option value="devoluciones">Devoluciones</option>
+            <option value="en_terceros">En Poder de Terceros</option>
           </select>
         </div>
         <div class="field"><label>Estado</label>
@@ -5300,7 +5391,8 @@ let state = {
   bodegas: [],
   tiposCambio: [],
   proveedores: [],
-  compras: []
+  compras: [],
+  enviosTerceros: [], enviosTercerosItems: []
 };
 let currentPLOrderId = null;
 
@@ -5371,7 +5463,7 @@ function enterModule(hub) {
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
          sc, scI, oc, ocI, ocR, ocRI, plC, ocF, pagosOC, ocA, asi, asiL, dj, bod, tc,
-         rec, recL, recC, op_, opC, opCo, extL, extB] = await Promise.all([
+         rec, recL, recC, op_, opC, opCo, extL, extB, envT, envTI] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
     sb.from('erp_ov').select('*').order('order_number', {ascending:false}),
@@ -5412,6 +5504,8 @@ async function loadAll() {
     sb.from('erp_op_costos').select('*'),
     sb.from('erp_extracto_lotes').select('*').order('fecha_fin', {ascending:false}),
     sb.from('erp_extracto_bancario').select('*').order('fecha', {ascending:false}),
+    sb.from('erp_envios_terceros').select('*').order('created_at', {ascending:false}),
+    sb.from('erp_envios_terceros_items').select('*'),
   ]);
   state.clientes      = c.data   || [];
   state.telas         = t.data   || [];
@@ -5453,6 +5547,8 @@ async function loadAll() {
   state.opCostos           = opCo.data || [];
   state.extractoLotes      = extL.data || [];
   state.extractoBancario   = extB.data || [];
+  state.enviosTerceros      = envT.data  || [];
+  state.enviosTercerosItems = envTI.data || [];
   updateTCTopbar();
   renderDashboard();
   renderClientes();
@@ -9164,8 +9260,8 @@ function nextRecNum() {
 }
 
 // ── Labels ──
-const OP_ESTADO_LABEL = { borrador:'Borrador', en_proceso:'En Proceso', completada:'Completada', cancelada:'Cancelada' };
-const OP_ESTADO_COLOR = { borrador:'badge-gray', en_proceso:'badge-blue', completada:'badge-green', cancelada:'badge-red' };
+const OP_ESTADO_LABEL = { borrador:'Borrador', en_proceso:'En Proceso', enviado_terceros:'Enviado a Terceros', recibido_terceros:'Recibido de Terceros', completada:'Completada', cancelada:'Cancelada' };
+const OP_ESTADO_COLOR = { borrador:'badge-gray', en_proceso:'badge-blue', enviado_terceros:'badge-yellow', recibido_terceros:'badge-blue', completada:'badge-green', cancelada:'badge-red' };
 const OP_TIPO_LABEL   = {
   tejido_interno:     'Tejido Interno',
   tejido_subcontrato: 'Tejido Subcontrato',
@@ -9176,6 +9272,37 @@ const OP_TIPO_LABEL   = {
 const esInterno      = tipo => tipo === 'tejido_interno';
 const esTejido       = tipo => tipo === 'tejido_interno' || tipo === 'tejido_subcontrato';
 const esSubcontrato  = tipo => tipo === 'tejido_subcontrato' || tipo === 'tenido_subcontrato';
+
+// ── Fase 2: envío/recepción de material a subcontratistas ──
+function nextEnvioNum() {
+  const y = new Date().getFullYear();
+  const nums = (state.enviosTerceros||[])
+    .filter(e => (e.numero||'').startsWith(`EOT-${y}`))
+    .map(e => parseInt((e.numero||'').slice(-4))||0);
+  return `EOT-${y}-${String((nums.length ? Math.max(...nums) : 0)+1).padStart(4,'0')}`;
+}
+
+// Envío activo (enviado o recibido_parcial) ligado a una OP
+function envioActivoDeOP(opId) {
+  return (state.enviosTerceros||[]).find(e => e.op_id === opId && (e.estado === 'enviado' || e.estado === 'recibido_parcial'));
+}
+
+// Busca (o crea) la bodega tipo 'en_terceros' de un proveedor/subcontratista dado.
+async function getOrCrearBodegaTerceros(proveedorId) {
+  const prov = state.proveedores.find(p => p.id === proveedorId);
+  if (!prov) return null;
+  let bod = (state.bodegas||[]).find(b => b.tipo === 'en_terceros' && b.proveedor_id === proveedorId);
+  if (bod) return bod;
+  const codigo = `TERC-${(prov.name||'PROV').replace(/[^A-Z0-9]/gi,'').slice(0,10).toUpperCase()}-${proveedorId.slice(0,6).toUpperCase()}`;
+  const { data, error } = await sb.from('erp_bodegas').insert({
+    codigo, nombre: `En poder de — ${prov.name}`,
+    tipo: 'en_terceros', proveedor_id: proveedorId, activa: true,
+    notas: 'Bodega virtual creada automáticamente por el módulo de producción (Fase 2) para trazar material en poder de terceros.',
+  }).select().single();
+  if (error) { toast('Error creando bodega de terceros: '+error.message, 'error'); return null; }
+  state.bodegas.push(data);
+  return data;
+}
 
 // ════════════════════════════════════════════════════
 // RECETAS
@@ -9471,7 +9598,10 @@ function renderOP() {
       <td class="td-mono" style="text-align:right;color:var(--accent3);font-weight:600">${o.costo_total>0?fmtMoney(o.costo_total):'—'}</td>
       <td><span class="badge ${OP_ESTADO_COLOR[o.estado]||'badge-gray'}">${OP_ESTADO_LABEL[o.estado]||o.estado}</span></td>
       <td><div class="td-actions">
-        ${o.estado==='en_proceso'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();completarOP('${o.id}')">✓ Completar</button>`:''}
+        ${o.estado==='en_proceso'&&esSubcontrato(o.tipo)?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirEnvioOP('${o.id}')">📦 Enviar a Terceros</button>`:''}
+        ${o.estado==='enviado_terceros'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirRecepcionOP('${o.id}')">📥 Recibir de Terceros</button>`:''}
+        ${o.estado==='en_proceso'&&!esSubcontrato(o.tipo)?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirCompletarOP('${o.id}')">✓ Completar</button>`:''}
+        ${o.estado==='recibido_terceros'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirCompletarOP('${o.id}')">✓ Completar</button>`:''}
         ${o.estado==='borrador'?`<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();editOP('${o.id}')">Editar</button>`:''}
         ${o.estado==='borrador'||o.estado==='en_proceso'?`
           <button class="btn btn-sm btn-ghost" style="color:var(--red);border-color:var(--red)" onclick="event.stopPropagation();cancelarOP('${o.id}')">✕ Cancelar</button>`:''}
@@ -9903,24 +10033,201 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockM
   });
 }
 
-async function completarOP(id) {
-  const op = (state.op||[]).find(x=>x.id===id);
-  if (!confirm(`¿Marcar OP ${op?.numero} como completada?`)) return;
+// ════════════════════════════════════════════════════
+// FASE 2 — Envío / recepción de material a subcontratistas
+// ════════════════════════════════════════════════════
 
-  const cantProgStr = op?.cantidad_prog?.toString() || '0';
-  const cantRealStr = prompt(
-    `Cantidad real producida (kg):\n(Programado: ${cantProgStr} kg)`,
-    cantProgStr
-  );
-  if (cantRealStr === null) return;
-  const cantReal = parseFloat(cantRealStr);
-  if (isNaN(cantReal) || cantReal <= 0) { toast('Cantidad inválida','error'); return; }
+function abrirEnvioOP(opId) {
+  const op     = (state.op||[]).find(x=>x.id===opId);
+  if (!op) return;
+  const receta = (state.recetas||[]).find(r=>r.id===op.receta_id);
+  const prod   = state.productos.find(p=>p.id===op.producto_id);
+  if (!receta) { toast('OP sin receta asociada','error'); return; }
+  const provSubId = receta.proveedor_subcontrato || prod?.proveedor_default;
+  const provSub   = state.proveedores.find(p=>p.id===provSubId);
+  if (!provSubId) { toast('La receta de esta OP no tiene subcontratista asignado — configúralo en Recetas antes de enviar.','error'); return; }
+
+  document.getElementById('envio-op-id').value = opId;
+  document.getElementById('envio-op-info').innerHTML = `
+    <div style="display:flex;gap:16px;align-items:center;padding:12px 16px;background:var(--surface2);border-radius:8px">
+      <div><div style="font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase">OP</div>
+        <div style="font-size:15px;font-weight:700;color:var(--accent);font-family:'DM Mono',monospace">${op.numero}</div></div>
+      <div><div style="font-size:11px;color:var(--text3)">Producto</div>
+        <div style="font-size:13px;font-weight:600">${prod?.description||'—'}</div></div>
+      <div><div style="font-size:11px;color:var(--text3)">Proceso</div>
+        <div style="font-size:13px;font-weight:600">${OP_TIPO_LABEL[op.tipo]||op.tipo}</div></div>
+      <div><div style="font-size:11px;color:var(--text3)">Subcontratista</div>
+        <div style="font-size:13px;font-weight:600">${provSub?.name||'—'}</div></div>
+    </div>`;
+  document.getElementById('envio-fecha').value  = today();
+  document.getElementById('envio-peso').value   = op.cantidad_prog;
+  document.getElementById('envio-notas').value  = '';
+  openModal('modal-op-envio');
+}
+
+async function confirmarEnvioOP() {
+  const opId = document.getElementById('envio-op-id').value;
+  const op   = (state.op||[]).find(x=>x.id===opId);
+  if (!op) return;
+  const receta = (state.recetas||[]).find(r=>r.id===op.receta_id);
+  const prod   = state.productos.find(p=>p.id===op.producto_id);
+  const provSubId = receta?.proveedor_subcontrato || prod?.proveedor_default;
+  const peso   = parseFloat(document.getElementById('envio-peso').value);
+  const fecha  = document.getElementById('envio-fecha').value || today();
+  const notas  = document.getElementById('envio-notas').value.trim();
+  if (isNaN(peso) || peso <= 0) { toast('Peso inválido','error'); return; }
+
+  const bodTerceros = await getOrCrearBodegaTerceros(provSubId);
+  if (!bodTerceros) return;
+
+  const tipoProceso = op.tipo === 'tejido_subcontrato' ? 'tejido' : 'tintura';
+  const { data: envio, error } = await sb.from('erp_envios_terceros').insert({
+    numero: nextEnvioNum(), subcontratista_id: provSubId, tipo_proceso: tipoProceso,
+    fecha_envio: fecha, receta_id: op.receta_id, op_id: op.id, estado: 'enviado', notas,
+  }).select().single();
+  if (error) { toast('Error: '+error.message,'error'); return; }
+
+  await sb.from('erp_envios_terceros_items').insert({ envio_id: envio.id, peso_kg: peso });
+
+  // Reubicación física — el material ya contabilizado en 11301002 (WIP) sale de la
+  // bodega de salida de la OP y entra a la bodega virtual del subcontratista. No
+  // genera asiento nuevo: sigue en la misma cuenta contable, solo cambia de bodega.
+  const costoUnit = op.cantidad_prog > 0 ? Number(op.costo_total||0) / Number(op.cantidad_prog) : 0;
+  await crearMovimiento({
+    tipo: 'salida', producto_id: op.producto_id, cantidad: peso, costo_unitario: costoUnit,
+    referencia_tipo: 'ENVIO-TERCEROS', referencia_id: envio.numero,
+    notas: `Envío a subcontratista — OP ${op.numero}`, fecha, bodega_id: op.bodega_salida, lote: op.lote_produccion,
+  });
+  await crearMovimiento({
+    tipo: 'entrada', producto_id: op.producto_id, cantidad: peso, costo_unitario: costoUnit,
+    referencia_tipo: 'ENVIO-TERCEROS', referencia_id: envio.numero,
+    notas: `Recibido en bodega de terceros — OP ${op.numero}`, fecha, bodega_id: bodTerceros.id, lote: op.lote_produccion,
+  });
+
+  await sb.from('erp_op').update({ estado: 'enviado_terceros' }).eq('id', opId);
+  toast(`Envío ${envio.numero} registrado — ${peso} kg a ${state.proveedores.find(p=>p.id===provSubId)?.name||'subcontratista'}`);
+  closeModal('modal-op-envio');
+  await loadAll();
+}
+
+function abrirRecepcionOP(opId) {
+  const op    = (state.op||[]).find(x=>x.id===opId);
+  const envio = envioActivoDeOP(opId);
+  if (!op || !envio) { toast('No se encontró el envío activo de esta OP','error'); return; }
+  const items = (state.enviosTercerosItems||[]).filter(i=>i.envio_id===envio.id);
+  const pesoEnviado = items.reduce((s,i)=>s+Number(i.peso_kg||0),0);
+  const prov = state.proveedores.find(p=>p.id===envio.subcontratista_id);
+
+  document.getElementById('recepcion-op-id').value    = opId;
+  document.getElementById('recepcion-envio-id').value = envio.id;
+  document.getElementById('recepcion-peso-enviado').value = pesoEnviado;
+  document.getElementById('recepcion-op-info').innerHTML = `
+    <div style="display:flex;gap:16px;align-items:center;padding:12px 16px;background:var(--surface2);border-radius:8px">
+      <div><div style="font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase">OP</div>
+        <div style="font-size:15px;font-weight:700;color:var(--accent);font-family:'DM Mono',monospace">${op.numero}</div></div>
+      <div><div style="font-size:11px;color:var(--text3)">Subcontratista</div>
+        <div style="font-size:13px;font-weight:600">${prov?.name||'—'}</div></div>
+      <div><div style="font-size:11px;color:var(--text3)">Enviado</div>
+        <div style="font-size:13px;font-weight:600">${fmtNum(pesoEnviado)} kg — ${envio.fecha_envio}</div></div>
+    </div>`;
+  document.getElementById('recepcion-fecha').value = today();
+  document.getElementById('recepcion-peso').value  = pesoEnviado;
+  document.getElementById('recepcion-notas').value = '';
+  openModal('modal-op-recepcion');
+}
+
+async function confirmarRecepcionOP() {
+  const opId    = document.getElementById('recepcion-op-id').value;
+  const envioId = document.getElementById('recepcion-envio-id').value;
+  const op      = (state.op||[]).find(x=>x.id===opId);
+  const envio   = (state.enviosTerceros||[]).find(e=>e.id===envioId);
+  if (!op || !envio) return;
+  const pesoEnviado  = parseFloat(document.getElementById('recepcion-peso-enviado').value)||0;
+  const pesoRecibido = parseFloat(document.getElementById('recepcion-peso').value);
+  const fecha        = document.getElementById('recepcion-fecha').value || today();
+  const notas         = document.getElementById('recepcion-notas').value.trim();
+  if (isNaN(pesoRecibido) || pesoRecibido <= 0) { toast('Peso inválido','error'); return; }
+
+  const bodTerceros = (state.bodegas||[]).find(b=>b.tipo==='en_terceros' && b.proveedor_id===envio.subcontratista_id);
+  const costoUnit = op.cantidad_prog > 0 ? Number(op.costo_total||0) / Number(op.cantidad_prog) : 0;
+
+  // Sale de la bodega de terceros TODO lo que se había enviado (cierra ese lote allá);
+  // entra a la bodega de salida de la OP solo lo que realmente volvió — la merma real
+  // de conversión queda reflejada como menor cantidad recibida, y se resuelve contra
+  // el costo estándar al completar la OP (mismo mecanismo de ajuste que ya existe).
+  await crearMovimiento({
+    tipo: 'salida', producto_id: op.producto_id, cantidad: pesoEnviado, costo_unitario: costoUnit,
+    referencia_tipo: 'RECEPCION-TERCEROS', referencia_id: envio.numero,
+    notas: `Recepción de subcontratista — OP ${op.numero}`, fecha, bodega_id: bodTerceros?.id||null, lote: op.lote_produccion,
+  });
+  await crearMovimiento({
+    tipo: 'entrada', producto_id: op.producto_id, cantidad: pesoRecibido, costo_unitario: costoUnit,
+    referencia_tipo: 'RECEPCION-TERCEROS', referencia_id: envio.numero,
+    notas: `Recibido de vuelta en bodega — OP ${op.numero}${notas?' | '+notas:''}`, fecha, bodega_id: op.bodega_salida, lote: op.lote_produccion,
+  });
+
+  const mermaKg  = pesoEnviado - pesoRecibido;
+  const mermaPct = pesoEnviado > 0 ? (mermaKg/pesoEnviado*100) : 0;
+  await sb.from('erp_envios_terceros').update({
+    estado: 'recibido', fecha_recepcion: fecha, peso_recibido_kg: pesoRecibido,
+    notas: [envio.notas, notas, `Merma real: ${mermaKg.toFixed(3)} kg (${mermaPct.toFixed(2)}%)`].filter(Boolean).join(' | '),
+  }).eq('id', envioId);
+
+  await sb.from('erp_op').update({ estado: 'recibido_terceros' }).eq('id', opId);
+  toast(`Recepción registrada — ${fmtNum(pesoRecibido)} kg (merma real ${mermaPct.toFixed(2)}%)`);
+  closeModal('modal-op-recepcion');
+  await loadAll();
+}
+
+// ════════════════════════════════════════════════════
+// Completar OP — captura cantidad real de salida y
+// consumo real por material (vs. estándar de la receta)
+// ════════════════════════════════════════════════════
+
+function abrirCompletarOP(id) {
+  const op = (state.op||[]).find(x=>x.id===id);
+  if (!op) return;
+  const consumos = (state.opConsumos||[]).filter(c=>c.op_id===id);
+  const envioRecibido = (state.enviosTerceros||[]).find(e=>e.op_id===id && e.estado==='recibido');
+  const cantRealDefault = envioRecibido?.peso_recibido_kg ?? op.cantidad_prog;
+
+  document.getElementById('completar-op-id').value = id;
+  document.getElementById('completar-op-cantprog').textContent = fmtNum(op.cantidad_prog)+' kg';
+  document.getElementById('completar-op-cantreal').value = cantRealDefault;
+
+  const tbody = document.getElementById('tbl-completar-consumos');
+  tbody.innerHTML = consumos.length ? consumos.map(c=>{
+    const p = state.productos.find(x=>x.id===c.insumo_id);
+    return `<tr>
+      <td>
+        <div style="font-weight:500;font-size:13px">${p?.description||'—'}</div>
+        <div style="font-size:11px;color:var(--text3)">${p?.codigo_interno||p?.code||''}</div>
+      </td>
+      <td class="td-mono" style="text-align:right">${fmtNum(c.cantidad_prog)} ${c.unidad||'kg'}</td>
+      <td style="text-align:right">
+        <input type="number" step="0.0001" min="0" id="completar-consumo-real-${c.id}" value="${c.cantidad_prog}"
+          style="width:110px;text-align:right;padding:6px 8px;border:1px solid var(--border);border-radius:6px"/>
+      </td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="3" style="color:var(--text3);font-size:12px">Sin consumos registrados</td></tr>';
+
+  openModal('modal-op-completar');
+}
+
+async function confirmarCompletarOP() {
+  const id = document.getElementById('completar-op-id').value;
+  const op = (state.op||[]).find(x=>x.id===id);
+  if (!op) return;
+  const cantReal = parseFloat(document.getElementById('completar-op-cantreal').value);
+  if (isNaN(cantReal) || cantReal <= 0) { toast('Cantidad real inválida','error'); return; }
 
   await sb.from('erp_op').update({
     estado: 'completada',
     cantidad_real: cantReal,
     fecha_fin: today(),
   }).eq('id', id);
+
+  const mensajes = [];
 
   // Si cantidad real ≠ programada → ajuste contable por diferencia
   const diff = cantReal - Number(op.cantidad_prog||0);
@@ -9975,11 +10282,71 @@ async function completarOP(id) {
       ],
     });
 
-    toast(`OP completada. Ajuste contable generado por ${diff>0?'+':''}${diff.toFixed(3)} kg`);
-  } else {
-    toast('OP completada');
+    mensajes.push(`ajuste de salida ${diff>0?'+':''}${diff.toFixed(3)} kg`);
   }
 
+  // ── Consumo real vs. estándar por material (Fase 2) ──
+  const consumosOP = (state.opConsumos||[]).filter(c => c.op_id === id);
+  let totalDiffValorMP = 0;
+  const detalleAjusteMP = [];
+  for (const c of consumosOP) {
+    const inputEl = document.getElementById(`completar-consumo-real-${c.id}`);
+    if (!inputEl) continue;
+    const nuevoReal = parseFloat(inputEl.value);
+    if (isNaN(nuevoReal) || nuevoReal < 0) continue;
+
+    const cu = Number(c.costo_unitario||0);
+    await sb.from('erp_op_consumos').update({
+      cantidad_real: nuevoReal,
+      costo_total:   parseFloat((nuevoReal*cu).toFixed(4)),
+      capturado_at:  new Date().toISOString(),
+    }).eq('id', c.id);
+
+    const diffCant = nuevoReal - Number(c.cantidad_prog||0); // vs. estándar (ya incluye merma de receta)
+    if (Math.abs(diffCant) >= 0.001) {
+      const prod = state.productos.find(p=>p.id===c.insumo_id);
+      totalDiffValorMP += diffCant * cu;
+      detalleAjusteMP.push(`${prod?.description||'—'} ${diffCant>0?'+':''}${diffCant.toFixed(3)} kg`);
+      await crearMovimiento({
+        tipo: diffCant > 0 ? 'ajuste_negativo' : 'ajuste_positivo', // consumió más MP de la que se había registrado como salida, o menos
+        producto_id: c.insumo_id,
+        cantidad: Math.abs(diffCant),
+        costo_unitario: cu,
+        referencia_tipo: 'OP-AJUSTE-MP', referencia_id: op.numero,
+        notas: `Ajuste consumo real vs. estándar OP ${op.numero}: ${diffCant>0?'+':''}${diffCant.toFixed(3)} kg`,
+        fecha: today(), bodega_id: op.bodega_entrada, lote: c.lote,
+      });
+    }
+  }
+
+  if (Math.abs(totalDiffValorMP) >= 0.01) {
+    const ctaProceso   = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
+    const ctaOrigenCod = esTejido(op.tipo) ? CTA_INV_HILO : CTA_INV_TERMINADO;
+    const ctaOrigen    = state.nomenclatura.find(n => n.codigo === ctaOrigenCod);
+    const consumioMas  = totalDiffValorMP > 0;
+    await crearAsiento({
+      diario: DIARIO_MANUFACTURA,
+      fecha: today(),
+      descripcion: `OP ${op.numero} — Ajuste consumo real de MP vs. estándar (${detalleAjusteMP.join(', ')})`,
+      referencia: op.numero, referencia_id: id,
+      moneda: 'GTQ', tipo_cambio: 1,
+      lineas: consumioMas ? [
+        { cuenta_id: ctaProceso?.id||null, cuenta_codigo: CTA_INV_PROCESO, cuenta_nombre: ctaProceso?.nombre||'En Proceso',
+          debe: Math.abs(totalDiffValorMP), haber: 0, descripcion: 'Consumo real de MP > estándar' },
+        { cuenta_id: ctaOrigen?.id||null, cuenta_codigo: ctaOrigenCod, cuenta_nombre: ctaOrigen?.nombre||'Inventario MP',
+          debe: 0, haber: Math.abs(totalDiffValorMP), descripcion: detalleAjusteMP.join(', ') },
+      ] : [
+        { cuenta_id: ctaOrigen?.id||null, cuenta_codigo: ctaOrigenCod, cuenta_nombre: ctaOrigen?.nombre||'Inventario MP',
+          debe: Math.abs(totalDiffValorMP), haber: 0, descripcion: detalleAjusteMP.join(', ') },
+        { cuenta_id: ctaProceso?.id||null, cuenta_codigo: CTA_INV_PROCESO, cuenta_nombre: ctaProceso?.nombre||'En Proceso',
+          debe: 0, haber: Math.abs(totalDiffValorMP), descripcion: 'Consumo real de MP < estándar' },
+      ],
+    });
+    mensajes.push(`ajuste de MP Q${Math.abs(totalDiffValorMP).toFixed(2)}`);
+  }
+
+  toast(mensajes.length ? `OP completada — ${mensajes.join(', ')}` : 'OP completada');
+  closeModal('modal-op-completar');
   await loadAll();
 }
 
@@ -10127,6 +10494,9 @@ function showOPDetail(id) {
   const costos  = (state.opCostos||[]).filter(c=>c.op_id===id);
   const bodEnt  = (state.bodegas||[]).find(b=>b.id===op?.bodega_entrada);
   const bodSal  = (state.bodegas||[]).find(b=>b.id===op?.bodega_salida);
+  const envio   = (state.enviosTerceros||[]).find(e=>e.op_id===id);
+  const envioItems = envio ? (state.enviosTercerosItems||[]).filter(i=>i.envio_id===envio.id) : [];
+  const pesoEnviadoDetail = envioItems.reduce((s,i)=>s+Number(i.peso_kg||0),0);
   const [yi,mi,di]=(op?.fecha_inicio||'').split('-');
   const [yf,mf,df]=(op?.fecha_fin||'').split('-');
 
@@ -10157,6 +10527,16 @@ function showOPDetail(id) {
           <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Estado</div>
             <span class="badge ${OP_ESTADO_COLOR[op?.estado]||'badge-gray'}">${OP_ESTADO_LABEL[op?.estado]||op?.estado}</span></div>
         </div>
+
+        ${envio ? `
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Envío a Subcontratista</div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:20px;padding:12px 16px;background:var(--surface2);border-radius:8px">
+          <div><div style="font-size:10px;color:var(--text3)">Envío</div><div style="font-size:13px;font-weight:600" class="td-mono">${envio.numero||'—'}</div></div>
+          <div><div style="font-size:10px;color:var(--text3)">Subcontratista</div><div style="font-size:13px;font-weight:600">${state.proveedores.find(p=>p.id===envio.subcontratista_id)?.name||'—'}</div></div>
+          <div><div style="font-size:10px;color:var(--text3)">Enviado</div><div style="font-size:13px;font-weight:600">${fmtNum(pesoEnviadoDetail)} kg — ${envio.fecha_envio||'—'}</div></div>
+          <div><div style="font-size:10px;color:var(--text3)">Recibido</div><div style="font-size:13px;font-weight:600">${envio.peso_recibido_kg?fmtNum(envio.peso_recibido_kg)+' kg — '+(envio.fecha_recepcion||''):'— pendiente —'}</div></div>
+          <div><div style="font-size:10px;color:var(--text3)">Merma Real</div><div style="font-size:13px;font-weight:600;color:${envio.peso_recibido_kg && pesoEnviadoDetail>envio.peso_recibido_kg?'var(--red)':'var(--text2)'}">${envio.peso_recibido_kg?((pesoEnviadoDetail-envio.peso_recibido_kg)/pesoEnviadoDetail*100).toFixed(2)+'%':'—'}</div></div>
+        </div>` : ''}
 
         ${consumos.length ? `
         <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Consumo de Materiales</div>
@@ -17582,7 +17962,8 @@ function exportarTC() {
 
 const BODEGA_TIPO_LABEL = {
   general:'General', materia_prima:'Materia Prima',
-  producto_terminado:'Producto Terminado', transito:'Tránsito', devoluciones:'Devoluciones'
+  producto_terminado:'Producto Terminado', transito:'Tránsito', devoluciones:'Devoluciones',
+  en_terceros:'En Poder de Terceros'
 };
 
 function renderBodegas() {
