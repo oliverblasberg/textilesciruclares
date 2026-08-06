@@ -5402,6 +5402,20 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   </div>
 </div>
 
+<!-- VER FACTURA OC (COMPRAS) MODAL -->
+<div class="modal-overlay" id="modal-ver-factura-oc">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="vfoc-title">Factura</div>
+      <button class="modal-close" onclick="closeModal('modal-ver-factura-oc')">✕</button>
+    </div>
+    <div class="modal-body" id="vfoc-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-ver-factura-oc')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -14711,8 +14725,14 @@ function showOCPanel(ocId) {
   });
 
   const canReceive = isConfirmada && !esServicio && oc.status !== 'completada';
-  // Servicios: factura disponible al confirmar; físicos: requieren recepción
-  const canInvoice = isConfirmada && (esServicio || hasRecepciones);
+  // Para habilitar factura, la recepción debe estar realmente confirmada — una
+  // recepción en borrador (ej. escaneo de PL a medio terminar) no cuenta como
+  // "producto recibido" todavía.
+  const hasRecepcionesConfirmadas = state.ocRecepciones.some(r=>r.oc_id===ocId && r.status==='completada');
+  // Servicios: factura disponible al confirmar; físicos: requieren recepción confirmada.
+  // En ambos casos, una vez lo recibido (o lo pedido, si es servicio) ya está
+  // facturado en su totalidad, se esconde el botón — no se puede sobre-facturar.
+  const canInvoice = isConfirmada && (esServicio || hasRecepcionesConfirmadas) && ocSaldoPorFacturar(ocId) > 0.01;
 
   // Confirmar — solo en borrador
   const btnConf = document.getElementById('btn-confirmar-oc');
@@ -14965,6 +14985,92 @@ function closeOCPanel() {
   currentOCId = null;
 }
 
+// ── VER FACTURA OC (popup de detalle, click en el número de factura) ──
+function verFacturaOC(facturaId) {
+  const f = (state.ocFacturas||[]).find(x => x.id === facturaId);
+  if (!f) return;
+  const oc     = state.oc.find(o => o.id === f.oc_id);
+  const prov   = state.proveedores.find(p => p.id === oc?.proveedor_id);
+  const compra = (state.compras||[]).find(c => c.factura_id === facturaId);
+  const pagos  = (state.pagosOC||[]).filter(p => p.factura_id === facturaId);
+  const pagado = pagos.reduce((s,p)=>s+Number(p.monto||0),0);
+  const total  = Number(f.total||0);
+  const saldo  = Math.max(0, total - pagado);
+  const esPagada  = saldo <= 0.01;
+  const esParcial = pagado > 0 && !esPagada;
+  const statusLabel = esPagada ? 'Pagada' : esParcial ? 'Pagada Parcialmente' : 'Generada';
+  const statusColor = esPagada ? 'badge-green' : esParcial ? 'badge-yellow' : 'badge-blue';
+  const monedaOC = getMonedaOC(f.oc_id);
+  const tipoMap = { FC:'Factura cambiaria', FE:'Factura especial', FCAM:'Factura cambiaria' };
+
+  document.getElementById('vfoc-title').textContent = `Factura ${f.serie||''}${f.numero||'—'}`;
+  document.getElementById('vfoc-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+      <div style="padding:12px 16px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">No. Factura</div>
+        <div style="font-size:16px;font-weight:700;font-family:'DM Mono',monospace">${f.serie||''}${f.numero||'—'}</div>
+      </div>
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Fecha</div>
+        <div style="font-size:14px;font-weight:500">${fmtDate(f.fecha)}</div>
+      </div>
+      <div style="padding:12px 16px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Proveedor</div>
+        <div style="font-size:14px;font-weight:500">${prov?.name||'—'}</div>
+      </div>
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Orden de Compra</div>
+        <div style="font-size:14px;font-weight:500;font-family:'DM Mono',monospace">${oc?.numero||'—'}</div>
+      </div>
+      <div style="padding:12px 16px;border-right:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Tipo</div>
+        <div style="font-size:13px">${tipoMap[f.tipo]||f.tipo||'—'}</div>
+      </div>
+      <div style="padding:12px 16px">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Vencimiento</div>
+        <div style="font-size:13px">${f.fecha_vencimiento?fmtDate(f.fecha_vencimiento):'—'}</div>
+      </div>
+    </div>
+
+    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px">
+        <span style="color:var(--text2)">Neto</span>
+        <span style="font-family:'DM Mono',monospace">${compra ? fmtMoney(compra.valor_neto, monedaOC) : '—'}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px">
+        <span style="color:var(--text2)">IVA</span>
+        <span style="font-family:'DM Mono',monospace">${compra ? fmtMoney(compra.valor_iva, monedaOC) : '—'}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:var(--surface2);font-weight:600">
+        <span>Total</span>
+        <span style="font-family:'DM Mono',monospace;font-size:18px">${fmtMoney(total, monedaOC)}</span>
+      </div>
+    </div>
+
+    <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Estado</div>
+    <div style="margin-bottom:20px"><span class="badge ${statusColor}">${statusLabel}</span></div>
+
+    <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Pagos</div>
+    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px">
+      ${pagos.length ? pagos.map(p => {
+        const cta = state.cuentas.find(c => c.id === p.cuenta_id);
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px">
+          <div style="color:var(--text2)">${fmtDate(p.fecha)} · ${p.forma||'—'} · ${cta?.name||'—'}${p.notas ? ' · '+p.notas : ''}</div>
+          <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--green)">${fmtMoney(p.monto)}</span>
+        </div>`;
+      }).join('') : '<div style="padding:12px 16px;color:var(--text3);font-size:13px">Sin pagos registrados</div>'}
+      <div style="display:flex;justify-content:space-between;padding:10px 16px;background:var(--surface2);font-size:13px">
+        <div style="display:flex;gap:20px">
+          <span>Pagado: <strong style="color:var(--green)">${fmtMoney(pagado, monedaOC)}</strong></span>
+          <span>Saldo: <strong style="color:${esPagada?'var(--text3)':'var(--accent)'}">${fmtMoney(saldo, monedaOC)}</strong></span>
+        </div>
+      </div>
+    </div>
+    ${f.notas ? `<div style="font-size:12px;color:var(--text2)"><strong>Notas:</strong> ${f.notas}</div>` : ''}
+  `;
+  openModal('modal-ver-factura-oc');
+}
+
 function renderOCPanel(ocId) {
   const items = state.ocItems.filter(i=>i.oc_id===ocId);
   // Lines
@@ -15036,11 +15142,11 @@ function renderOCPanel(ocId) {
     const saldo    = Math.max(0, Number(f.total||0) - pagado);
     const esPagada = saldo <= 0.01;
     const esParcial = pagado > 0 && !esPagada;
-    const statusLabel = esPagada ? 'Pagada' : esParcial ? 'Parcialmente Pagada' : 'Generada';
+    const statusLabel = esPagada ? 'Pagada' : esParcial ? 'Pagada Parcialmente' : 'Generada';
     const statusColor = esPagada ? 'badge-green' : esParcial ? 'badge-yellow' : 'badge-blue';
     return `<tr style="${esPagada?'opacity:0.75':''}">
       <td class="td-mono" style="font-size:11px;color:var(--text3)">${f.num_interno||'—'}</td>
-      <td class="td-mono">${f.serie||'—'}${f.numero||'—'}</td>
+      <td class="td-mono" style="cursor:pointer;color:var(--accent);text-decoration:underline" onclick="verFacturaOC('${f.id}')">${f.serie||'—'}${f.numero||'—'}</td>
       <td>${fmtDate(f.fecha)}</td>
       <td class="td-mono">${fmtMoney(f.total)}</td>
       <td class="td-mono" style="color:var(--green)">${pagado>0?pagosF.map(p=>p.num_pago||'').filter(Boolean).join(', ')||fmtMoney(pagado):'—'}</td>
@@ -16818,6 +16924,31 @@ async function saveRecepcion() {
     });
 
     if (!recItems.length) { toast('Ingresa al menos una cantidad a recibir','error'); return; }
+
+    // No permitir recibir, por producto, más de lo pedido en la OC. Si esta
+    // recepción ya existía (se está reconfirmando), se resta su propio aporte
+    // anterior para no contarlo dos veces.
+    {
+      const existingRecCheck = (state.ocRecepciones||[]).find(r => r.numero===numero && r.oc_id===ocId);
+      const prevItemsThisRec = existingRecCheck
+        ? (state.ocRecepcionItems||[]).filter(x=>x.recepcion_id===existingRecCheck.id)
+        : [];
+      const nuevoPorProducto = {};
+      recItems.forEach(it => { nuevoPorProducto[it.producto_id] = (nuevoPorProducto[it.producto_id]||0) + Number(it.cantidad||0); });
+      for (const prodId of Object.keys(nuevoPorProducto)) {
+        const ocItem = items.find(i => i.producto_id === prodId);
+        if (!ocItem) continue;
+        const pedido = Number(ocItem.cantidad||0);
+        const yaRecibidoOtras = ocRecibidoQty(ocId, prodId) -
+          prevItemsThisRec.filter(x=>x.producto_id===prodId).reduce((s,x)=>s+Number(x.cantidad||0),0);
+        const disponible = pedido - yaRecibidoOtras;
+        if (nuevoPorProducto[prodId] > disponible + 0.001) {
+          const prod = state.productos.find(p=>p.id===prodId);
+          toast(`No puedes recibir ${nuevoPorProducto[prodId].toFixed(3)} ${ocItem.unidad||''} de ${prod?.description||'este producto'}: ya está recibido ${yaRecibidoOtras.toFixed(3)} de ${pedido.toFixed(3)} pedidos (disponible: ${Math.max(0,disponible).toFixed(3)}).`,'error');
+          return;
+        }
+      }
+    }
 
     // Create or update recepcion header
     const existingRec = (state.ocRecepciones||[]).find(r => r.numero===numero && r.oc_id===ocId);
