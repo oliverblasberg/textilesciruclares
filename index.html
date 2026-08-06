@@ -3584,9 +3584,12 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
           <!-- Recetas por prioridad -->
           <div class="field field-full" id="prod-recetas-prioridad-field" style="display:none">
-            <label style="display:block;margin-bottom:10px;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3)">
-              Recetas por Prioridad
-              <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3);margin-left:8px">— El sistema usará la de mayor prioridad disponible</span>
+            <label style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <span style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3)">
+                Recetas por Prioridad
+                <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3);margin-left:8px">— El sistema usará la de mayor prioridad disponible</span>
+              </span>
+              <button type="button" class="btn btn-sm btn-ghost" id="btn-prod-ver-estructura" style="display:none" onclick="abrirEstructuraBOM(document.getElementById('prod-id').value)">🌳 Ver Estructura Completa</button>
             </label>
             <div id="prod-recetas-lista" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
             <div style="font-size:11px;color:var(--text3)">Las recetas se configuran en el módulo de Manufactura → Recetas. Aquí solo se establece el orden de prioridad.</div>
@@ -4355,7 +4358,10 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   <div class="modal modal-lg">
     <div class="modal-header">
       <div class="modal-title" id="modal-receta-title">Nueva Receta</div>
-      <button class="modal-close" onclick="closeModal('modal-receta')">✕</button>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="btn btn-sm btn-ghost" id="btn-rec-ver-estructura" style="display:none" onclick="abrirEstructuraBOM(document.getElementById('rec-producto').value)">🌳 Ver Estructura Completa</button>
+        <button class="modal-close" onclick="closeModal('modal-receta')">✕</button>
+      </div>
     </div>
     <div class="modal-body">
       <input type="hidden" id="rec-id"/>
@@ -4369,6 +4375,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="tejido_interno">Tejido Interno (sin costo de conversión)</option>
             <option value="tejido_subcontrato">Tejido Subcontratado (con costo/kg)</option>
             <option value="tenido_subcontrato">Teñido Subcontratado (con costo/kg)</option>
+            <option value="acabado_subcontrato">Acabado Subcontratado (con costo/kg)</option>
           </select>
         </div>
         <div class="field"><label>Producto Fabricado *</label>
@@ -4424,6 +4431,36 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-receta')">Cancelar</button>
       <button class="btn btn-primary" onclick="saveReceta()">Guardar Receta</button>
+    </div>
+  </div>
+</div>
+
+<!-- ESTRUCTURA DE LISTA DE MATERIALES & COSTO (explosión de BOM en cascada) -->
+<div class="modal-overlay" id="modal-bom">
+  <div class="modal modal-lg" style="max-width:900px">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Estructura de Lista de Materiales & Costo</div>
+        <div id="bom-titulo" style="font-size:13px;color:var(--text2);margin-top:2px"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('modal-bom')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px">
+        Muestra la receta predeterminada (menor prioridad) de cada nivel de la cadena H→GF→DF→C, con su costo recursivo.
+        Un producto con ruta de respaldo (ver Recetas por Prioridad) puede fabricarse distinto si se usa la ruta alterna —
+        esto siempre refleja la que el motor automático elegiría hoy.
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Producto</th><th style="text-align:right">Cantidad</th><th>Unidad</th><th style="text-align:right">Costo del Producto</th><th style="text-align:right">Costo de Lista de Materiales</th></tr></thead>
+          <tbody id="bom-tbody"></tbody>
+        </table>
+      </div>
+      <div id="bom-resumen" style="display:flex;gap:32px;margin-top:18px;padding:14px 18px;background:var(--surface2);border-radius:8px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-bom')">Cerrar</button>
     </div>
   </div>
 </div>
@@ -4496,6 +4533,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="tejido_interno">Tejido Interno</option>
             <option value="tejido_subcontrato">Tejido Subcontratado</option>
             <option value="tenido_subcontrato">Teñido Subcontratado</option>
+            <option value="acabado_subcontrato">Acabado Subcontratado</option>
           </select>
         </div>
         <div class="field"><label>Receta *</label>
@@ -9266,12 +9304,13 @@ const OP_TIPO_LABEL   = {
   tejido_interno:     'Tejido Interno',
   tejido_subcontrato: 'Tejido Subcontrato',
   tenido_subcontrato: 'Teñido Subcontrato',
+  acabado_subcontrato: 'Acabado Subcontrato',
 };
 
 // Helpers de tipo
 const esInterno      = tipo => tipo === 'tejido_interno';
 const esTejido       = tipo => tipo === 'tejido_interno' || tipo === 'tejido_subcontrato';
-const esSubcontrato  = tipo => tipo === 'tejido_subcontrato' || tipo === 'tenido_subcontrato';
+const esSubcontrato  = tipo => tipo === 'tejido_subcontrato' || tipo === 'tenido_subcontrato' || tipo === 'acabado_subcontrato';
 
 // ── Fase 2: envío/recepción de material a subcontratistas ──
 function nextEnvioNum() {
@@ -9443,6 +9482,7 @@ function openNewReceta() {
   document.getElementById('rec-producto').innerHTML = prodOpts;
   addRecInsumo(); addRecCosto();
   document.getElementById('modal-receta-title').textContent = 'Nueva Receta';
+  document.getElementById('btn-rec-ver-estructura').style.display = 'none';
   openModal('modal-receta');
 }
 
@@ -9470,6 +9510,7 @@ function editReceta(id) {
     addRecCosto(c.descripcion, c.tipo, c.monto, c.moneda, c.proveedor_id)
   );
   document.getElementById('modal-receta-title').textContent = 'Editar Receta';
+  document.getElementById('btn-rec-ver-estructura').style.display = 'inline-flex';
   openModal('modal-receta');
 }
 
@@ -9553,6 +9594,139 @@ async function deleteReceta(id) {
   await sb.from('erp_recetas').delete().eq('id',id);
   toast('Receta eliminada');
   await loadAll();
+}
+
+// ════════════════════════════════════════════════════
+// ESTRUCTURA DE LISTA DE MATERIALES & COSTO (explosión de BOM en cascada)
+// Recorre H→GF→DF→C recursivamente a partir de las recetas ya guardadas —
+// no requiere nivel_produccion ni ningún dato nuevo: cualquier insumo que a
+// su vez tenga su propia receta activa se expande como hijo; el que no
+// tiene receta propia es una hoja (materia prima comprada).
+// En cada nivel usa la receta predeterminada (menor prioridad), igual que
+// ahora usa planificarFabricacion — así la estructura mostrada coincide con
+// la que el motor automático realmente va a fabricar.
+// ════════════════════════════════════════════════════
+
+function explodeBOM(productoId, cantidad = 1, stockMap, visitados = new Set()) {
+  const prod = state.productos.find(p => p.id === productoId);
+  if (!prod) return null;
+
+  if (visitados.has(productoId)) {
+    // Ciclo en la configuración de recetas (A necesita B y B necesita A) —
+    // no debería pasar, pero cortamos aquí en vez de colgar el navegador.
+    return { producto: prod, cantidad, unidad: prod.unidad||'kg', costoUnitario: 0, costoLista: 0, receta: null, hijos: [], costosConversion: [], ciclo: true };
+  }
+  const visitadosHijo = new Set(visitados);
+  visitadosHijo.add(productoId);
+
+  // Receta predeterminada de este nivel: la de menor número de prioridad
+  // entre TODAS las recetas activas del producto, sin importar el tipo
+  // (tejido/teñido/acabado, interno o subcontratado) — mismo criterio que
+  // planificarFabricacion/planificarSubcontrato.
+  const receta = (state.recetas||[])
+    .filter(r => r.producto_id === productoId && r.activa !== false)
+    .sort((a,b) => (a.prioridad||99) - (b.prioridad||99))[0];
+
+  if (!receta) {
+    // Nodo hoja: materia prima comprada, no fabricada — costo desde stock
+    // valorizado (FIFO) o, si no hay existencia, el precio de compra de
+    // referencia del producto.
+    const st = stockMap[productoId];
+    const costoUnitario = st && st.saldo > 0 ? st.valoracion/st.saldo : Number(prod.precio_compra||0);
+    return {
+      producto: prod, cantidad, unidad: prod.unidad||'kg',
+      costoUnitario, costoLista: costoUnitario * cantidad,
+      receta: null, hijos: [], costosConversion: [],
+    };
+  }
+
+  const lineas = (state.recetaLineas||[]).filter(l => l.receta_id === receta.id);
+  const hijos = lineas.map(l => {
+    const cantConMerma = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100);
+    return explodeBOM(l.insumo_id, cantConMerma, stockMap, visitadosHijo);
+  }).filter(Boolean);
+
+  const costoMP = hijos.reduce((s,h) => s + h.costoLista, 0);
+
+  // Costos de conversión (solo rutas subcontratadas) — mismo cálculo que ya
+  // usa registrarMovimientosOP/planificarSubcontrato, expresado por 1 unidad
+  // de salida de este nivel (los "fijo" se muestran prorateados a 1 unidad,
+  // solo como referencia — el costo real de una OP concreta se calcula
+  // sobre su cantidad real, no aquí).
+  const tc = tcHoy() || 7.75;
+  const costosConversion = esSubcontrato(receta.tipo)
+    ? (state.recetaCostos||[]).filter(c => c.receta_id === receta.id).map(c => {
+        const mGTQ = c.moneda === 'USD' ? c.monto * tc : c.monto;
+        const monto = c.tipo === 'porcentaje' ? costoMP * (c.monto/100) : mGTQ; // por_kg y fijo se muestran igual: costo de referencia por 1 unidad
+        const prov = state.proveedores.find(p => p.id === c.proveedor_id) || state.proveedores.find(p => p.id === receta.proveedor_subcontrato);
+        return { descripcion: c.descripcion, tipo: c.tipo, proveedor: prov?.name || null, monto };
+      })
+    : [];
+  const costoConvTotal = costosConversion.reduce((s,c) => s + c.monto, 0);
+  const costoUnitario = costoMP + costoConvTotal;
+
+  return {
+    producto: prod, cantidad, unidad: receta.unidad_produce || prod.unidad || 'kg',
+    costoUnitario, costoLista: costoUnitario * cantidad,
+    receta, hijos, costosConversion,
+  };
+}
+
+function renderBOMRows(node, depth) {
+  const indent = 14 + depth * 22;
+  const tipoBadge = node.receta
+    ? `<span class="badge badge-blue" style="margin-left:8px;font-size:10px">${OP_TIPO_LABEL[node.receta.tipo]||node.receta.tipo}</span>`
+    : `<span class="badge badge-gray" style="margin-left:8px;font-size:10px">Comprado</span>`;
+  const cicloWarn = node.ciclo ? `<span style="color:var(--red);font-size:11px;margin-left:8px">⚠ ciclo de receta detectado — corte aquí</span>` : '';
+
+  let rows = `<tr${depth===0?' style="background:var(--surface2)"':''}>
+    <td style="padding-left:${indent}px">
+      <span style="font-family:'DM Mono',monospace;font-weight:700;color:var(--accent)">${node.producto.codigo_interno||node.producto.code||'?'}</span>
+      <span style="${depth===0?'font-weight:700':'font-weight:500'}">${node.producto.description||''}</span>
+      ${tipoBadge}${cicloWarn}
+    </td>
+    <td class="td-mono" style="text-align:right">${node.cantidad.toFixed(4)}</td>
+    <td style="font-size:12px;color:var(--text2)">${node.unidad}</td>
+    <td class="td-mono" style="text-align:right">${fmtMoney(node.costoUnitario)}</td>
+    <td class="td-mono" style="text-align:right;font-weight:700;color:var(--accent3)">${fmtMoney(node.costoLista)}</td>
+  </tr>`;
+
+  node.hijos.forEach(h => { rows += renderBOMRows(h, depth+1); });
+
+  node.costosConversion.forEach(c => {
+    rows += `<tr>
+      <td style="padding-left:${indent+22}px;font-style:italic;color:var(--text2);font-size:12.5px">
+        🏭 Subcontratación: ${c.proveedor||'— sin proveedor asignado —'} — ${c.descripcion}
+        <span style="font-size:10.5px;color:var(--text3)">(incluido en el costo de la línea de arriba)</span>
+      </td>
+      <td class="td-mono" style="text-align:right;font-size:12px">${node.cantidad.toFixed(4)}</td>
+      <td style="font-size:12px;color:var(--text2)">${node.unidad}</td>
+      <td class="td-mono" style="text-align:right;font-size:12px">${fmtMoney(c.monto)}</td>
+      <td class="td-mono" style="text-align:right;font-size:12px">${fmtMoney(c.monto*node.cantidad)}</td>
+    </tr>`;
+  });
+
+  return rows;
+}
+
+function abrirEstructuraBOM(productoId) {
+  const prod = state.productos.find(p => p.id === productoId);
+  if (!prod) { toast('Producto no encontrado','error'); return; }
+  const stockMap = calcStock();
+  const root = explodeBOM(productoId, 1, stockMap);
+
+  document.getElementById('bom-titulo').textContent =
+    `${prod.codigo_interno||prod.code||'?'} — ${prod.description||''}`;
+  document.getElementById('bom-tbody').innerHTML = root ? renderBOMRows(root, 0) : '';
+  document.getElementById('bom-resumen').innerHTML = root ? `
+    <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:700">Costo Unitario</div>
+      <div style="font-size:13px;font-weight:600">1.0000 ${root.unidad}</div></div>
+    <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:700">Costo</div>
+      <div style="font-size:15px;font-weight:700;color:var(--accent3)">${fmtMoney(root.costoUnitario)}</div></div>
+    <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:700">Costo Lista de Materiales</div>
+      <div style="font-size:15px;font-weight:700;color:var(--accent3)">${fmtMoney(root.costoLista)}</div></div>
+  ` : '';
+  openModal('modal-bom');
 }
 
 // ════════════════════════════════════════════════════
@@ -10080,7 +10254,8 @@ async function confirmarEnvioOP() {
   const bodTerceros = await getOrCrearBodegaTerceros(provSubId);
   if (!bodTerceros) return;
 
-  const tipoProceso = op.tipo === 'tejido_subcontrato' ? 'tejido' : 'tintura';
+  const tipoProceso = op.tipo === 'tejido_subcontrato' ? 'tejido'
+    : op.tipo === 'acabado_subcontrato' ? 'post_proceso' : 'tintura';
   const { data: envio, error } = await sb.from('erp_envios_terceros').insert({
     numero: nextEnvioNum(), subcontratista_id: provSubId, tipo_proceso: tipoProceso,
     fecha_envio: fecha, receta_id: op.receta_id, op_id: op.id, estado: 'enviado', notas,
@@ -10961,6 +11136,9 @@ function renderRecetasPrioridad(prodId) {
     .filter(r => r.producto_id === prodId)
     .sort((a,b) => (a.prioridad||99) - (b.prioridad||99));
 
+  const btnEstructura = document.getElementById('btn-prod-ver-estructura');
+  if (btnEstructura) btnEstructura.style.display = (prodId && recetas.length) ? 'inline-flex' : 'none';
+
   if (!recetas.length) {
     lista.innerHTML = `<div style="padding:10px 14px;background:var(--surface2);border-radius:8px;font-size:12px;color:var(--text3)">
       Sin recetas configuradas para este producto. Créalas en Manufactura → Recetas.
@@ -10969,9 +11147,10 @@ function renderRecetasPrioridad(prodId) {
   }
 
   const TIPO_BADGE = {
-    tejido_interno:     '<span class="badge badge-green">Tejido Interno</span>',
-    tejido_subcontrato: '<span class="badge badge-yellow">Tejido Sub.</span>',
-    tenido_subcontrato: '<span class="badge badge-yellow">Teñido Sub.</span>',
+    tejido_interno:      '<span class="badge badge-green">Tejido Interno</span>',
+    tejido_subcontrato:  '<span class="badge badge-yellow">Tejido Sub.</span>',
+    tenido_subcontrato:  '<span class="badge badge-yellow">Teñido Sub.</span>',
+    acabado_subcontrato: '<span class="badge badge-yellow">Acabado Sub.</span>',
   };
 
   lista.innerHTML = recetas.map((r, i) => `
@@ -11062,18 +11241,22 @@ async function planificarAbastecimiento(productoId, cantidad, fecha, origen_tipo
 
 // ── Ruta: FABRICAR → genera OP ─────────────────────────────────
 async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_id, ovId) {
-  // Buscar receta de mayor prioridad tipo tejido_interno
+  // Elige SIEMPRE la receta predeterminada (menor número de prioridad) entre
+  // TODAS las recetas de tejido activas del producto — interno o
+  // subcontratado — sin preferir interno por default. Si un producto tiene
+  // ruta primaria subcontratada con una de respaldo interna (o viceversa),
+  // el motor automático respeta cuál está marcada como predeterminada vía
+  // prioridad, igual que decidiste para el overflow de tejido.
   const receta = (state.recetas||[])
-    .filter(r => r.producto_id === prod.id && r.tipo === 'tejido_interno' && r.activa !== false)
+    .filter(r => r.producto_id === prod.id &&
+      (r.tipo === 'tejido_interno' || r.tipo === 'tejido_subcontrato') &&
+      r.activa !== false)
     .sort((a,b) => (a.prioridad||99) - (b.prioridad||99))[0];
 
-  if (!receta) {
-    // No hay receta interna, buscar subcontrato
-    const recetaSub = (state.recetas||[])
-      .filter(r => r.producto_id === prod.id && r.activa !== false)
-      .sort((a,b) => (a.prioridad||99) - (b.prioridad||99))[0];
-    if (recetaSub) return await planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, recetaSub);
-    return null;
+  if (!receta) return null;
+
+  if (receta.tipo === 'tejido_subcontrato') {
+    return await planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, receta);
   }
 
   // Crear OP
@@ -11144,9 +11327,7 @@ async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, o
 async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, recetaOverride = null) {
   // Buscar receta de subcontrato con mayor prioridad
   const receta = recetaOverride || (state.recetas||[])
-    .filter(r => r.producto_id === prod.id &&
-      (r.tipo === 'tejido_subcontrato' || r.tipo === 'tenido_subcontrato') &&
-      r.activa !== false)
+    .filter(r => r.producto_id === prod.id && esSubcontrato(r.tipo) && r.activa !== false)
     .sort((a,b) => (a.prioridad||99) - (b.prioridad||99))[0];
 
   if (!receta) return null;
@@ -11958,6 +12139,8 @@ function renderProductos() {
 // ── Reset modal ──
 function resetProdModal() {
   document.getElementById('prod-id').value          = '';
+  const btnEstructura = document.getElementById('btn-prod-ver-estructura');
+  if (btnEstructura) btnEstructura.style.display = 'none';
   document.getElementById('prod-code').value         = '';
   document.getElementById('prod-desc').value         = '';
   document.getElementById('prod-tipo').value         = '';
