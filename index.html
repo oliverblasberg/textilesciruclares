@@ -5568,6 +5568,29 @@ async function loadAll() {
     sb.from('erp_envios_terceros').select('*').order('created_at', {ascending:false}),
     sb.from('erp_envios_terceros_items').select('*'),
   ]);
+  // Antes esto fallaba en silencio: si Supabase devolvía un error (RLS, red,
+  // columna renombrada, etc.) el resultado quedaba como `[]` sin avisar a
+  // nadie — p.ej. "el Libro de Ventas no muestra facturas" podía ser en
+  // realidad una consulta a erp_invoices fallando calladamente. Ahora se
+  // reporta cualquier error de carga por consola y con un solo toast.
+  const _loadResults = {
+    erp_customers:c, erp_fabrics:t, erp_ov:p, erp_ov_items:pI, erp_invoices:f,
+    erp_packing_lists:pl, erp_packing_bultos:pb, erp_cuentas:cta, erp_pagos:pag,
+    erp_hilos:hil, erp_price_lists:prc, erp_proveedores:prov, erp_compras:cmp,
+    erp_productos:prod, erp_categorias:catg, erp_movimientos_inv:mov, erp_nomenclatura:nom,
+    erp_sc:sc, erp_sc_items:scI, erp_oc:oc, erp_oc_items:ocI, erp_oc_recepciones:ocR,
+    erp_oc_recepcion_items:ocRI, erp_oc_pl:plC, erp_oc_facturas:ocF, erp_pagos_oc:pagosOC,
+    erp_oc_anticipos:ocA, erp_asientos:asi, erp_asiento_lineas:asiL, erp_diarios:dj,
+    erp_bodegas:bod, erp_tipos_cambio:tc, erp_recetas:rec, erp_receta_lineas:recL,
+    erp_receta_costos:recC, erp_op:op_, erp_op_consumos:opC, erp_op_costos:opCo,
+    erp_extracto_lotes:extL, erp_extracto_bancario:extB, erp_envios_terceros:envT,
+    erp_envios_terceros_items:envTI,
+  };
+  const _loadErrors = Object.entries(_loadResults).filter(([, r]) => r?.error);
+  if (_loadErrors.length) {
+    _loadErrors.forEach(([tbl, r]) => console.error(`loadAll: error cargando ${tbl}:`, r.error.message));
+    toast(`Error cargando datos (${_loadErrors.map(([tbl])=>tbl).join(', ')}) — revisa la consola`, 'error');
+  }
   state.clientes      = c.data   || [];
   state.telas         = t.data   || [];
   state.pedidos       = p.data   || [];
@@ -6137,6 +6160,7 @@ function renderPedidos() {
     const items      = state.pedItems.filter(i => i.order_id === p.id);
     const totalKg    = items.reduce((s,i) => s + Number(i.qty_kg||0), 0);
     const total      = items.reduce((s,i) => s + (Number(i.qty_kg||0) * Number(i.unit_price||0)), 0);
+    const monedaOV   = getMonedaOV(p.customer_id);
 
     // Dispatched = sum of peso_neto from all packing list bultos for this order
     const orderPLs      = state.packingLists.filter(pl => pl.order_id === p.id);
@@ -6173,7 +6197,7 @@ function renderPedidos() {
         </div>
         <div style="font-size:10px;color:var(--text3);margin-top:3px;text-align:right">${pctRound}%</div>
       </td>
-      <td class="hide-mobile td-mono">${fmtMoney(total)}</td>
+      <td class="hide-mobile td-mono">${fmtMoney(total, monedaOV)}</td>
       <td>${statusBadge(p.status)}</td>
       <td><div class="td-actions">
         <button class="btn btn-sm btn-ghost" onclick="imprimirOV('${p.id}')">🖨 Imprimir</button>
@@ -6298,6 +6322,11 @@ function pedLineKgInput(input, rowId) {
 }
 
 function calcPedTotal() {
+  // La moneda de la OV se basa en la moneda configurada en la ficha del
+  // cliente seleccionado (no un valor fijo) — nunca se debe caer al
+  // default de fmtMoney (GTQ) sin consultarlo primero.
+  const customerId = document.getElementById('ped-customer')?.value;
+  const moneda = getMonedaOV(customerId);
   let totalYardas = 0, totalKg = 0, total = 0;
   document.querySelectorAll('#ped-lines tr').forEach(tr => {
     const inputs = tr.querySelectorAll('input[type=number]');
@@ -6308,7 +6337,7 @@ function calcPedTotal() {
     const t = kg * price;
     const tid = tr.id + '_tot';
     const cell = document.getElementById(tid);
-    if (cell) cell.textContent = fmtMoney(t);
+    if (cell) cell.textContent = fmtMoney(t, moneda);
     totalYardas += yardas;
     totalKg     += kg;
     total       += t;
@@ -6318,7 +6347,7 @@ function calcPedTotal() {
   const elTo = document.getElementById('ped-total');
   if (elYd) elYd.textContent = totalYardas.toFixed(2) + ' yds';
   if (elKg) elKg.textContent = totalKg.toFixed(2) + ' kg';
-  if (elTo) elTo.textContent = fmtMoney(total);
+  if (elTo) elTo.textContent = fmtMoney(total, moneda);
 }
 
 function imprimirOV(pedidoId) {
@@ -6332,6 +6361,7 @@ function imprimirOV(pedidoId) {
   const fechaFmt = d ? `${d}/${m}/${y}` : p.date||'—';
   const terminosText = TERMINOS_PAGO_LABEL[p.terminos_pago] || p.terminos_pago || '—';
   const total = items.reduce((s,i)=>s+Number(i.total||i.qty_kg*i.unit_price||0),0);
+  const monedaOV = clt?.moneda || 'GTQ';
 
   const infoRow = (label, val) => val ? `<div class="info-row"><span class="info-label">${label}</span><span class="info-val">${val}</span></div>` : '';
 
@@ -6430,16 +6460,16 @@ function imprimirOV(pedidoId) {
             <td>${prod?.description||'—'}</td>
             <td class="num">${Number(i.qty_yardas||0).toLocaleString('es-GT')}</td>
             <td class="num">${Number(i.qty_kg||0).toFixed(3)}</td>
-            <td class="num">${fmtGTQ(i.unit_price||0)}</td>
-            <td class="num" style="font-weight:600">${fmtGTQ(tot)}</td>
+            <td class="num">${fmtMoney(i.unit_price||0, monedaOV)}</td>
+            <td class="num" style="font-weight:600">${fmtMoney(tot, monedaOV)}</td>
           </tr>`;
         }).join('')}
       </tbody>
     </table>
 
     <div class="totals">
-      <div class="tot-row"><span>Subtotal</span><span style="font-family:monospace">${fmtGTQ(total)}</span></div>
-      <div class="tot-row tot-final"><span>TOTAL</span><span style="font-family:monospace">${fmtGTQ(total)}</span></div>
+      <div class="tot-row"><span>Subtotal</span><span style="font-family:monospace">${fmtMoney(total, monedaOV)}</span></div>
+      <div class="tot-row tot-final"><span>TOTAL</span><span style="font-family:monospace">${fmtMoney(total, monedaOV)}</span></div>
     </div>
 
     <div class="footer">
@@ -6461,6 +6491,9 @@ function imprimirOV(pedidoId) {
 
 function onPedClienteChange() {
   reloadPedLinesPrices();
+  // Recalcula el total aunque ninguna línea tenga producto aún — la moneda
+  // que se muestra depende del cliente, no de si ya hay líneas cargadas.
+  calcPedTotal();
   const cltId = document.getElementById('ped-customer').value;
   const clt   = state.clientes.find(c => c.id === cltId);
   if (!clt) return;
@@ -6537,6 +6570,7 @@ async function savePedido() {
   if (!valid || !lines.length) { toast('Agregue al menos una tela válida','error'); return; }
   const row = {
     customer_id, date,
+    moneda:        getMonedaOV(customer_id),
     fecha_entrega: document.getElementById('ped-fecha-entrega')?.value || null,
     responsable:   document.getElementById('ped-responsable')?.value.trim() || null,
     po_number:     document.getElementById('ped-po').value.trim(),
@@ -6622,7 +6656,7 @@ function renderFacturas() {
       <td style="font-size:13px">
         <div>${clientName(f.customer_id)}</div>
       </td>
-      <td class="td-mono hide-mobile" style="font-size:11px">${f.order_id?(()=>{const ov=state.orders?.find(o=>o.id===f.order_id);return ov?`<span class="badge badge-gray">${ov.order_number||ov.id.slice(0,8)}</span>`:'—'})():'—'}</td>
+      <td class="td-mono hide-mobile" style="font-size:11px">${f.order_id?(()=>{const ov=state.pedidos?.find(o=>o.id===f.order_id);return ov?`<span class="badge badge-gray">${ov.order_number||ov.id.slice(0,8)}</span>`:'—'})():'—'}</td>
       <td class="td-mono hide-mobile" style="text-align:right">${fmtMoney(neto)}</td>
       <td class="td-mono hide-mobile" style="text-align:right">${fmtMoney(iva)}</td>
       <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(f.total)}</td>
@@ -9297,6 +9331,12 @@ function monedasDisponibles(entidadId, modo = 'venta') {
     if (!p) return ['GTQ'];
     return p.moneda2 ? [p.moneda, p.moneda2] : [p.moneda || 'GTQ'];
   }
+}
+
+// Moneda de una Orden de Venta = la moneda configurada en la ficha del
+// cliente (campo "Moneda" del modal de Cliente), no un valor fijo.
+function getMonedaOV(customerId) {
+  return state.clientes.find(c => c.id === customerId)?.moneda || 'GTQ';
 }
 
 /**
