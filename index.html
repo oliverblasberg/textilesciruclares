@@ -2637,6 +2637,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div class="form-grid form-grid-2" style="margin-bottom:20px">
         <div class="field"><label>Cliente *</label><select id="ped-customer" onchange="onPedClienteChange()"></select></div>
         <div class="field"><label>Fecha *</label><input type="date" id="ped-date"/></div>
+        <div class="field"><label>Fecha de Entrega</label><input type="date" id="ped-fecha-entrega"/></div>
         <div class="field"><label>No. Orden de Compra del Cliente</label><input type="text" id="ped-po" placeholder="Ej. PO-2026-001"/></div>
         <div class="field"><label>Estado</label>
           <select id="ped-status">
@@ -2647,6 +2648,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="cancelado">Cancelado</option>
           </select>
         </div>
+        <div class="field"><label>Responsable</label><input type="text" id="ped-responsable" placeholder="Nombre del responsable"/></div>
         <div class="field"><label>Términos de Pago</label>
           <select id="ped-terminos"><option value="">— Seleccionar —</option></select>
         </div>
@@ -6187,9 +6189,16 @@ function renderPedidos() {
   }).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">▷</div><p>Sin órdenes de venta</p></div></td></tr>';
 }
 
+// El dropdown de la Orden de Venta debe mostrar el catálogo real de productos
+// (Dashboard › Productos), no la tabla legada de "telas" (erp_fabrics), que ya
+// no se llena desde que el catálogo se unificó en erp_productos. Se listan
+// todos los productos habilitados para vender (puede_vendido), sin importar
+// el tipo. La línea sigue guardando su id en la misma columna fabric_id de
+// siempre — saveProducto() mantiene un espejo sincronizado en erp_fabrics
+// (mismo id) para que esa referencia siga siendo válida.
 function populateTelaSelects() {
-  return state.telas.filter(t => t.active !== false).map(t =>
-    `<option value="${t.id}" data-price="${t.base_price}">${t.code||'?'} — ${t.description}</option>`
+  return state.productos.filter(p => p.puede_vendido && p.estado !== 'inactivo').map(p =>
+    `<option value="${p.id}" data-price="${p.precio_venta||0}">${p.codigo_interno||p.code||'?'} — ${p.description}</option>`
   ).join('');
 }
 
@@ -6466,14 +6475,19 @@ function openNewPedido() {
   document.getElementById('ped-id').value = '';
   document.getElementById('modal-ped-title').textContent = 'Nueva Orden de Venta';
   document.getElementById('ped-date').value = today();
+  document.getElementById('ped-fecha-entrega').value = '';
   document.getElementById('ped-status').value = 'en_proceso';
   document.getElementById('ped-notes').value = '';
   document.getElementById('ped-po').value = '';
+  // Responsable: por default, quien está generando la OV. Se puede reasignar.
+  document.getElementById('ped-responsable').value = window._currentUser?.email?.split('@')[0] || window._currentUser?.email || '';
   document.getElementById('ped-lines').innerHTML = '';
   pedLineCount = 0;
   document.getElementById('ped-terminos').innerHTML = terminosPagoOpts();
   document.getElementById('ped-incoterms').innerHTML = incotermsOpts();
-  populateBodegaSelect('ped-bodega');
+  // Bodega de Despacho: por default, la bodega de Producto Terminado.
+  const bodPT = (state.bodegas||[]).find(b=>b.tipo==='producto_terminado' && b.activa!==false);
+  populateBodegaSelect('ped-bodega', bodPT?.id||'');
   populateClienteSelects();
   addPedLine();
   openModal('modal-ped');
@@ -6486,9 +6500,11 @@ async function editPedido(id) {
   populateClienteSelects();
   document.getElementById('ped-customer').value = p.customer_id;
   document.getElementById('ped-date').value = fmtDate(p.date);
+  document.getElementById('ped-fecha-entrega').value = p.fecha_entrega ? fmtDate(p.fecha_entrega) : '';
   document.getElementById('ped-status').value = p.status;
   document.getElementById('ped-notes').value = p.notes||'';
   document.getElementById('ped-po').value    = p.po_number||'';
+  document.getElementById('ped-responsable').value = p.responsable||'';
   document.getElementById('ped-terminos').innerHTML = terminosPagoOpts(p.terminos_pago||'');
   document.getElementById('ped-incoterms').innerHTML = incotermsOpts(p.incoterms||'');
   populateBodegaSelect('ped-bodega', p.bodega_id||'');
@@ -6521,6 +6537,8 @@ async function savePedido() {
   if (!valid || !lines.length) { toast('Agregue al menos una tela válida','error'); return; }
   const row = {
     customer_id, date,
+    fecha_entrega: document.getElementById('ped-fecha-entrega')?.value || null,
+    responsable:   document.getElementById('ped-responsable')?.value.trim() || null,
     po_number:     document.getElementById('ped-po').value.trim(),
     status:        document.getElementById('ped-status').value,
     notes:         document.getElementById('ped-notes').value.trim(),
@@ -12387,15 +12405,37 @@ async function saveProducto() {
 
     const esServicio = tipo === 'servicio';
 
-    let err;
-    if (id) { ({error:err} = await sb.from('erp_productos').update(row).eq('id',id)); }
-    else     { ({error:err} = await sb.from('erp_productos').insert(row)); }
+    let err, savedId = id;
+    if (id) {
+      ({error:err} = await sb.from('erp_productos').update(row).eq('id',id));
+    } else {
+      const { data, error } = await sb.from('erp_productos').insert(row).select().single();
+      err = error;
+      if (!err) savedId = data.id;
+    }
 
     if (err) {
       alert('Error Supabase al guardar producto:\n\n' + err.message + '\n\nCode: ' + (err.code||'') + '\nDetails: ' + (err.details||''));
       toast('Error: '+err.message,'error');
       return;
     }
+
+    // Espejo hacia erp_fabrics (mismo id) — la Orden de Venta y otras pantallas
+    // de ventas todavía referencian esa tabla legada por llave foránea. En vez
+    // de migrar todo el módulo de ventas de una sola vez, mantenemos ambas
+    // tablas sincronizadas aquí para que cualquier producto habilitado para
+    // vender (puede_vendido) aparezca de inmediato en el dropdown de la OV.
+    if (savedId) {
+      const { error: eFab } = await sb.from('erp_fabrics').upsert({
+        id: savedId,
+        code: row.code || row.codigo_interno || savedId.slice(0,8),
+        description: row.description,
+        base_price: row.precio_venta || 0,
+        active: !!row.puede_vendido,
+      });
+      if (eFab) console.error('Aviso: no se pudo sincronizar el producto con erp_fabrics:', eFab.message);
+    }
+
     toast('Producto guardado');
     closeModal('modal-producto');
     await loadAll();
@@ -15064,7 +15104,7 @@ function verFacturaOC(facturaId) {
         const cta = state.cuentas.find(c => c.id === p.cuenta_id);
         return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px">
           <div style="color:var(--text2)">${fmtDate(p.fecha)} · ${p.forma||'—'} · ${cta?.name||'—'}${p.notas ? ' · '+p.notas : ''}</div>
-          <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--green)">${fmtMoney(p.monto)}</span>
+          <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--green)">${fmtMoney(p.monto, monedaOC)}</span>
         </div>`;
       }).join('') : '<div style="padding:12px 16px;color:var(--text3);font-size:13px">Sin pagos registrados</div>'}
       <div style="display:flex;justify-content:space-between;padding:10px 16px;background:var(--surface2);font-size:13px">
@@ -15143,6 +15183,7 @@ function renderOCPanel(ocId) {
 
   // Facturas
   const facts = state.ocFacturas.filter(f=>f.oc_id===ocId);
+  const monedaOCFacturas = getMonedaOC(ocId);
   document.getElementById('oc-panel-facturas').innerHTML = facts.map(f=>{
     const pagosF  = (state.pagosOC||[]).filter(p=>p.factura_id===f.id);
     const pagado   = pagosF.reduce((s,p)=>s+Number(p.monto||0),0);
@@ -15155,9 +15196,9 @@ function renderOCPanel(ocId) {
       <td class="td-mono" style="font-size:11px;color:var(--text3)">${f.num_interno||'—'}</td>
       <td class="td-mono" style="cursor:pointer;color:var(--accent);text-decoration:underline" onclick="verFacturaOC('${f.id}')">${f.serie||'—'}${f.numero||'—'}</td>
       <td>${fmtDate(f.fecha)}</td>
-      <td class="td-mono">${fmtMoney(f.total)}</td>
-      <td class="td-mono" style="color:var(--green)">${pagado>0?pagosF.map(p=>p.num_pago||'').filter(Boolean).join(', ')||fmtMoney(pagado):'—'}</td>
-      <td class="td-mono" style="color:${esPagada?'var(--text3)':'var(--accent)'};font-weight:${esPagada?'400':'700'}">${esPagada?'—':fmtMoney(saldo)}</td>
+      <td class="td-mono">${fmtMoney(f.total, monedaOCFacturas)}</td>
+      <td class="td-mono" style="color:var(--green)">${pagado>0?pagosF.map(p=>p.num_pago||'').filter(Boolean).join(', ')||fmtMoney(pagado, monedaOCFacturas):'—'}</td>
+      <td class="td-mono" style="color:${esPagada?'var(--text3)':'var(--accent)'};font-weight:${esPagada?'400':'700'}">${esPagada?'—':fmtMoney(saldo, monedaOCFacturas)}</td>
       <td><span class="badge ${statusColor}">${statusLabel}</span></td>
       <td>${!esPagada
         ? `<button class="btn btn-sm btn-primary" onclick="openPagoOC('${f.id}')">💳 Pagar</button>`
