@@ -1792,7 +1792,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Recepciones</div>
       <div class="table-wrap" style="margin-bottom:18px">
         <table>
-          <thead><tr><th>No.</th><th>Fecha</th><th>Envío</th><th>Producto</th><th style="text-align:right">Cantidad</th><th>Lote</th><th>Póliza</th><th>Estado</th><th></th></tr></thead>
+          <thead><tr><th>No.</th><th>Fecha</th><th>Envío</th><th>Packing List</th><th style="text-align:right">Cantidad</th><th>Estado</th></tr></thead>
           <tbody id="oc-panel-recepciones"></tbody>
         </table>
       </div>
@@ -3523,6 +3523,14 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
       <!-- ══ TAB: COMPRA ══ -->
       <div id="prod-tab-compra-content" class="prod-tab-content" style="display:none">
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Impuestos</div>
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;margin-bottom:20px;max-width:420px">
+          <input type="checkbox" id="prod-lleva-iva" checked style="width:15px;height:15px;accent-color:var(--accent);margin-top:2px"/>
+          <span>
+            <span style="display:block;font-weight:600;font-size:13px">Aplica IVA en Compra</span>
+            <span style="display:block;font-size:11.5px;color:var(--text3);margin-top:2px">Desmárcalo para productos que normalmente se compran sin IVA (ej. materia prima importada). Define el valor predeterminado del checkbox de IVA al ingresar una factura de proveedor — se puede ajustar por factura.</span>
+          </span>
+        </label>
         <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Proveedores</div>
         <div class="line-items">
           <table>
@@ -3858,7 +3866,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">
           1 — Información del Envío
         </div>
-        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
           <div>
             <div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px;text-transform:uppercase">No. Recepción</div>
             <input type="text" id="rec-num" readonly style="padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:700;width:100%;background:var(--surface);color:var(--accent)"/>
@@ -3877,11 +3885,8 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px;text-transform:uppercase">No. Envío</div>
             <input type="text" id="rec-envio-header" placeholder="Ej. 9152475A" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"/>
           </div>
-          <div>
-            <div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:3px;text-transform:uppercase">No. Packing List</div>
-            <input type="text" id="rec-packing-header" placeholder="Ej. KAA4071-CI01" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"/>
-          </div>
         </div>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:8px">El No. de Packing List ahora se ingresa por lote, en la sección 2 — los proveedores suelen emitir un PL distinto por lote.</div>
       </div>
 
       <!-- ── SECCIÓN 2: PRODUCTOS Y LOTES ── -->
@@ -12236,6 +12241,7 @@ function resetProdModal() {
   document.getElementById('prod-estado').value       = 'activo';
   document.getElementById('prod-vendido').checked    = false;
   document.getElementById('prod-comprado').checked   = false;
+  document.getElementById('prod-lleva-iva').checked  = true;
   document.getElementById('prod-precio-venta').value = '';
   document.getElementById('prod-precio-compra') && (document.getElementById('prod-precio-compra').value = '');
   document.getElementById('prod-desc-ventas').value  = '';
@@ -12280,6 +12286,7 @@ function editProducto(id) {
   document.getElementById('prod-estado').value          = p.estado||'activo';
   document.getElementById('prod-vendido').checked       = !!p.puede_vendido;
   document.getElementById('prod-comprado').checked      = !!p.puede_comprado;
+  document.getElementById('prod-lleva-iva').checked     = p.lleva_iva !== false;
   document.getElementById('prod-precio-venta').value    = p.precio_venta||'';
   document.getElementById('prod-precio-compra') && (document.getElementById('prod-precio-compra').value = p.precio_compra||'');
   if (document.getElementById('prod-moneda-venta'))  document.getElementById('prod-moneda-venta').value  = p.moneda_venta||'';
@@ -12363,6 +12370,7 @@ async function saveProducto() {
       estado:         document.getElementById('prod-estado').value,
       puede_vendido:  document.getElementById('prod-vendido').checked,
       puede_comprado: document.getElementById('prod-comprado').checked,
+      lleva_iva:      document.getElementById('prod-lleva-iva').checked,
       precio_venta:   parseFloat(document.getElementById('prod-precio-venta').value)||null,
       moneda_venta:   document.getElementById('prod-moneda-venta')?.value || null,
       desc_ventas:    document.getElementById('prod-desc-ventas').value.trim(),
@@ -15114,12 +15122,12 @@ function renderOCPanel(ocId) {
         <td style="font-size:11px;padding:4px 8px">${prodName(lineas[0]?.producto_id)}</td>
         <td class="td-mono" style="font-size:11px;padding:4px 8px">${qty.toFixed(3)} ${lineas[0]?.unidad||''}</td>
         <td style="font-size:10px;color:var(--text3);padding:4px 8px">${cajasLote.length>0?cajasLote.length+' cajas':''}</td>
-        <td colspan="2"></td>
+        <td></td>
       </tr>`;
     }).join('');
 
     const pendRow = pendientes>0 && lotes.length===0 ? `<tr style="background:var(--surface)">
-      <td colspan="7" style="padding:4px 12px 4px 28px;font-size:11px;color:#D97706;font-style:italic">
+      <td colspan="6" style="padding:4px 12px 4px 28px;font-size:11px;color:#D97706;font-style:italic">
         📦 ${pendientes} cajas de PL pendientes de confirmar
       </td></tr>` : '';
 
@@ -15130,9 +15138,8 @@ function renderOCPanel(ocId) {
       <td style="font-size:11px">${r.packing_num||'—'}</td>
       <td class="td-mono" style="font-size:12px">${totalKg>0?totalKg.toFixed(3)+' kg':'—'}</td>
       <td><span class="badge ${STATUS_REC_COLOR[r.status]||'badge-gray'}">${STATUS_REC_LABEL[r.status]||r.status}</span></td>
-      <td><button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();abrirRecepcion('${r.id}')">✏️ Editar</button></td>
     </tr>${loteRows}${pendRow}`;
-  }).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:12px">Sin recepciones</td></tr>';
+  }).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:12px">Sin recepciones</td></tr>';
 
   // Facturas
   const facts = state.ocFacturas.filter(f=>f.oc_id===ocId);
@@ -16426,13 +16433,37 @@ async function guardarRecepcionBorrador() {
   const numero    = document.getElementById('rec-num')?.value;
   const bodega_id = document.getElementById('rec-bodega')?.value || null;
   const envio     = document.getElementById('rec-envio-header')?.value.trim() || '';
-  const packingH  = document.getElementById('rec-packing-header')?.value.trim() || '';
 
   if (!ocId || !fecha || !numero) { toast('Completa fecha y bodega', 'error'); return; }
 
   try {
     // Check if recepcion already exists
     const existing = (state.ocRecepciones||[]).find(r => r.numero === numero && r.oc_id === ocId);
+
+    // Leemos las líneas de lote primero (el No. de PL ahora es por lote, no
+    // un campo único de header) para poder calcular el rollup del header.
+    const loteRows = document.querySelectorAll('[id^="rec-lote-val-"]');
+    const rowsData = [];
+
+    loteRows.forEach(el => {
+      const n        = el.id.replace('rec-lote-val-','');
+      const lote     = el.value.trim();
+      const prodId   = el.dataset.prod;
+      const unidad   = el.dataset.unidad || '';
+      const costo    = parseFloat(el.dataset.costo)||0;
+      const qtyEl    = document.getElementById(`rec-qty-${prodId}-${n}`);
+      const qty      = parseFloat(qtyEl?.value)||0;
+      const esperada = parseFloat(document.getElementById(`rec-qty-esperada-${n}`)?.value)||0;
+      const packing  = document.getElementById(`rec-pl-val-${n}`)?.value.trim() || '';
+
+      if (qty > 0 || esperada > 0) {
+        rowsData.push({ lote, prodId, unidad, costo, qty, packing });
+      }
+    });
+
+    // El No. de PL del header queda como un resumen (valores distintos de
+    // cada lote) — solo informativo, ya que la fuente real ahora es por línea.
+    const packingRollup = [...new Set(rowsData.map(r=>r.packing).filter(Boolean))].join(', ') || null;
 
     const recData = {
       oc_id:        ocId,
@@ -16441,7 +16472,7 @@ async function guardarRecepcionBorrador() {
       status:       'borrador',
       bodega_id,
       envio_numero: envio,
-      packing_num:  packingH,
+      packing_num:  packingRollup,
     };
 
     let recepcionId;
@@ -16459,32 +16490,16 @@ async function guardarRecepcionBorrador() {
     // Delete existing items for this recepcion first
     await sb.from('erp_oc_recepcion_items').delete().eq('recepcion_id', recepcionId);
 
-    const loteRows = document.querySelectorAll('[id^="rec-lote-val-"]');
-    const insertItems = [];
-
-    loteRows.forEach(el => {
-      const n        = el.id.replace('rec-lote-val-','');
-      const lote     = el.value.trim();
-      const prodId   = el.dataset.prod;
-      const unidad   = el.dataset.unidad || '';
-      const costo    = parseFloat(el.dataset.costo)||0;
-      const qtyEl    = document.getElementById(`rec-qty-${prodId}-${n}`);
-      const qty      = parseFloat(qtyEl?.value)||0;
-      const esperada = parseFloat(document.getElementById(`rec-qty-esperada-${n}`)?.value)||0;
-
-      if (qty > 0 || esperada > 0) {
-        insertItems.push({
-          recepcion_id: recepcionId,
-          producto_id:  prodId,
-          unidad,
-          cantidad:     qty,
-          costo_unit:   costo,
-          lote:         lote || null,
-          packing_num:  packingH || null,
-          estado:       'borrador',
-        });
-      }
-    });
+    const insertItems = rowsData.map(r => ({
+      recepcion_id: recepcionId,
+      producto_id:  r.prodId,
+      unidad:       r.unidad,
+      cantidad:     r.qty,
+      costo_unit:   r.costo,
+      lote:         r.lote || null,
+      packing_num:  r.packing || null,
+      estado:       'borrador',
+    }));
 
     if (insertItems.length) {
       const { error: eItems } = await sb.from('erp_oc_recepcion_items').insert(insertItems);
@@ -16526,7 +16541,6 @@ async function openRecepcion(ocIdParam, recepcionId) {
   document.getElementById('rec-fecha').value          = existingRec?.fecha || today();
   document.getElementById('rec-num').value            = existingRec?.numero || nextRecepcionNum();
   document.getElementById('rec-envio-header').value   = existingRec?.envio_numero || '';
-  document.getElementById('rec-packing-header').value = existingRec?.packing_num || '';
   document.getElementById('rec-bodega').innerHTML =
     '<option value="">— Seleccionar —</option>' +
     (state.bodegas||[]).filter(b=>b.activa!==false)
@@ -16614,14 +16628,20 @@ function renderRecLoteRow(item, lote, cajasLote, ocId, savedItem=null) {
   const hasPL      = cajasLote.length > 0;
   const qtyValue   = savedItem?.cantidad ? Number(savedItem.cantidad).toFixed(3) : (hasPL ? totalPN.toFixed(3) : '');
   const espValue   = savedItem?.cantidad_esperada ? Number(savedItem.cantidad_esperada).toFixed(3) : '';
+  const plValue    = savedItem?.packing_num || '';
   return `
-  <div id="rec-lote-row-${n}" style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:10px;align-items:end;padding:8px 0;border-bottom:1px solid var(--border)">
+  <div id="rec-lote-row-${n}" style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr 1fr 1fr;gap:10px;align-items:end;padding:8px 0;border-bottom:1px solid var(--border)">
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Lote</div>
       <input type="text" id="rec-lote-val-${n}" value="${lote||''}" placeholder="Número de lote"
         style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100%"
         data-prod="${item.producto_id}" data-unidad="${item.unidad||''}" data-costo="${item.precio_unit||0}"
         oninput="calcRecVerificacion()"/>
+    </div>
+    <div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">No. Packing List</div>
+      <input type="text" id="rec-pl-val-${n}" value="${plValue}" placeholder="Ej. KAA4071-CI01"
+        style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"/>
     </div>
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Cantidad Esperada</div>
@@ -16896,10 +16916,10 @@ async function saveRecepcion() {
     const oc       = state.oc.find(o => o.id === ocId);
     const items    = state.ocItems.filter(i => i.oc_id === ocId);
     const monedaOC = items[0]?.moneda || 'GTQ';
-    const packingH = document.getElementById('rec-packing-header')?.value.trim()||'';
     const recItems = [];
 
-    // Read from new lote rows: rec-lote-val-N, rec-qty-{prod}-N
+    // Read from new lote rows: rec-lote-val-N, rec-qty-{prod}-N, rec-pl-val-N
+    // (el No. de Packing List se ingresa por lote, no un único valor de header).
     document.querySelectorAll('[id^="rec-lote-val-"]').forEach(el => {
       const n      = el.id.replace('rec-lote-val-','');
       const lote   = el.value.trim() || null;
@@ -16908,6 +16928,7 @@ async function saveRecepcion() {
       const costo  = parseFloat(el.dataset.costo)||0;
       const qtyEl  = document.getElementById(`rec-qty-${prodId}-${n}`);
       const qty    = parseFloat(qtyEl?.value)||0;
+      const packing = document.getElementById(`rec-pl-val-${n}`)?.value.trim() || null;
       if (qty > 0) {
         recItems.push({
           producto_id:  prodId,
@@ -16917,13 +16938,16 @@ async function saveRecepcion() {
           lote,
           poliza:       null,
           envio_numero: envioHdr || null,
-          packing_num:  packingH || null,
+          packing_num:  packing,
           estado:       'recibido',
         });
       }
     });
 
     if (!recItems.length) { toast('Ingresa al menos una cantidad a recibir','error'); return; }
+
+    // Resumen de No. de PL para el header (informativo — la fuente real es por línea).
+    const packingRollup = [...new Set(recItems.map(it=>it.packing_num).filter(Boolean))].join(', ') || null;
 
     // No permitir recibir, por producto, más de lo pedido en la OC. Si esta
     // recepción ya existía (se está reconfirmando), se resta su propio aporte
@@ -16955,7 +16979,7 @@ async function saveRecepcion() {
     let rec;
     if (existingRec) {
       const { data, error:e1 } = await sb.from('erp_oc_recepciones')
-        .update({ status:'completada', bodega_id: bodega_id||null, envio_numero: envioHdr||null, packing_num: packingH||null })
+        .update({ status:'completada', bodega_id: bodega_id||null, envio_numero: envioHdr||null, packing_num: packingRollup })
         .eq('id', existingRec.id).select().single();
       if (e1) { toast('Error actualizando recepción: '+e1.message,'error'); return; }
       rec = data;
@@ -16964,7 +16988,7 @@ async function saveRecepcion() {
     } else {
       const { data, error:e1 } = await sb.from('erp_oc_recepciones').insert({
         oc_id: ocId, numero, fecha, status: 'completada',
-        bodega_id: bodega_id||null, envio_numero: envioHdr||null, packing_num: packingH||null,
+        bodega_id: bodega_id||null, envio_numero: envioHdr||null, packing_num: packingRollup,
       }).select().single();
       if (e1) { toast('Error creando recepción: '+e1.message,'error'); return; }
       rec = data;
@@ -16987,6 +17011,7 @@ async function saveRecepcion() {
         cantidad:     item.cantidad,
         costo_unit:   item.costo_unit,
         envio_numero: item.envio_numero,
+        packing_num:  item.packing_num,
         lote:         item.lote,
         poliza:       item.poliza,
         poliza_kg_mp: item.poliza_kg_mp,
@@ -17338,7 +17363,12 @@ function nextFacturaInterna() {
   return `FACT/${year}/${month}/${String(next).padStart(4,'0')}`;
 }
 
-function calcFocItemIva(idx, qty, precio) {
+function calcFocItemIva(idx, qty, precio, moneda) {
+  // moneda: divisa de la OC (USD/GTQ). Si no se recibe explícitamente (ej.
+  // llamadas antiguas), se toma de la OC actualmente abierta en el modal —
+  // nunca se debe caer al default de fmtMoney (GTQ), o la factura "cambia"
+  // de moneda visualmente al tocar el checkbox de IVA de una línea.
+  moneda = moneda || getMonedaOC(document.getElementById('foc-oc-id')?.value) || 'GTQ';
   const conIva = document.getElementById(`foc-iva-${idx}`)?.checked;
   const total  = parseFloat((qty * precio).toFixed(2));
   const neto   = conIva ? parseFloat((total / 1.12).toFixed(2)) : total;
@@ -17348,9 +17378,9 @@ function calcFocItemIva(idx, qty, precio) {
   const ivaEl  = document.getElementById(`foc-iva-val-${idx}`);
   const totEl  = document.getElementById(`foc-total-${idx}`);
 
-  if (netoEl) netoEl.textContent = fmtMoney(neto);
-  if (ivaEl)  ivaEl.textContent  = conIva ? fmtMoney(iva) : '—';
-  if (totEl)  totEl.textContent  = fmtMoney(total);
+  if (netoEl) netoEl.textContent = fmtMoney(neto, moneda);
+  if (ivaEl)  ivaEl.textContent  = conIva ? fmtMoney(iva, moneda) : '—';
+  if (totEl)  totEl.textContent  = fmtMoney(total, moneda);
 
   // Recalculate grand totals
   let sumNeto = 0, sumIva = 0, sumTotal = 0;
@@ -17359,9 +17389,9 @@ function calcFocItemIva(idx, qty, precio) {
     sumIva   += parseFloat(document.getElementById(`foc-iva-val-${i}`)?.textContent.replace(/[^0-9.]/g,'')||0);
     sumTotal += parseFloat(document.getElementById(`foc-total-${i}`)?.textContent.replace(/[^0-9.]/g,'')||0);
   });
-  document.getElementById('foc-subtotal-display').textContent = fmtMoney(sumNeto);
-  document.getElementById('foc-iva-display').textContent      = fmtMoney(sumIva);
-  document.getElementById('foc-total-display').textContent    = fmtMoney(sumTotal);
+  document.getElementById('foc-subtotal-display').textContent = fmtMoney(sumNeto, moneda);
+  document.getElementById('foc-iva-display').textContent      = fmtMoney(sumIva, moneda);
+  document.getElementById('foc-total-display').textContent    = fmtMoney(sumTotal, moneda);
   document.getElementById('foc-total').value                  = sumTotal.toFixed(2);
   renderFocSaldoOC();
 }
@@ -17395,8 +17425,10 @@ function calcFocTotales(items, monedaOC, esServicio) {
   items.forEach((i, idx) => {
     const qty   = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(currentOCId, i.producto_id);
     const total = parseFloat((qty * Number(i.precio_unit||0)).toFixed(2));
-    const neto  = parseFloat((total / 1.12).toFixed(2));
-    const iva   = parseFloat((total - neto).toFixed(2));
+    const prod  = state.productos.find(p=>p.id===i.producto_id);
+    const conIva = prod?.lleva_iva !== false;
+    const neto  = conIva ? parseFloat((total / 1.12).toFixed(2)) : total;
+    const iva   = conIva ? parseFloat((total - neto).toFixed(2)) : 0;
     sumNeto  += neto;
     sumIva   += iva;
     sumTotal += total;
@@ -17494,8 +17526,12 @@ function openFacturaOC() {
         const qty    = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(currentOCId, i.producto_id);
         const precio = Number(i.precio_unit||0);
         const total  = parseFloat((qty * precio).toFixed(2));
-        const neto   = parseFloat((total / 1.12).toFixed(2));
-        const iva    = parseFloat((total - neto).toFixed(2));
+        // El checkbox de IVA parte del valor predeterminado configurado en el
+        // producto (Compra › Aplica IVA). La mayoría de materia prima no
+        // paga IVA, así que por defecto viene desmarcado para esos productos.
+        const conIva = prod?.lleva_iva !== false;
+        const neto   = conIva ? parseFloat((total / 1.12).toFixed(2)) : total;
+        const iva    = conIva ? parseFloat((total - neto).toFixed(2)) : 0;
         return `<tr style="border-bottom:1px solid var(--border)" id="foc-item-row-${idx}">
           <td style="padding:8px 12px">${prod?.description||prodName(i.producto_id)}
             ${esServicio?'<span class="badge badge-blue" style="margin-left:6px;font-size:10px">Servicio</span>':''}
@@ -17504,14 +17540,14 @@ function openFacturaOC() {
           <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace">${fmtMoney(precio, monedaOC)}</td>
           <td style="padding:8px 12px;text-align:center">
             <label style="display:flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;font-size:11px;font-weight:600;color:var(--text2)">
-              <input type="checkbox" id="foc-iva-${idx}" checked
-                onchange="calcFocItemIva(${idx}, ${qty}, ${precio})"
+              <input type="checkbox" id="foc-iva-${idx}" ${conIva?'checked':''}
+                onchange="calcFocItemIva(${idx}, ${qty}, ${precio}, '${monedaOC}')"
                 style="width:14px;height:14px;accent-color:var(--accent);cursor:pointer"/>
               IVA
             </label>
           </td>
           <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace" id="foc-neto-${idx}">${fmtMoney(neto, monedaOC)}</td>
-          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;color:#D97706" id="foc-iva-val-${idx}">${fmtMoney(iva, monedaOC)}</td>
+          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;color:#D97706" id="foc-iva-val-${idx}">${conIva?fmtMoney(iva, monedaOC):'—'}</td>
           <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-weight:700" id="foc-total-${idx}">${fmtMoney(total, monedaOC)}</td>
         </tr>`;
       }).join('')}</tbody>
