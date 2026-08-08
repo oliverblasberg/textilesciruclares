@@ -11945,9 +11945,9 @@ function renderCompras() {
       <td class="td-mono" style="font-size:12px">${prov?.nit||'—'}</td>
       <td style="font-size:13px">${prov?.name||'—'}</td>
       <td class="td-mono hide-mobile" style="font-size:11px">${oc?`<span class="badge badge-gray">${oc.numero}</span>`:'—'}</td>
-      <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(total)}</td>
+      <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(total, c.moneda||'GTQ')}</td>
       <td class="td-mono" style="text-align:right;color:${esPagado?'var(--text3)':'var(--accent)'};font-weight:${esPagado?'400':'700'}">
-        ${esPagado?'✓':fmtMoney(saldo)}
+        ${esPagado?'✓':fmtMoney(saldo, c.moneda||'GTQ')}
       </td>
       <td><div class="td-actions">
         <span class="badge ${estadoColor}" style="font-size:10px">${estadoLabel}</span>
@@ -12832,16 +12832,28 @@ function buildLineasFacturaCompra({ oc_id, tipo, total }) {
   const firstProd  = state.productos.find(p => p.id === ocItems[0]?.producto_id);
   const cat        = firstProd?.categoria ? state.categorias?.find(c => c.id === firstProd.categoria) : null;
   const esServicio = ocItems.length > 0 && ocItems.every(i => state.productos.find(p=>p.id===i.producto_id)?.tipo === 'servicio');
+  const esManual   = !cat || cat.valoracion === 'manual' || !cat.valoracion;
 
   // Use category accounts
   const ctaGastoId     = cat?.cta_gasto     || null;
   const ctaIngresosId  = cat?.cta_ingresos  || null;
   const ctaValorId     = cat?.cta_valoracion || null;
+  const ctaEntradaId   = cat?.cta_entrada   || null;
 
-  // Debit account: services → cta_gasto; physical products → cta_valoracion or cta_ingresos
+  // Debit account:
+  // - Servicios: no pasan por inventario — van directo a Cta. Gasto (como antes).
+  // - Productos almacenables: la recepción YA debitó Cta. Valoración (automática)
+  //   o Cta. Ingresos (manual) y acreditó una cuenta puente (Cta. Entrada / Cta.
+  //   Gasto) representando "recibido, pendiente de facturar" — igual que Odoo
+  //   hace con su "Stock Interim (Received)" en valoración automatizada. La
+  //   factura debe CANCELAR esa cuenta puente (debitarla), no volver a debitar
+  //   Valoración/Ingresos — si no, el inventario queda contabilizado el doble y
+  //   la cuenta puente nunca se cierra.
   const ctaDebeId = esServicio
     ? (ctaGastoId || ctaIngresosId)
-    : (ctaValorId || ctaIngresosId || ctaGastoId);
+    : esManual
+      ? (ctaGastoId || ctaIngresosId || ctaValorId)
+      : (ctaEntradaId || ctaValorId || ctaIngresosId || ctaGastoId);
 
   // IVA Credito Fiscal — find by code 11205001 or by name
   const ctaIVACred  = state.nomenclatura.find(n =>
@@ -15192,17 +15204,18 @@ function renderOCPanel(ocId) {
     const pendientes = plCajas.filter(c=>c.estado==='pendiente').length;
     const totalKg  = ri.reduce((s,x)=>s+Number(x.cantidad||0),0);
 
+    // El No. de Packing List se ingresa por lote (no por recepción completa),
+    // así que se muestra en la línea del lote — no en la línea principal.
     const loteRows = lotes.map(lote=>{
       const lineas = ri.filter(x=>x.lote===lote);
       const qty    = lineas.reduce((s,x)=>s+Number(x.cantidad||0),0);
-      const cajasLote = plCajas.filter(c=>c.lote===lote);
       return `<tr style="background:var(--surface)">
         <td style="padding:4px 12px 4px 28px;font-size:11px;color:var(--text3)">↳</td>
+        <td style="font-size:11px;padding:4px 8px">${fmtDate(r.fecha)}</td>
         <td class="td-mono" style="font-size:11px;color:var(--accent);padding:4px 8px">${lote}</td>
         <td style="font-size:11px;padding:4px 8px">${prodName(lineas[0]?.producto_id)}</td>
+        <td style="font-size:11px;padding:4px 8px">${lineas[0]?.packing_num||'—'}</td>
         <td class="td-mono" style="font-size:11px;padding:4px 8px">${qty.toFixed(3)} ${lineas[0]?.unidad||''}</td>
-        <td style="font-size:10px;color:var(--text3);padding:4px 8px">${cajasLote.length>0?cajasLote.length+' cajas':''}</td>
-        <td></td>
       </tr>`;
     }).join('');
 
@@ -15215,7 +15228,7 @@ function renderOCPanel(ocId) {
       <td class="td-mono" style="font-size:12px;font-weight:700;color:var(--accent)">${r.numero||'—'}</td>
       <td style="font-size:12px">${fmtDate(r.fecha)}</td>
       <td class="td-mono" style="font-size:11px;color:var(--accent3)">${r.envio_numero||'—'}</td>
-      <td style="font-size:11px">${r.packing_num||'—'}</td>
+      <td style="font-size:11px">—</td>
       <td class="td-mono" style="font-size:12px">${totalKg>0?totalKg.toFixed(3)+' kg':'—'}</td>
       <td><span class="badge ${STATUS_REC_COLOR[r.status]||'badge-gray'}">${STATUS_REC_LABEL[r.status]||r.status}</span></td>
     </tr>${loteRows}${pendRow}`;
