@@ -17527,6 +17527,12 @@ function calcFocItemIva(idx, qty, precio, moneda) {
   document.getElementById('foc-total-display').textContent    = fmtMoney(sumTotal, moneda);
   document.getElementById('foc-total').value                  = sumTotal.toFixed(2);
   renderFocSaldoOC();
+  // El tab "Apuntes Contables" no se refresca solo al cambiar el checkbox de
+  // IVA de una línea (solo se recalculaba al VOLVER a hacer clic en ese tab)
+  // — por eso quitar el check de IVA seguía mostrando la línea de IVA vieja
+  // si el usuario ya tenía ese tab abierto. Se refresca aquí también, en
+  // cada toggle, para que nunca quede desactualizado.
+  renderFocApuntesPreview();
 }
 
 // Muestra cuánto se ha recibido, cuánto ya se facturó y el saldo disponible
@@ -17571,6 +17577,7 @@ function calcFocTotales(items, monedaOC, esServicio) {
   document.getElementById('foc-subtotal-display').textContent = fmtMoney(sumNeto, monedaOC);
   document.getElementById('foc-iva-display').textContent      = fmtMoney(sumIva, monedaOC);
   renderFocSaldoOC();
+  renderFocApuntesPreview();
 }
 
 function calcFocVencimiento() {
