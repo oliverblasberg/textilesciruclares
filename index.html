@@ -9269,9 +9269,8 @@ async function saveProveedor() {
       return;
     }
     toast('✓ Proveedor guardado');
+    closeModal('modal-proveedor');
     await loadAll();
-    // Update title to show we're editing
-    document.getElementById('modal-proveedor-title').textContent = 'Editar Proveedor';
   } catch(e) {
     alert('Error inesperado en saveProveedor:\n\n' + e.message + '\n\n' + e.stack);
   }
@@ -12823,9 +12822,17 @@ function ctaPorPagarOC(oc_id) {
        );
 }
 
-function buildLineasFacturaCompra({ oc_id, tipo, total }) {
-  const totalOrig = Number(total||0);
-  const esIVA     = tipo !== 'FX';
+// neto/iva (opcionales): monto real de IVA de la factura, ya calculado
+// respetando el checkbox de IVA de CADA línea (ver focNetoIvaFromDOM() y
+// erp_compras.valor_neto/valor_iva). Si se reciben, mandan sobre `tipo` —
+// una factura puede ser "Cambiaria" y aun así llevar 0 de IVA porque el
+// usuario desmarcó el checkbox de sus líneas (la mayoría de materia prima
+// no paga IVA). Si NO se reciben (llamadas antiguas/sin ese dato), cae al
+// criterio anterior basado en el tipo de factura (FX = exportación = sin IVA).
+function buildLineasFacturaCompra({ oc_id, tipo, total, neto=null, iva=null }) {
+  const totalOrig  = Number(total||0);
+  const tieneNetoIva = neto !== null && iva !== null;
+  const esIVA      = tieneNetoIva ? Number(iva) > 0.001 : tipo !== 'FX';
 
   // Get category from first OC item product
   const ocItems    = state.ocItems.filter(i => i.oc_id === oc_id);
@@ -12868,10 +12875,12 @@ function buildLineasFacturaCompra({ oc_id, tipo, total }) {
 
   const lineas = [];
   if (esIVA) {
-    const neto = parseFloat((totalOrig / 1.12).toFixed(4));
-    const iva  = parseFloat((totalOrig - neto).toFixed(4));
-    lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: neto, haber: 0 });
-    lineas.push({ cuenta_id: ctaIVACred?.id||null, cuenta_codigo: ctaIVACred?.codigo||'IVA-CRED', cuenta_nombre: ctaIVACred?.nombre||'IVA Crédito Fiscal', debe: iva, haber: 0 });
+    // Con neto/iva reales (respetando el checkbox por línea) si vinieron;
+    // si no, se parte el total 12% como antes (fallback sin ese dato).
+    const netoLinea = tieneNetoIva ? parseFloat(Number(neto).toFixed(4)) : parseFloat((totalOrig / 1.12).toFixed(4));
+    const ivaLinea  = tieneNetoIva ? parseFloat(Number(iva).toFixed(4))  : parseFloat((totalOrig - netoLinea).toFixed(4));
+    lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: netoLinea, haber: 0 });
+    lineas.push({ cuenta_id: ctaIVACred?.id||null, cuenta_codigo: ctaIVACred?.codigo||'IVA-CRED', cuenta_nombre: ctaIVACred?.nombre||'IVA Crédito Fiscal', debe: ivaLinea, haber: 0 });
   } else {
     lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: totalOrig, haber: 0 });
   }
@@ -12887,7 +12896,17 @@ async function asientoFacturaCompra(ocFacturaId) {
   const prov = state.proveedores.find(p => p.id === oc?.proveedor_id);
   const monedaOC = getMonedaOC(oc?.id);
 
-  const lineas = buildLineasFacturaCompra({ oc_id: fc.oc_id, tipo: fc.tipo, total: fc.total });
+  // El neto/IVA reales (respetando el checkbox de IVA por línea) ya quedaron
+  // grabados en erp_compras al registrar la factura en el Libro de Compras
+  // (ver saveFacturaOC → focNetoIvaFromDOM()) — se reutilizan aquí para que
+  // el asiento NUNCA quede desincronizado de lo que el usuario vio/aprobó
+  // en pantalla, sin volver a inferir el IVA a partir del tipo de factura.
+  const compra = (state.compras||[]).find(c => c.factura_id === ocFacturaId);
+  const lineas = buildLineasFacturaCompra({
+    oc_id: fc.oc_id, tipo: fc.tipo, total: fc.total,
+    neto: compra ? Number(compra.valor_neto||0) : null,
+    iva:  compra ? Number(compra.valor_iva||0)  : null,
+  });
 
   await crearAsiento({
     diario: 'COMPRAS', fecha: fc.fecha,
@@ -17396,6 +17415,23 @@ function focTab(tab) {
   if (tab === 'apuntes') renderFocApuntesPreview();
 }
 
+// Neto/IVA reales de la factura en pantalla — agregando línea por línea desde
+// el DOM (foc-neto-N / foc-iva-val-N), que calcFocItemIva()/calcFocTotales()
+// ya llenan respetando el checkbox de IVA de CADA línea (foc-iva-N). Esta es
+// la única fuente de verdad para neto/IVA: si una línea no lleva IVA, su
+// columna foc-iva-val-N queda en "—" y no aporta nada a sumIva. Se usa tanto
+// para guardar en erp_compras como para generar el asiento contable — así
+// nunca puede quedar un asiento con IVA que el usuario desmarcó en pantalla.
+function focNetoIvaFromDOM() {
+  let neto = 0, iva = 0;
+  document.querySelectorAll('[id^="foc-neto-"]').forEach((el, idx) => {
+    neto += parseFloat(el.textContent.replace(/[^0-9.,]/g,'').replace(',','.'))||0;
+    const ivaEl = document.getElementById(`foc-iva-val-${idx}`);
+    iva += ivaEl?.textContent==='—' ? 0 : parseFloat((ivaEl?.textContent||'').replace(/[^0-9.,]/g,'').replace(',','.'))||0;
+  });
+  return { neto: parseFloat(neto.toFixed(2)), iva: parseFloat(iva.toFixed(2)) };
+}
+
 // Previsualiza en vivo las líneas del asiento que se generará al guardar la
 // factura, con totales Debe/Haber para verificar que cuadra antes de grabar.
 // Si la factura ya fue guardada (foc-factura-id tiene valor), no se toca —
@@ -17421,7 +17457,10 @@ function renderFocApuntesPreview() {
     return;
   }
 
-  const lineas = buildLineasFacturaCompra({ oc_id, tipo, total });
+  // Neto/IVA reales de las líneas en pantalla (respeta el checkbox de IVA de
+  // cada línea) — NO se recalculan a partir del "tipo" de factura.
+  const { neto, iva } = focNetoIvaFromDOM();
+  const lineas = buildLineasFacturaCompra({ oc_id, tipo, total, neto, iva });
 
   let totalDebe = 0, totalHaber = 0;
   tbody.innerHTML = lineas.map(l => {
@@ -17722,16 +17761,7 @@ async function saveFacturaOC() {
 
   // Register in Libro de Compras
   // Calculate totals respecting IVA checkboxes per line
-  let valor_neto = 0, valor_iva = 0;
-  document.querySelectorAll('[id^="foc-neto-"]').forEach((el, idx) => {
-    const n = parseFloat(el.textContent.replace(/[^0-9.,]/g,'').replace(',','.'))||0;
-    const ivaEl = document.getElementById(`foc-iva-val-${idx}`);
-    const v = ivaEl?.textContent==='—' ? 0 : parseFloat((ivaEl?.textContent||'').replace(/[^0-9.,]/g,'').replace(',','.'))||0;
-    valor_neto += n;
-    valor_iva  += v;
-  });
-  valor_neto = parseFloat(valor_neto.toFixed(2));
-  valor_iva  = parseFloat(valor_iva.toFixed(2));
+  const { neto: valor_neto, iva: valor_iva } = focNetoIvaFromDOM();
   await sb.from('erp_compras').insert({
     fecha, tipo: tipo||'FC', serie, numero,
     proveedor_id: prov?.id||null,
