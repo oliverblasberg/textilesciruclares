@@ -15684,7 +15684,7 @@ function renderOCPanel(ocId) {
     const statusLabel = esPagada ? 'Pagada' : esParcial ? 'Pagada Parcialmente' : 'Generada';
     const statusColor = esPagada ? 'badge-green' : esParcial ? 'badge-yellow' : 'badge-blue';
     return `<tr style="${esPagada?'opacity:0.75':''}">
-      <td class="td-mono" style="font-size:11px;color:var(--text3)">${f.num_interno||'—'}</td>
+      <td class="td-mono" style="font-size:11px;color:var(--accent);cursor:pointer;text-decoration:underline" onclick="verFacturaOC('${f.id}')">${f.num_interno||'—'}</td>
       <td class="td-mono" style="cursor:pointer;color:var(--accent);text-decoration:underline" onclick="verFacturaOC('${f.id}')">${f.serie||'—'}${f.numero||'—'}</td>
       <td>${fmtDate(f.fecha)}</td>
       <td class="td-mono">${fmtMoney(f.total, monedaOCFacturas)}</td>
