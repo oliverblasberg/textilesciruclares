@@ -4628,6 +4628,9 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div class="field"><label>Lote de Producción *</label>
           <input type="text" id="op-lote" placeholder="Ej. LOTE-2026-001" style="text-transform:uppercase"/>
         </div>
+        <div class="field field-full"><label>Orden de Venta</label>
+          <select id="op-ov"><option value="">— Sin vincular (producción para stock) —</option></select>
+        </div>
         <div class="field"><label>Fecha Inicio</label><input type="date" id="op-fecha-inicio"/></div>
         <div class="field"><label>Fecha Fin Estimada</label><input type="date" id="op-fecha-fin"/></div>
         <div class="field"><label>Bodega Entrada (MP)</label>
@@ -5509,6 +5512,63 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   </div>
 </div>
 
+<!-- VER ORDEN DE VENTA (OV) MODAL -->
+<div class="modal-overlay" id="modal-ver-pedido">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="vped-title">Orden de Venta</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="imprimirOV(currentVerPedidoId)">🖨 Imprimir</button>
+        <button class="modal-close" onclick="closeModal('modal-ver-pedido')">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" id="vped-body" style="padding:20px"></div>
+    <div class="modal-footer">
+      <!-- Editar / Generar Despacho — poblado por verPedido() según el
+           estado de la OV. Editar y Generar Despacho vivían antes como
+           botones sueltos en la fila del Libro de Ventas; ahora viven aquí
+           adentro, a pedido del usuario. -->
+      <div id="vped-footer-actions" style="display:flex;gap:8px"></div>
+      <button class="btn btn-ghost" onclick="closeModal('modal-ver-pedido')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- GENERAR DESPACHO MODAL -->
+<div class="modal-overlay" id="modal-despacho">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">Generar Despacho</div>
+      <button class="modal-close" onclick="closeModal('modal-despacho')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-weight:600" id="desp-ov-display">—</div>
+      <div class="form-grid form-grid-2" style="margin-bottom:16px">
+        <div class="field"><label>Fecha *</label><input type="date" id="desp-fecha"/></div>
+        <div class="field"><label>Destino</label><input type="text" id="desp-destino" placeholder="Ciudad / bodega destino"/></div>
+        <div class="field"><label>Transportista</label><input type="text" id="desp-transportista"/></div>
+        <div class="field"><label>Placa</label><input type="text" id="desp-placa"/></div>
+      </div>
+      <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">
+        Rollos Disponibles en Bodega de Despacho
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th style="width:36px"></th>
+            <th>No. Rollo</th><th>Producto</th><th>Lote</th><th style="text-align:right">Peso</th>
+          </tr></thead>
+          <tbody id="tbl-desp-rollos"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-despacho')">Cancelar</button>
+      <button class="btn btn-primary" id="btn-confirmar-despacho" onclick="confirmarGenerarDespacho()">📦 Generar Despacho</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -5539,7 +5599,8 @@ let state = {
   tiposCambio: [],
   proveedores: [],
   compras: [],
-  enviosTerceros: [], enviosTercerosItems: []
+  enviosTerceros: [], enviosTercerosItems: [],
+  rollos: []
 };
 let currentPLOrderId = null;
 
@@ -5609,7 +5670,7 @@ function enterModule(hub) {
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
          sc, scI, oc, ocI, ocR, ocRI, plC, ocF, pagosOC, ocA, asi, asiL, dj, bod, tc,
-         rec, recL, recC, op_, opC, opCo, extL, extB, envT, envTI] = await Promise.all([
+         rec, recL, recC, op_, opC, opCo, extL, extB, envT, envTI, roll] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
     sb.from('erp_ov').select('*').order('order_number', {ascending:false}),
@@ -5652,6 +5713,7 @@ async function loadAll() {
     sb.from('erp_extracto_bancario').select('*').order('fecha', {ascending:false}),
     sb.from('erp_envios_terceros').select('*').order('created_at', {ascending:false}),
     sb.from('erp_envios_terceros_items').select('*'),
+    sb.from('erp_rollos').select('*').order('created_at', {ascending:false}),
   ]);
   // Antes esto fallaba en silencio: si Supabase devolvía un error (RLS, red,
   // columna renombrada, etc.) el resultado quedaba como `[]` sin avisar a
@@ -5669,7 +5731,7 @@ async function loadAll() {
     erp_bodegas:bod, erp_tipos_cambio:tc, erp_recetas:rec, erp_receta_lineas:recL,
     erp_receta_costos:recC, erp_op:op_, erp_op_consumos:opC, erp_op_costos:opCo,
     erp_extracto_lotes:extL, erp_extracto_bancario:extB, erp_envios_terceros:envT,
-    erp_envios_terceros_items:envTI,
+    erp_envios_terceros_items:envTI, erp_rollos:roll,
   };
   const _loadErrors = Object.entries(_loadResults).filter(([, r]) => r?.error);
   if (_loadErrors.length) {
@@ -5718,6 +5780,7 @@ async function loadAll() {
   state.extractoBancario   = extB.data || [];
   state.enviosTerceros      = envT.data  || [];
   state.enviosTercerosItems = envTI.data || [];
+  state.rollos              = roll.data  || [];
   updateTCTopbar();
   renderDashboard();
   renderClientes();
@@ -6298,7 +6361,7 @@ function renderPedidos() {
 
     return `<tr>
       <td>
-        <div class="td-mono" style="cursor:pointer;color:var(--accent);text-decoration:underline;text-underline-offset:2px;font-weight:600" onclick="togglePLInline('${p.id}', this)" title="Ver listas de empaque">
+        <div class="td-mono" style="cursor:pointer;color:var(--accent);text-decoration:underline;text-underline-offset:2px;font-weight:600" onclick="verPedido('${p.id}')" title="Ver detalle de la orden">
           OV-${String(p.order_number).padStart(4,'0')}
         </div>
       </td>
@@ -6324,17 +6387,286 @@ function renderPedidos() {
       <td class="hide-mobile td-mono">${fmtMoney(total, monedaOV)}</td>
       <td>${statusBadge(p.status)}</td>
       <td><div class="td-actions">
-        <button class="btn btn-sm btn-ghost" onclick="imprimirOV('${p.id}')">🖨 Imprimir</button>
-        <button class="btn btn-sm btn-ghost" onclick="editPedido('${p.id}')">Editar</button>
         <button class="btn btn-sm btn-danger" onclick="deletePedido('${p.id}')">Eliminar</button>
       </div></td>
-    </tr>
-    <tr id="pl-inline-${p.id}" style="display:none">
-      <td colspan="7" style="padding:0;background:var(--bg)">
-        <div id="pl-inline-body-${p.id}" style="padding:16px 20px"></div>
-      </td>
     </tr>`;
   }).join('') : '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">▷</div><p>Sin órdenes de venta</p></div></td></tr>';
+}
+
+// ──────────────────────────────────────────────────
+// VER ORDEN DE VENTA (OV) — modal de detalle
+// ──────────────────────────────────────────────────
+// Se abre al hacer click en el número de OV en el Libro de Ventas. Antes esa
+// fila tenía botones sueltos de Imprimir/Editar y el número solo expandía
+// una tabla inline de Packing Lists (togglePLInline, ya eliminado); ahora
+// todo eso vive dentro de este modal, más el botón Generar Despacho.
+let currentVerPedidoId = null;
+
+function verPedido(id) {
+  const p = state.pedidos.find(x => x.id === id);
+  if (!p) return;
+  currentVerPedidoId = id;
+
+  const clt      = state.clientes.find(c => c.id === p.customer_id);
+  const bodega   = p.bodega_id ? (state.bodegas||[]).find(b => b.id === p.bodega_id) : null;
+  const items    = state.pedItems.filter(i => i.order_id === id);
+  const monedaOV = clt?.moneda || 'GTQ';
+  const totalKg  = items.reduce((s,i) => s + Number(i.qty_kg||0), 0);
+  const total    = items.reduce((s,i) => s + (Number(i.total||0) || Number(i.qty_kg||0)*Number(i.unit_price||0)), 0);
+
+  const orderPLs   = state.packingLists.filter(pl => pl.order_id === id);
+  const despachado = orderPLs.reduce((s, pl) => {
+    const bultos = state.packingBultos.filter(b => b.packing_list_id === pl.id);
+    return s + bultos.reduce((bs, b) => bs + Number(b.peso_neto||0), 0);
+  }, 0);
+
+  const terminosLabel = { inmediato:'Pago Inmediato', '15':'15 días', '30':'30 días', '45':'45 días', '60':'60 días' };
+  const terminosText  = terminosLabel[p.terminos_pago] || p.terminos_pago || '—';
+
+  document.getElementById('vped-title').textContent = `OV-${String(p.order_number).padStart(4,'0')}`;
+
+  const infoCell = (label, val, mono=false) => `
+    <div style="padding:12px 16px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">${label}</div>
+      <div style="font-size:13px${mono?";font-family:'DM Mono',monospace":''}">${val||'—'}</div>
+    </div>`;
+
+  const itemsHtml = items.map(i => {
+    const prod = state.productos.find(x => x.id === i.fabric_id);
+    const tot  = Number(i.total||0) || Number(i.qty_kg||0)*Number(i.unit_price||0);
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 12px;font-size:13px">
+        <div style="font-weight:500">${prod?.description||'—'}</div>
+        <div style="font-size:11px;color:var(--text3);font-family:'DM Mono',monospace">${prod?.codigo_interno||prod?.code||'—'}</div>
+      </td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(i.qty_yardas||0).toLocaleString('es-GT')}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(i.qty_kg||0).toFixed(3)}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${fmtMoney(i.unit_price||0, monedaOV)}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtMoney(tot, monedaOV)}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:12px">Sin líneas</td></tr>`;
+
+  const plsHtml = orderPLs.length ? orderPLs.map(pl => {
+    const bultos  = state.packingBultos.filter(b => b.packing_list_id === pl.id);
+    const totNeto = bultos.reduce((s,b) => s + Number(b.peso_neto||0), 0);
+    const {status, factura} = plStatus(pl.id);
+    const statusMap   = { despachada:'badge-blue', facturada:'badge-yellow', pagada:'badge-green' };
+    const statusLabel = { despachada:'Despachada', facturada:'Facturada', pagada:'Pagada' };
+    const verFactBtn = (status === 'facturada' || status === 'pagada') && factura
+      ? `<button class="btn btn-sm btn-ghost" onclick="verFactura('${factura.id}')">📄 Ver Factura</button>` : '';
+    return `<tr>
+      <td class="td-mono">LE-${String(pl.pl_number).padStart(4,'0')}</td>
+      <td>${fmtDate(pl.date)}</td>
+      <td style="font-size:12px">${fabricName(pl.fabric_id)}</td>
+      <td>${bultos.length}</td>
+      <td class="td-mono">${totNeto.toFixed(2)} kg</td>
+      <td><span class="badge ${statusMap[status]}">${statusLabel[status]}</span></td>
+      <td><div class="td-actions">
+        <button class="btn btn-sm btn-ghost" onclick="printPL('${pl.id}')">🖨️</button>
+        ${verFactBtn}
+      </div></td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:12px">Sin listas de empaque</td></tr>`;
+
+  document.getElementById('vped-body').innerHTML = `
+    <div style="text-align:center;margin-bottom:16px">${statusBadge(p.status)}</div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+      ${infoCell('Cliente', clt?.name)}
+      ${infoCell('PO Cliente', p.po_number, true)}
+      ${infoCell('Fecha', fmtDate(p.date))}
+      ${infoCell('Fecha de Entrega', p.fecha_entrega?fmtDate(p.fecha_entrega):null)}
+      ${infoCell('Responsable', p.responsable)}
+      ${infoCell('Incoterms', p.incoterms)}
+      ${infoCell('Forma de Pago', terminosText)}
+      ${infoCell('Bodega de Despacho', bodega?.nombre)}
+    </div>
+
+    <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Detalle de Productos</div>
+    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--surface2)">
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Producto</th>
+          <th style="padding:7px 12px;text-align:right;font-size:11px">Yardas</th>
+          <th style="padding:7px 12px;text-align:right;font-size:11px">KG</th>
+          <th style="padding:7px 12px;text-align:right;font-size:11px">Precio Unit.</th>
+          <th style="padding:7px 12px;text-align:right;font-size:11px">Total</th>
+        </tr></thead>
+        <tbody>${itemsHtml}</tbody>
+      </table>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:var(--surface2);font-weight:600">
+        <span>Total OV — ${totalKg.toFixed(2)} kg</span>
+        <span style="font-family:'DM Mono',monospace;font-size:18px">${fmtMoney(total, monedaOV)}</span>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3)">
+        Listas de Empaque — ${despachado.toFixed(2)} / ${totalKg.toFixed(2)} kg despachado
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="closeModal('modal-ver-pedido');currentPLOrderId='${id}';openNewPL()">+ Nueva Lista</button>
+    </div>
+    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--surface2)">
+          <th style="padding:7px 12px;text-align:left;font-size:11px">No.</th>
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Fecha</th>
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Producto</th>
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Bultos</th>
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Peso Neto</th>
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Estado</th>
+          <th style="padding:7px 12px"></th>
+        </tr></thead>
+        <tbody>${plsHtml}</tbody>
+      </table>
+    </div>
+    ${p.notes ? `<div style="margin-top:16px;font-size:12px;color:var(--text2)"><strong>Notas:</strong> ${p.notes}</div>` : ''}
+  `;
+
+  document.getElementById('vped-footer-actions').innerHTML = `
+    <button class="btn btn-ghost btn-sm" onclick="closeModal('modal-ver-pedido');editPedido('${id}')">✎ Editar</button>
+    <button class="btn btn-primary btn-sm" onclick="abrirGenerarDespacho('${id}')">📦 Generar Despacho</button>
+  `;
+
+  openModal('modal-ver-pedido');
+}
+
+// ──────────────────────────────────────────────────
+// GENERAR DESPACHO — asignar rollos de producto terminado a esta OV
+// ──────────────────────────────────────────────────
+// Un rollo (erp_rollos) queda "disponible para despachar en esta OV" cuando:
+//   1) su estado es 'disponible' (no despachado aún),
+//   2) está en la Bodega de Despacho configurada en la OV (p.bodega_id), y
+//   3) proviene de una Orden de Producción (op_id) cuyo campo "Orden de
+//      Venta" (erp_op.ov_id) apunta a esta OV.
+// Ese vínculo (OP → OV) se captura hoy en el formulario de Nueva OP (campo
+// "Orden de Venta") y genera el rollo automáticamente al iniciar la
+// producción (ver registrarMovimientosOP). Si una OV no tiene ninguna OP
+// vinculada todavía, no habrá rollos que mostrar aquí — es esperado.
+let currentDespachoOVId = null;
+
+function rollosDisponiblesParaOV(ovId) {
+  const p = state.pedidos.find(x => x.id === ovId);
+  if (!p || !p.bodega_id) return [];
+  const opIds = new Set((state.op||[]).filter(o => o.ov_id === ovId).map(o => o.id));
+  return (state.rollos||[]).filter(r =>
+    r.estado === 'disponible' &&
+    r.bodega_id === p.bodega_id &&
+    r.op_id && opIds.has(r.op_id)
+  );
+}
+
+function abrirGenerarDespacho(ovId) {
+  const p = state.pedidos.find(x => x.id === ovId);
+  if (!p) return;
+  if (!p.bodega_id) { toast('Esta OV no tiene una Bodega de Despacho configurada — edítala primero.', 'error'); return; }
+  currentDespachoOVId = ovId;
+
+  document.getElementById('desp-ov-display').textContent = `OV-${String(p.order_number).padStart(4,'0')} — ${clientName(p.customer_id)}`;
+  document.getElementById('desp-fecha').value = today();
+  document.getElementById('desp-destino').value = '';
+  document.getElementById('desp-transportista').value = '';
+  document.getElementById('desp-placa').value = '';
+
+  renderDespachoRollos(ovId);
+  closeModal('modal-ver-pedido');
+  openModal('modal-despacho');
+}
+
+function renderDespachoRollos(ovId) {
+  const rollos = rollosDisponiblesParaOV(ovId);
+  const tbody = document.getElementById('tbl-desp-rollos');
+  tbody.innerHTML = rollos.length ? rollos.map(r => {
+    const prod = state.productos.find(x => x.id === r.producto_id);
+    return `<tr>
+      <td style="text-align:center"><input type="checkbox" class="desp-rollo-check" data-id="${r.id}" style="width:15px;height:15px"/></td>
+      <td class="td-mono">${r.numero_rollo||'—'}</td>
+      <td style="font-size:13px">${prod?.description||'—'}</td>
+      <td class="td-mono" style="font-size:12px">${r.lote||'—'}</td>
+      <td class="td-mono" style="text-align:right">${Number(r.peso_kg||0).toFixed(3)} kg</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px;font-size:12px">
+    Sin rollos disponibles para despachar de esta OV en su bodega de despacho.<br/>
+    Los rollos aparecen aquí cuando una Orden de Producción vinculada a esta OV (campo "Orden de Venta" en la OP) inicia producción.
+  </td></tr>`;
+}
+
+async function confirmarGenerarDespacho() {
+  const ovId = currentDespachoOVId;
+  const p = state.pedidos.find(x => x.id === ovId);
+  if (!p) return;
+
+  const checks = [...document.querySelectorAll('.desp-rollo-check:checked')];
+  if (!checks.length) { toast('Selecciona al menos un rollo para despachar', 'error'); return; }
+
+  const fecha = document.getElementById('desp-fecha').value;
+  if (!fecha) { toast('La fecha es requerida', 'error'); return; }
+  const destino        = document.getElementById('desp-destino').value.trim();
+  const transportista   = document.getElementById('desp-transportista').value.trim();
+  const placa           = document.getElementById('desp-placa').value.trim();
+
+  const rollosSel = checks.map(c => (state.rollos||[]).find(r => r.id === c.dataset.id)).filter(Boolean);
+  const ovLabel   = `OV-${String(p.order_number).padStart(4,'0')}`;
+
+  // Cada Lista de Empaque (erp_packing_lists) solo admite un producto —
+  // agrupamos los rollos seleccionados por producto y generamos una lista
+  // por cada uno.
+  const porProducto = {};
+  rollosSel.forEach(r => {
+    if (!porProducto[r.producto_id]) porProducto[r.producto_id] = [];
+    porProducto[r.producto_id].push(r);
+  });
+
+  const btn = document.getElementById('btn-confirmar-despacho');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generando…'; }
+
+  try {
+    for (const productoId of Object.keys(porProducto)) {
+      const rollosProd  = porProducto[productoId];
+      const stockLotes  = calcStockPorLote(productoId, p.bodega_id);
+
+      const { data: plRow, error: plErr } = await sb.from('erp_packing_lists').insert({
+        order_id: ovId, fabric_id: productoId, date: fecha,
+        destination: destino||null, carrier: transportista||null, plate: placa||null,
+        notes: `Despacho — rollos: ${rollosProd.map(r=>r.numero_rollo).join(', ')}`,
+      }).select().single();
+      if (plErr) throw plErr;
+
+      const bultosRows = rollosProd.map((r, idx) => ({
+        packing_list_id: plRow.id,
+        bulto_number: idx+1,
+        peso_bruto: Number(r.peso_kg||0),
+        peso_neto: Number(r.peso_kg||0),
+      }));
+      const { error: bErr } = await sb.from('erp_packing_bultos').insert(bultosRows);
+      if (bErr) throw bErr;
+
+      for (const r of rollosProd) {
+        const costoUnit = stockLotes.find(l => l.lote === (r.lote||'(sin lote)'))?.costo || 0;
+        await crearMovimiento({
+          tipo: 'salida',
+          producto_id: r.producto_id,
+          cantidad: Number(r.peso_kg||0),
+          costo_unitario: costoUnit,
+          referencia_tipo: 'DESPACHO', referencia_id: ovLabel,
+          notas: `Despacho ${ovLabel} — rollo ${r.numero_rollo}`,
+          fecha,
+          bodega_id: p.bodega_id,
+          lote: r.lote||null,
+        });
+        const { error: rErr } = await sb.from('erp_rollos').update({ estado: 'despachado' }).eq('id', r.id);
+        if (rErr) console.error('confirmarGenerarDespacho: error marcando rollo despachado:', rErr.message);
+      }
+    }
+
+    toast(`✓ Despacho generado — ${rollosSel.length} rollo(s)`);
+    closeModal('modal-despacho');
+    await loadAll();
+  } catch (e) {
+    toast('Error generando despacho: '+(e.message||e), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📦 Generar Despacho'; }
+  }
 }
 
 // El dropdown de la Orden de Venta debe mostrar el catálogo real de productos
@@ -8632,62 +8964,11 @@ function plStatus(plId) {
   return { status: 'facturada', factura: invoicedBy };
 }
 
-// ── INLINE PL TOGGLE (click OV number) ──
-function togglePLInline(orderId, el) {
-  const row  = document.getElementById('pl-inline-' + orderId);
-  const body = document.getElementById('pl-inline-body-' + orderId);
-  const open = row.style.display !== 'none';
-  // Close all inline panels first
-  document.querySelectorAll('[id^="pl-inline-"]').forEach(r => {
-    if (!r.id.includes('body')) r.style.display = 'none';
-  });
-  document.querySelectorAll('[id^="pl-inline-body-"]').forEach(b => b.innerHTML = '');
-  if (open) return; // was open, just close
-  // Render inline PL table
-  const lists = state.packingLists.filter(pl => pl.order_id === orderId);
-  const order = state.pedidos.find(p => p.id === orderId);
-  body.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <div style="font-size:13px;font-weight:600;color:var(--text)">
-        Listas de Empaque — OV-${String(order.order_number).padStart(4,'0')}
-      </div>
-      <button class="btn btn-primary btn-sm" onclick="currentPLOrderId='${orderId}';openNewPL()">+ Nueva Lista</button>
-    </div>
-    ${lists.length ? `
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>No.</th><th>Fecha</th><th>Producto</th><th>Bultos</th><th>Peso Neto</th><th>Estado</th><th></th></tr></thead>
-        <tbody>
-          ${lists.map(pl => {
-            const bultos  = state.packingBultos.filter(b => b.packing_list_id === pl.id);
-            const totNeto = bultos.reduce((s,b) => s + Number(b.peso_neto||0), 0);
-            const {status, factura} = plStatus(pl.id);
-            const statusMap = { despachada:'badge-blue', facturada:'badge-yellow', pagada:'badge-green' };
-            const statusLabel = { despachada:'Despachada', facturada:'Facturada', pagada:'Pagada' };
-            const verFactBtn = (status === 'facturada' || status === 'pagada') && factura
-              ? `<button class="btn btn-sm btn-ghost" onclick="verFactura('${factura.id}')">📄 Ver Factura</button>`
-              : '';
-            return `<tr>
-              <td class="td-mono">LE-${String(pl.pl_number).padStart(4,'0')}</td>
-              <td>${fmtDate(pl.date)}</td>
-              <td style="font-size:12px">${fabricName(pl.fabric_id)}</td>
-              <td>${bultos.length}</td>
-              <td class="td-mono">${totNeto.toFixed(2)} kg</td>
-              <td><span class="badge ${statusMap[status]}">${statusLabel[status]}</span></td>
-              <td><div class="td-actions">
-                <button class="btn btn-sm btn-ghost" onclick="printPL('${pl.id}')">🖨️</button>
-                ${verFactBtn}
-                <button class="btn btn-sm btn-ghost" onclick="currentPLOrderId='${orderId}';editPL('${pl.id}')">Editar</button>
-                <button class="btn btn-sm btn-danger" onclick="deletePL('${pl.id}')">Eliminar</button>
-              </div></td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>` : '<p style="font-size:13px;color:var(--text3);padding:8px 0">Sin listas de empaque aún.</p>'}`;
-  row.style.display = '';
-  row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
+// NOTA: el toggle inline de Packing Lists al hacer click en el número de OV
+// (togglePLInline) se reemplazó por el modal verPedido() — ver más abajo,
+// sección "VER ORDEN DE VENTA (OV)". El modal muestra la misma tabla de
+// Listas de Empaque, más la info completa de la OV, Imprimir y Editar
+// (que antes vivían como botones sueltos en la fila del Libro de Ventas).
 
 function showPLPanel(orderId) {
   currentPLOrderId = orderId;
@@ -10476,6 +10757,7 @@ function openNewOP() {
     (state.bodegas||[]).filter(b=>b.activa!==false).map(b=>`<option value="${b.id}">${b.codigo} — ${b.nombre}</option>`).join('');
   document.getElementById('op-bodega-entrada').innerHTML = bodOpts;
   document.getElementById('op-bodega-salida').innerHTML  = bodOpts;
+  populateOVSelect('op-ov');
 
   document.getElementById('modal-op-title').textContent = 'Nueva Orden de Producción';
   openModal('modal-op');
@@ -10535,6 +10817,7 @@ async function saveOP(estado = 'borrador') {
     estado,
     costo_total:    parseFloat((costoMPConMerma + costoConvTotal).toFixed(4)),
     notas:          document.getElementById('op-notas').value.trim(),
+    ov_id:          document.getElementById('op-ov')?.value || null,
   };
 
   let err, opId = id;
@@ -10686,6 +10969,30 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockM
     bodega_id: opRow.bodega_salida,
     lote,
   });
+
+  // 2c. Rollo físico de producto terminado — solo cuando el destino es una
+  // bodega tipo "producto_terminado" (producción intermedia — tejido crudo,
+  // WIP — que aterriza en otras bodegas no genera rollo despachable). Este
+  // rollo es lo que "Generar Despacho" (módulo de Ventas) usa para saber qué
+  // hay disponible y de qué OV es, vía opRow.ov_id. Por ahora se genera UN
+  // solo rollo por corrida (= cantidad_prog); partir la producción en varios
+  // rollos físicos desde el inicio queda pendiente si se necesita.
+  const bodegaSalidaRow = (state.bodegas||[]).find(b => b.id === opRow.bodega_salida);
+  if (bodegaSalidaRow?.tipo === 'producto_terminado' && receta?.producto_id) {
+    const { error: rolloErr } = await sb.from('erp_rollos').insert({
+      numero_rollo: `${opRow.numero}-R1`,
+      producto_id: receta.producto_id,
+      peso_kg: cantidad_prog,
+      bodega_id: opRow.bodega_salida,
+      estado: 'disponible',
+      op_id: opId,
+      lote,
+    });
+    if (rolloErr) {
+      console.error('registrarMovimientosOP: error creando rollo:', rolloErr.message);
+      toast('Producción registrada, pero no se pudo crear el rollo de inventario — revisa la consola', 'error');
+    }
+  }
 
   // ── PASO 3: Asientos contables de manufactura ──
 
@@ -16696,6 +17003,22 @@ function populateBodegaSelect(elId, selectedId='') {
   el.innerHTML = '<option value="">— Seleccionar bodega —</option>' +
     (state.bodegas||[]).filter(b=>b.activa!==false)
       .map(b=>`<option value="${b.id}"${b.id===selectedId?' selected':''}>${b.codigo?b.codigo+' — ':''}${b.nombre}</option>`).join('');
+}
+
+// Vincula una OP a la Orden de Venta para la que se está fabricando —
+// necesario para que "Generar Despacho" (Ventas) pueda encontrar, dentro
+// del inventario de producto terminado, qué rollos pertenecen a cuál OV.
+// Se produce bajo pedido (make-to-order): toda OP normalmente nace de una
+// OV, pero el campo queda opcional para permitir producción a stock.
+function populateOVSelect(elId, selectedId='') {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const opts = (state.pedidos||[])
+    .filter(p => p.status !== 'cancelado')
+    .sort((a,b) => (b.order_number||0) - (a.order_number||0))
+    .map(p => `<option value="${p.id}"${p.id===selectedId?' selected':''}>OV-${String(p.order_number).padStart(4,'0')} — ${clientName(p.customer_id)}</option>`)
+    .join('');
+  el.innerHTML = '<option value="">— Sin vincular (producción para stock) —</option>' + opts;
 }
 
 // ── PL CAJAS (Packing List detail for Hilo) ─────────────────────
