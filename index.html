@@ -19,6 +19,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Michroma&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 /* ═══════════════════════════════════════════
@@ -2167,6 +2168,16 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
       <!-- FLUJO DE CAJA -->
       <div class="page" id="page-flujo-caja">
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-body">
+            <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:2px">Proyección de Caja</div>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Ingresos y egresos según la fecha de vencimiento de las facturas emitidas — no depende de si ya se cobraron/pagaron.</div>
+            <div style="position:relative;height:320px">
+              <canvas id="fc-chart-canvas"></canvas>
+              <div id="fc-chart-empty" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;color:var(--text3);font-size:13px">Sin facturas con vencimiento en el período</div>
+            </div>
+          </div>
+        </div>
         <div class="filters-row">
           <select class="filter-select" id="fc-periodo" onchange="renderFlujoCaja()" style="max-width:200px">
             <option value="mes">Este Mes</option>
@@ -12225,7 +12236,7 @@ function renderCompras() {
     const estadoLabel = esPagado ? 'Pagada' : pagado>0 ? 'Parcialmente Pagada' : 'Generada';
     sumTotal += total;
     const fechaFmt = fmtDate(c.fecha);
-    return `<tr id="compra-row-${c.id}" style="${esPagado?'opacity:0.7':''}">
+    return `<tr id="compra-row-${c.id}">
       <td style="padding:8px 10px;text-align:center">
         ${!esPagado?`<input type="checkbox" class="compra-check" data-id="${c.id}"
           data-proveedor="${c.proveedor_id||''}" data-moneda="${c.moneda||'GTQ'}"
@@ -13848,19 +13859,139 @@ function renderBalanceGeneral() {
 }
 
 // ──────────────────────────────────────────────────
+// FLUJO DE CAJA — GRÁFICO PROYECTADO (por fecha de vencimiento de facturas)
+// ──────────────────────────────────────────────────
+// A diferencia de renderFlujoCaja() (que muestra caja REAL: pagos ya
+// recibidos/realizados), este gráfico proyecta cuándo se DEBEN cancelar los
+// documentos ya emitidos — facturas de venta (ingresos) y facturas de
+// compra a proveedor (egresos) — según su fecha de vencimiento, sin importar
+// si ya fueron cobrados/pagados. Sirve para anticipar el calendario de caja.
+let fcChartInstance = null;
+
+function diasCreditoVenta(credito) {
+  if (!credito || credito === 'inmediato') return 0;
+  const n = parseInt(credito, 10);
+  return isNaN(n) ? 0 : n;
+}
+
+// Fecha de vencimiento de una factura de venta = fecha de emisión + días de crédito.
+function facturaVentaVencimiento(f) {
+  if (!f?.date) return null;
+  const dias = diasCreditoVenta(f.credito);
+  const d = new Date(f.date);
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+
+// Agrega, por fecha exacta de vencimiento, los ingresos (facturas de venta)
+// y egresos (facturas de compra, convertidas a GTQ si están en otra moneda)
+// dentro del rango [desde, hasta], y calcula el balance acumulado en el
+// tiempo. Función pura — sin tocar el DOM ni Chart.js — para poder probarla.
+function computeFlujoCajaChartData(desde, hasta) {
+  const porFecha = {};
+  const addMonto = (fecha, campo, monto) => {
+    if (!fecha || fecha < desde || fecha > hasta) return;
+    if (!porFecha[fecha]) porFecha[fecha] = { ingresos: 0, egresos: 0 };
+    porFecha[fecha][campo] += Number(monto || 0);
+  };
+
+  (state.facturas || []).filter(f => f.status !== 'cancelada').forEach(f => {
+    addMonto(facturaVentaVencimiento(f), 'ingresos', f.total);
+  });
+
+  (state.ocFacturas || []).filter(f => f.status !== 'cancelada').forEach(f => {
+    const venc = f.fecha_vencimiento || f.fecha;
+    const monedaOC = getMonedaOC(f.oc_id);
+    const montoGTQ = monedaOC === 'GTQ'
+      ? Number(f.total || 0)
+      : Number(f.total || 0) * (Number(f.tc) || getTCFecha(f.fecha) || 1);
+    addMonto(venc, 'egresos', montoGTQ);
+  });
+
+  const fechas = Object.keys(porFecha).sort();
+  let balance = 0;
+  const labels = [], dataIngresos = [], dataEgresos = [], dataBalance = [];
+  fechas.forEach(fecha => {
+    const v = porFecha[fecha];
+    labels.push(fecha);
+    dataIngresos.push(v.ingresos);
+    dataEgresos.push(-v.egresos);
+    balance += (v.ingresos - v.egresos);
+    dataBalance.push(balance);
+  });
+
+  return { fechas, labels, dataIngresos, dataEgresos, dataBalance };
+}
+
+function renderFlujoCajaChart() {
+  const canvas = document.getElementById('fc-chart-canvas');
+  const emptyEl = document.getElementById('fc-chart-empty');
+  if (!canvas) return;
+
+  const periodo = document.getElementById('fc-periodo')?.value || 'mes';
+  const { desde, hasta } = periodoFechas(periodo);
+  const chartData = computeFlujoCajaChartData(desde, hasta);
+
+  if (fcChartInstance) { fcChartInstance.destroy(); fcChartInstance = null; }
+
+  if (!chartData.fechas.length || typeof Chart === 'undefined') {
+    canvas.style.display = 'none';
+    if (emptyEl) emptyEl.style.display = 'flex';
+    return;
+  }
+  canvas.style.display = '';
+  if (emptyEl) emptyEl.style.display = 'none';
+
+  const ctx = canvas.getContext && canvas.getContext('2d');
+  if (!ctx) return;
+
+  fcChartInstance = new Chart(ctx, {
+    data: {
+      labels: chartData.fechas.map(f => fmtDate(f)),
+      datasets: [
+        { type: 'bar',  label: 'Ingresos (facturas por cobrar)', data: chartData.dataIngresos, backgroundColor: '#16A34A', borderRadius: 3, stack: 'caja', order: 2 },
+        { type: 'bar',  label: 'Egresos (facturas por pagar)',   data: chartData.dataEgresos,  backgroundColor: '#DC2626', borderRadius: 3, stack: 'caja', order: 2 },
+        { type: 'line', label: 'Balance acumulado', data: chartData.dataBalance, borderColor: '#2563EB', backgroundColor: '#2563EB', pointRadius: 3, pointBackgroundColor: '#2563EB', tension: 0.25, fill: false, order: 1 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { stacked: true, grid: { display: false } },
+        y: { stacked: true, ticks: { callback: v => fmtGTQ(v) }, grid: { color: '#E2E4E9' } },
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtGTQ(Math.abs(ctx.raw))}` } },
+      },
+    },
+  });
+}
+
+// ──────────────────────────────────────────────────
 // FLUJO DE CAJA
 // ──────────────────────────────────────────────────
 function renderFlujoCaja() {
+  renderFlujoCajaChart();
   const periodo = document.getElementById('fc-periodo')?.value||'mes';
   const {desde, hasta} = periodoFechas(periodo);
 
-  // Base caja: pagos reales recibidos y realizados
-  const cobros  = state.pagos.filter(p => p.fecha>=desde && p.fecha<=hasta);
+  // Base caja: pagos reales recibidos y realizados.
+  // Entradas = cobros de clientes (erp_pagos, state.pagos).
+  // Salidas = pagos de facturas a proveedores (erp_pagos_oc, state.pagosOC)
+  // + anticipos a proveedores (erp_oc_anticipos, state.ocAnticipos). Antes
+  // solo se contaban los anticipos, así que el reporte se veía vacío para
+  // cualquier período sin anticipos aunque sí hubiera pagos de facturas
+  // reales — que son la salida de caja más común.
+  const cobros    = state.pagos.filter(p => p.fecha>=desde && p.fecha<=hasta);
+  const pagosProv = (state.pagosOC||[]).filter(p => p.fecha>=desde && p.fecha<=hasta);
   const anticipos = state.ocAnticipos.filter(a => a.fecha>=desde && a.fecha<=hasta);
 
   // Group by week
   const totalCobros   = cobros.reduce((s,p)=>s+Number(p.monto||0),0);
-  const totalPagos    = anticipos.reduce((s,a)=>s+Number(a.monto||0),0);
+  const totalPagos    = pagosProv.reduce((s,p)=>s+Number(p.monto||0),0) + anticipos.reduce((s,a)=>s+Number(a.monto||0),0);
   const flujoNeto     = totalCobros - totalPagos;
 
   // Monthly breakdown from pagos
@@ -13869,6 +14000,11 @@ function renderFlujoCaja() {
     const mes = (p.fecha||'').slice(0,7);
     if (!porMes[mes]) porMes[mes] = {cobros:0, pagos:0};
     porMes[mes].cobros += Number(p.monto||0);
+  });
+  pagosProv.forEach(p => {
+    const mes = (p.fecha||'').slice(0,7);
+    if (!porMes[mes]) porMes[mes] = {cobros:0, pagos:0};
+    porMes[mes].pagos += Number(p.monto||0);
   });
   anticipos.forEach(a => {
     const mes = (a.fecha||'').slice(0,7);
@@ -15598,7 +15734,11 @@ function verDetallePago(pagoId) {
             <div>${formaLabel}</div></div>
           <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Cuenta de Origen</span>
             <div>${cta?.name||'—'}</div></div>
-          <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Referencia</span>
+          <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Banco Destino</span>
+            <div>${prov?.banco||'—'}</div></div>
+          <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Cuenta</span>
+            <div style="font-family:'DM Mono',monospace">${prov?.num_cuenta||'—'}</div></div>
+          <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Referencia Banco</span>
             <div style="font-family:'DM Mono',monospace">${p.referencia||'—'}</div></div>
           <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Orden de Compra</span>
             <div style="font-family:'DM Mono',monospace">${oc?.numero||'—'}</div></div>
@@ -15718,7 +15858,9 @@ function imprimirPago(pagoId) {
         ${infoRow('Monto', fmtMoney(p.monto, p.moneda||'GTQ'))}
         ${infoRow('Forma de Pago', formaLabel)}
         ${infoRow('Cuenta de Origen', cta?.name)}
-        ${infoRow('Referencia', p.referencia)}
+        ${infoRow('Banco Destino', prov?.banco)}
+        ${infoRow('Cuenta', prov?.num_cuenta)}
+        ${infoRow('Referencia Banco', p.referencia)}
       </div>
     </div>
     ${p.notas ? `<div class="notas"><strong>Notas:</strong> ${p.notas}</div>` : ''}
@@ -15758,7 +15900,6 @@ function verFacturaOC(facturaId) {
   currentVerFacturaOCId = facturaId;
   const oc     = state.oc.find(o => o.id === f.oc_id);
   const prov   = state.proveedores.find(p => p.id === oc?.proveedor_id);
-  const compra = (state.compras||[]).find(c => c.factura_id === facturaId);
   const pagos  = (state.pagosOC||[]).filter(p => p.factura_id === facturaId);
   const pagado = pagos.reduce((s,p)=>s+Number(p.monto||0),0);
   const total  = Number(f.total||0);
@@ -15910,14 +16051,13 @@ function verFacturaOC(facturaId) {
   `;
 
   // Acciones del footer — mismas reglas que tenía el viewer anterior de
-  // Libro de Compras (verDetalleFactura(), ya eliminado): Editar solo si no
-  // está cancelada; Cancelar solo si no está cancelada, no está pagada y no
-  // tiene pagos registrados; Pagar solo si no está cancelada ni pagada
-  // (aunque también hay un botón "Pagar" independiente en el tab Facturas
-  // del panel de OC — este es para cuando se llega aquí desde Libro de
-  // Compras, que no tiene esa columna).
+  // Libro de Compras (verDetalleFactura(), ya eliminado), salvo "Editar
+  // Factura" que se quitó a pedido del usuario: Cancelar solo si no está
+  // cancelada, no está pagada y no tiene pagos registrados; Pagar solo si
+  // no está cancelada ni pagada (aunque también hay un botón "Pagar"
+  // independiente en el tab Facturas del panel de OC — este es para cuando
+  // se llega aquí desde Libro de Compras, que no tiene esa columna).
   document.getElementById('vfoc-footer-actions').innerHTML = `
-    ${compra && !esCancelada ? `<button class="btn btn-ghost btn-sm" onclick="closeModal('modal-ver-factura-oc');editCompra('${compra.id}')">✏️ Editar Factura</button>` : ''}
     ${!esCancelada && !esPagada && pagado<=0 ? `<button class="btn btn-danger btn-sm" onclick="closeModal('modal-ver-factura-oc');cancelarFacturaOC('${facturaId}')">✕ Cancelar Factura</button>` : ''}
     ${!esCancelada && !esPagada ? `<button class="btn btn-primary btn-sm" onclick="closeModal('modal-ver-factura-oc');openPagoOC('${facturaId}')">💳 Pagar Factura</button>` : ''}
   `;
@@ -16002,7 +16142,7 @@ function imprimirFacturaOC(facturaId) {
       .doc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;padding-bottom:18px;border-bottom:2px solid #101820}
       .brand{font-size:11px;color:#5E6470;margin-top:4px}
       .doc-num{font-size:26px;font-weight:700;color:#C84B2F;font-family:monospace}
-      .doc-fecha{font-size:11px;color:#5E6470;text-align:right;margin-top:4px}
+      .doc-footer{margin-top:32px;padding-top:12px;border-top:1px solid #E2E4E9;font-size:10px;color:#9EA4B0;text-align:center}
       .two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin:20px 0}
       .col-title{font-size:9px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:#9EA4B0;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #E2E4E9}
       .info-row{display:flex;flex-direction:column;margin-bottom:6px}
@@ -16030,8 +16170,7 @@ function imprimirFacturaOC(facturaId) {
         <div class="brand">TEXTILES CIRCULARES, S.A.</div>
       </div>
       <div style="text-align:right">
-        <div class="doc-num">${f.serie||''}${f.numero||''}</div>
-        <div class="doc-fecha">Fecha: ${fmtDate(f.fecha)}</div>
+        <div class="doc-num">${f.serie||''} - ${f.numero||''}</div>
       </div>
     </div>
 
@@ -16070,6 +16209,8 @@ function imprimirFacturaOC(facturaId) {
     <!-- SECCIÓN 2: INFORMACIÓN CONTABLE -->
     <div class="section-title">Información Contable — Asientos Generados</div>
     ${_facturaAsientosHTML(facturaId, true)}
+
+    <div class="doc-footer">Documento generado el ${fmtDate(f.fecha)}</div>
 
   </body></html>`);
   win.document.close();
@@ -16956,8 +17097,9 @@ async function confirmarRecepcionPL() {
     if (pn > 0) {
       const qtyEl = document.getElementById(`rec-qty-${prod}-${n}`);
       if (qtyEl) qtyEl.value = pn.toFixed(3);
-      const plQtyEl = document.getElementById(`rec-pl-qty-${n}`);
-      if (plQtyEl) plQtyEl.innerHTML = `<span style="color:var(--green);font-weight:700">${pn.toFixed(3)}</span> <span style="font-size:10px;color:var(--text3)">(${cajas.filter(c=>c.lote===lote&&c.recibido).length} cajas)</span>`;
+      // La columna "Del PL" que mostraba este subtotal por lote se eliminó
+      // del row (renderRecLoteRow) a pedido del usuario — "Recibir Ahora"
+      // (arriba) ya se autocompleta con este mismo valor.
     }
   });
 
@@ -17629,10 +17771,21 @@ function renderRecLoteRow(item, lote, cajasLote, ocId, savedItem=null) {
   const totalPN    = cajasLote.reduce((s,c)=>s+Number(c.peso_neto||0),0);
   const hasPL      = cajasLote.length > 0;
   const qtyValue   = savedItem?.cantidad ? Number(savedItem.cantidad).toFixed(3) : (hasPL ? totalPN.toFixed(3) : '');
-  const espValue   = savedItem?.cantidad_esperada ? Number(savedItem.cantidad_esperada).toFixed(3) : '';
+  // Cantidad Esperada por defecto = pendiente de recibir de esta OC para
+  // este producto (ordenado - recibido), no 0/vacío. item.cantidad viene
+  // pre-cargado cuando renderRecLoteRow() se llama desde renderRecLotes()
+  // (itera sobre state.ocItems); cuando se llama desde addRecLote() (botón
+  // "+ Agregar Lote") el item minimal que arma esa función no trae
+  // cantidad, así que se busca aquí en state.ocItems como respaldo.
+  const cantidadOrdenada = item.cantidad != null
+    ? Number(item.cantidad)
+    : Number((state.ocItems||[]).find(x => x.oc_id===ocId && x.producto_id===item.producto_id)?.cantidad || 0);
+  const recibidoOC = ocRecibidoQty(ocId, item.producto_id);
+  const pendienteOC = Math.max(0, cantidadOrdenada - recibidoOC);
+  const espValue   = savedItem?.cantidad_esperada ? Number(savedItem.cantidad_esperada).toFixed(3) : pendienteOC.toFixed(3);
   const plValue    = savedItem?.packing_num || '';
   return `
-  <div id="rec-lote-row-${n}" style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr 1fr 1fr;gap:10px;align-items:end;padding:8px 0;border-bottom:1px solid var(--border)">
+  <div id="rec-lote-row-${n}" style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr 1fr;gap:10px;align-items:end;padding:8px 0;border-bottom:1px solid var(--border)">
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Lote</div>
       <input type="text" id="rec-lote-val-${n}" value="${lote||''}" placeholder="Número de lote"
@@ -17651,12 +17804,6 @@ function renderRecLoteRow(item, lote, cajasLote, ocId, savedItem=null) {
         value="${espValue}"
         style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"
         oninput="calcRecVerificacion()"/>
-    </div>
-    <div>
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Del PL</div>
-      <div id="rec-pl-qty-${n}" style="padding:6px 10px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:${hasPL?'var(--green)':'var(--text3)'}">
-        ${hasPL ? totalPN.toFixed(3)+' '+item.unidad+'<span style="font-size:10px;font-weight:400;color:var(--text3)"> ('+cajasLote.length+' cajas)</span>' : '—'}
-      </div>
     </div>
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Recibir Ahora</div>
