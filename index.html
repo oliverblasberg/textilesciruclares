@@ -7114,6 +7114,25 @@ function bancoNomenclatura(cuentaId) {
   return (state.nomenclatura||[]).find(n => n.tipo === 'Banco y efectivo');
 }
 
+// Cuenta transitoria ("Pendiente de Confirmar") usada mientras un pago
+// (erp_pagos) no ha sido confirmado contra el extracto bancario — ver
+// discusión de diseño del módulo de Conciliación Bancaria. Se resuelve UNA
+// cuenta por moneda y por dirección de flujo (pago a proveedor vs. cobro de
+// cliente), NO una por banco — el banco específico de destino/origen ya se
+// conserva en erp_pagos.cuenta_id, así que el reporte de conciliación sigue
+// pudiendo distinguir a qué banco pertenece cada pago sin necesitar una
+// cuenta contable por banco. Mismo patrón que "Outstanding Payments" /
+// "Outstanding Receipts" de Odoo.
+function transitoriaNomenclatura(moneda, direccion) {
+  const codigos = {
+    pago:  { GTQ: '21102051', USD: '21102052' }, // Pagos Pendientes
+    cobro: { GTQ: '11206001', USD: '11206002' }, // Cobros Pendientes
+  };
+  const porDireccion = codigos[direccion] || {};
+  const codigo = porDireccion[moneda] || porDireccion.GTQ;
+  return (state.nomenclatura||[]).find(n => n.codigo === codigo);
+}
+
 // Construye las líneas del asiento que se generará para el pago actual del
 // modal — lee directamente los campos del formulario. Es la MISMA función que
 // usa savePago() al grabar y el tab "Información Contable" para previsualizar
@@ -7123,45 +7142,50 @@ function bancoNomenclatura(cuentaId) {
 // preview lo indica explícitamente en vez de mostrar algo inventado.
 //
 // Moneda: el monto en el formulario está en la moneda de la OC/factura (ver
-// _pagoSetMoneda), NO siempre en GTQ. Las líneas del asiento se generan ya
-// convertidas a GTQ (usando el TC de la fecha de pago), igual que hace
-// asientoAnticipoOC() — el asiento en sí siempre se graba con moneda:'GTQ' y
-// tipo_cambio explícito; el diferencial cambiario contra la factura original
-// (si el TC cambió) se registra aparte en savePago() vía
-// asientoDiferencialCambiario(), no dentro de estas líneas.
+// _pagoSetMoneda), NO siempre en GTQ — y tanto la cuenta de Cuentas x Pagar
+// como la cuenta de Banco pueden estar configuradas en la nomenclatura con
+// moneda propia (ej. un banco en USD). Por eso estas líneas se devuelven en
+// SU MONEDA ORIGINAL (sin convertir) — es crearAsiento() quien, recibiendo
+// `moneda` a nivel de asiento, hace la conversión a GTQ para el balance
+// (debe_gtq/haber_gtq) Y conserva el monto real por línea (monto_orig/
+// moneda_orig) para poder conciliar la cuenta bancaria contra su propio
+// estado de cuenta en USD — igual patrón que buildLineasFacturaCompra() /
+// asientoFacturaCompra(). El diferencial cambiario contra la factura
+// original (si el TC del día de pago difiere del TC de la factura) se
+// registra aparte en savePago() vía asientoDiferencialCambiario().
 function buildLineasPago() {
   const modo      = document.getElementById('pago-modo').value;
   const tipo      = document.getElementById('pago-factura-id').dataset.tipo;
   const facturaId = document.getElementById('pago-factura-id').value;
   const cuenta_id = document.getElementById('pago-cuenta-origen').value;
   const monto     = parseFloat(document.getElementById('pago-monto').value) || 0;
-  const fecha     = document.getElementById('pago-fecha').value || today();
-  const moneda    = document.getElementById('pago-factura-id').dataset.moneda || 'GTQ';
-  const esUSD     = moneda === 'USD';
-  const tc        = esUSD ? getTCFecha(fecha) : 1;
 
   if (tipo !== 'OC' || !cuenta_id || !monto) return [];
 
   const cuentaBancaria = (state.cuentas||[]).find(c => c.id === cuenta_id);
-  const ctaBancoNom    = bancoNomenclatura(cuenta_id);
+  // El pago NO se contabiliza directo contra el banco — se contabiliza contra
+  // la cuenta transitoria "Pagos Pendientes" de su moneda. Solo cuando el
+  // extracto bancario confirma el movimiento (vincularManual()/
+  // autoMatchConciliacion() → asientoConfirmacionBancaria()) se genera el
+  // segundo asiento que mueve el monto de la transitoria al banco real.
+  const ctaTransitoria = transitoriaNomenclatura(cuentaBancaria?.moneda || 'GTQ', 'pago');
 
   if (modo === 'single') {
     const f = state.ocFacturas.find(x => x.id === facturaId);
     if (!f) return [];
     const ctaPorPagar = ctaPorPagarOC(f.oc_id);
-    const montoGTQ = esUSD ? parseFloat((monto*tc).toFixed(4)) : monto;
     return [
-      { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: montoGTQ, haber: 0, descripcion: `${f.serie||''}${f.numero||''}${esUSD?` (USD ${monto.toFixed(2)} × Q${tc.toFixed(4)})`:''}` },
-      { cuenta_id: ctaBancoNom?.id||null, cuenta_codigo: ctaBancoNom?.codigo||'BANCO', cuenta_nombre: cuentaBancaria?.name||ctaBancoNom?.nombre||'Banco', debe: 0, haber: montoGTQ },
+      { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: monto, haber: 0, descripcion: `${f.serie||''}${f.numero||''}` },
+      { cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: 0, haber: monto, descripcion: `Pendiente de confirmar — ${cuentaBancaria?.name||''}` },
     ];
   }
 
   // Multi-factura — una línea de CxP por factura (puede caer en cuentas
   // distintas si las facturas son de proveedores/monedas distintas) + una
-  // sola línea de banco por el monto total escrito en el formulario. Todas
-  // las facturas de un mismo pago múltiple comparten moneda (validado al
-  // abrir el modal en openPagoProveedor()/openPagoDesdeCompras()), así que
-  // se usa el mismo TC para todas.
+  // sola línea de la cuenta transitoria por el monto total escrito en el
+  // formulario. Todas las facturas de un mismo pago múltiple comparten
+  // moneda (validado al abrir el modal en openPagoProveedor()/
+  // openPagoDesdeCompras()).
   const distribs = [];
   document.querySelectorAll('#pago-dist-tbody input').forEach(el => {
     const v = parseFloat(el.value)||0;
@@ -7172,11 +7196,9 @@ function buildLineasPago() {
   const lineas = distribs.map(d => {
     const f = state.ocFacturas.find(x => x.id === d.factura_id);
     const ctaPorPagar = ctaPorPagarOC(f?.oc_id);
-    const dMontoGTQ = esUSD ? parseFloat((d.monto*tc).toFixed(4)) : d.monto;
-    return { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: dMontoGTQ, haber: 0, descripcion: `${f?.serie||''}${f?.numero||''}${esUSD?` (USD ${d.monto.toFixed(2)})`:''}` };
+    return { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: d.monto, haber: 0, descripcion: `${f?.serie||''}${f?.numero||''}` };
   });
-  const montoTotalGTQ = esUSD ? parseFloat((monto*tc).toFixed(4)) : monto;
-  lineas.push({ cuenta_id: ctaBancoNom?.id||null, cuenta_codigo: ctaBancoNom?.codigo||'BANCO', cuenta_nombre: cuentaBancaria?.name||ctaBancoNom?.nombre||'Banco', debe: 0, haber: montoTotalGTQ, descripcion: 'Pago múltiple' });
+  lineas.push({ cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: 0, haber: monto, descripcion: `Pago múltiple — pendiente de confirmar (${cuentaBancaria?.name||''})` });
   return lineas;
 }
 
@@ -7216,12 +7238,18 @@ function renderPagoApuntesPreview() {
     return;
   }
 
+  // buildLineasPago() devuelve los montos en la moneda ORIGINAL de la
+  // factura/OC (sin convertir) — es crearAsiento() quien, al grabar, calcula
+  // el equivalente en GTQ (debe_gtq/haber_gtq) y conserva el monto real por
+  // línea (monto_orig/moneda_orig), igual que ya se ve en el Diario Mayor.
+  // Aquí en la previsualización mostramos ambas cosas: el monto real (en su
+  // moneda) y, si es USD, su equivalente en GTQ al TC del día de pago.
   const lineas = buildLineasPago();
+  const fecha  = document.getElementById('pago-fecha')?.value || today();
+  const tc     = moneda === 'USD' ? getTCFecha(fecha) : 1;
 
   if (moneda === 'USD') {
-    const fecha = document.getElementById('pago-fecha')?.value || today();
-    const tc    = getTCFecha(fecha);
-    if (tcNote) tcNote.textContent = `Factura en USD — el asiento se registra en GTQ usando el TC del ${fmtDate(fecha)} (Q${tc.toFixed(4)}). Si el TC de la factura original era distinto, se genera además un asiento de diferencial cambiario.`;
+    if (tcNote) tcNote.textContent = `Factura en USD — el asiento se registra con su monto real en USD (para conciliar la cuenta bancaria) y su equivalente en GTQ al TC del ${fmtDate(fecha)} (Q${tc.toFixed(4)}). Si el TC de la factura original era distinto, se genera además un asiento de diferencial cambiario.`;
   } else if (tcNote) tcNote.textContent = '';
 
   if (!lineas.length) {
@@ -7238,16 +7266,18 @@ function renderPagoApuntesPreview() {
   tbody.innerHTML = lineas.map(l => {
     totalDebe  += Number(l.debe||0);
     totalHaber += Number(l.haber||0);
+    const debeGTQ  = Number(l.debe||0)  > 0 ? parseFloat((Number(l.debe||0)*tc).toFixed(4))  : 0;
+    const haberGTQ = Number(l.haber||0) > 0 ? parseFloat((Number(l.haber||0)*tc).toFixed(4)) : 0;
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:7px 12px;font-size:12px;font-family:'DM Mono',monospace">${l.cuenta_codigo||'—'} ${l.cuenta_nombre||''}</td>
-      <td style="padding:7px 12px;font-size:12px;color:var(--text3)">${l.descripcion||'—'}</td>
-      <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.debe||0)>0  ? fmtGTQ(Number(l.debe||0))  : ''}</td>
-      <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.haber||0)>0 ? fmtGTQ(Number(l.haber||0)) : ''}</td>
+      <td style="padding:7px 12px;font-size:12px;color:var(--text3)">${l.descripcion||'—'}${moneda==='USD'?`<div style="font-size:10px">${Number(l.debe||0)>0?fmtGTQ(debeGTQ):Number(l.haber||0)>0?fmtGTQ(haberGTQ):''}</div>`:''}</td>
+      <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.debe||0)>0  ? fmtMoney(Number(l.debe||0), moneda)  : ''}</td>
+      <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.haber||0)>0 ? fmtMoney(Number(l.haber||0), moneda) : ''}</td>
     </tr>`;
   }).join('');
 
-  document.getElementById('pago-total-debe').textContent  = fmtGTQ(totalDebe);
-  document.getElementById('pago-total-haber').textContent = fmtGTQ(totalHaber);
+  document.getElementById('pago-total-debe').textContent  = fmtMoney(totalDebe, moneda);
+  document.getElementById('pago-total-haber').textContent = fmtMoney(totalHaber, moneda);
 
   const cuadra = Math.abs(totalDebe - totalHaber) < 0.01;
   document.getElementById('pago-total-debe').style.color  = cuadra ? '' : 'var(--red)';
@@ -7515,8 +7545,14 @@ async function savePago() {
       const prov = state.proveedores.find(p=>p.id===document.getElementById('pago-proveedor-id').value);
 
       const num_pago = document.getElementById('pago-factura-id').dataset.numPago || nextNumPago();
+      // OJO: la columna real en erp_pagos se llama "forma", no "metodo" — un
+      // desajuste de nombre que hacía fallar CADA intento de guardar un pago
+      // (Supabase rechaza inserts con columnas inexistentes). erp_pagos
+      // también carecía de "moneda" y "referencia" — se agregaron vía
+      // migración (fix_erp_pagos_columnas_faltantes) para que este insert,
+      // que ya las esperaba, funcione de verdad.
       const { error: ePago } = await sb.from('erp_pagos').insert({
-        factura_id: facturaId, fecha, metodo, cuenta_id, monto, referencia, num_pago,
+        factura_id: facturaId, fecha, forma: metodo, cuenta_id, monto, referencia, num_pago,
         notas: [notas, bancoInfo?`Banco: ${bancoInfo}`:''].filter(Boolean).join(' | ') || null,
         moneda,
       });
@@ -7545,11 +7581,15 @@ async function savePago() {
         }
       }
 
-      // Accounting entry — mismas líneas que se mostraron en el tab "Información Contable"
+      // Accounting entry — mismas líneas que se mostraron en el tab "Información Contable".
+      // moneda: la real de la factura/OC (no forzada a GTQ) — así crearAsiento()
+      // calcula el equivalente en GTQ para el balance Y conserva el monto real
+      // por línea (monto_orig/moneda_orig), necesario para poder conciliar la
+      // cuenta bancaria de origen cuando está configurada en USD.
       await crearAsiento({
         diario:'BANCOS', fecha,
-        descripcion: `Pago factura ${f?.serie||''}${f?.numero||''} — ${prov?.name||''} | ${metodo}${referencia?' Ref:'+referencia:''}${esUSD?` | USD ${monto.toFixed(2)}`:''}`,
-        referencia: referencia||`PAGO-${f?.serie||''}${f?.numero||''}`, referencia_id: null, moneda:'GTQ',
+        descripcion: `Pago factura ${f?.serie||''}${f?.numero||''} — ${prov?.name||''} | ${metodo}${referencia?' Ref:'+referencia:''}`,
+        referencia: referencia||`PAGO-${f?.serie||''}${f?.numero||''}`, referencia_id: null, moneda,
         lineas: buildLineasPago(),
       });
 
@@ -7581,7 +7621,7 @@ async function savePago() {
         await sb.from('erp_pagos').insert({
           factura_id: d.factura_id,
           num_pago: num_pago_multi,
-          fecha, metodo, cuenta_id, monto: d.monto, referencia, notas, moneda,
+          fecha, forma: metodo, cuenta_id, monto: d.monto, referencia, notas, moneda,
         });
         // Update factura estado
         const pagosAnt = (state.pagosOC||[]).filter(p=>p.factura_id===d.factura_id);
@@ -7607,8 +7647,8 @@ async function savePago() {
 
       await crearAsiento({
         diario:'BANCOS', fecha,
-        descripcion: `Pago múltiple ${distribs.length} facturas — ${(state.proveedores||[]).find(p=>p.id===provId)?.name||''}${referencia?' Ref:'+referencia:''}${esUSD?` | USD ${monto.toFixed(2)}`:''}`,
-        referencia: referencia||`PAGO-MULTI-${fecha}`, referencia_id: null, moneda:'GTQ',
+        descripcion: `Pago múltiple ${distribs.length} facturas — ${(state.proveedores||[]).find(p=>p.id===provId)?.name||''}${referencia?' Ref:'+referencia:''}`,
+        referencia: referencia||`PAGO-MULTI-${fecha}`, referencia_id: null, moneda,
         lineas: buildLineasPago(),
       });
 
@@ -7618,7 +7658,7 @@ async function savePago() {
     }
   } else {
     // OV pago (original logic)
-    const {error} = await sb.from('erp_pagos').insert({ factura_id: facturaId, fecha, metodo, cuenta_id, monto, notas });
+    const {error} = await sb.from('erp_pagos').insert({ factura_id: facturaId, fecha, forma: metodo, cuenta_id, monto, notas });
     if (error) { toast('Error: '+error.message,'error'); return; }
     await loadAll();
     const f      = state.facturas.find(x=>x.id===facturaId);
@@ -7817,7 +7857,10 @@ async function autoMatchConciliacion(cuentaIdParam) {
         const { error } = await sb.from('erp_extracto_bancario').update({
           pago_id: mejor.pago.id, estado: 'conciliado', match_tipo: 'auto', conciliado_at: new Date().toISOString(),
         }).eq('id', linea.id);
-        if (!error) totalMatched++;
+        if (!error) {
+          totalMatched++;
+          await asientoConfirmacionBancaria(mejor.pago.id, linea.fecha);
+        }
       }
     }
   }
@@ -8042,11 +8085,114 @@ function openConciliarManual(extractoId) {
   openModal('modal-conciliar-manual');
 }
 
+// Dirección real de un pago (erp_pagos): 'egreso' si paga una factura de
+// compra (OC, dinero sale), 'ingreso' si cobra una factura de venta (OV,
+// dinero entra). null si no se puede determinar (no debería pasar en datos
+// sanos, pero se contempla por seguridad). Mismo criterio que signedPagoMonto().
+function _direccionPago(pago) {
+  if ((state.ocFacturas||[]).some(f => f.id === pago.factura_id)) return 'egreso';
+  if ((state.facturas||[]).some(f => f.id === pago.factura_id)) return 'ingreso';
+  return null;
+}
+
+// ¿Hay una confirmación bancaria vigente para este pago? (>0 = sí). Compara
+// cuántos asientos de confirmación se han generado contra cuántos se han
+// revertido (deshacerConciliacion()) — así asientoConfirmacionBancaria() es
+// idempotente y reversoConfirmacionBancaria() sabe si hay algo que revertir.
+function _saldoConfirmacionPago(pagoId) {
+  const confirmados = (state.asientos||[]).filter(a => a.referencia_id === pagoId && a.diario === 'CONCILIACION').length;
+  const revertidos  = (state.asientos||[]).filter(a => a.referencia_id === pagoId && a.diario === 'CONCILIACION-REVERSO').length;
+  return confirmados - revertidos;
+}
+
+// Líneas del asiento que mueve el monto entre la cuenta transitoria y el
+// banco real — compartidas entre asientoConfirmacionBancaria() (Debe/Haber
+// normal) y reversoConfirmacionBancaria() (invertidas), para que ambas
+// nunca puedan quedar desincronizadas entre sí.
+function _lineasConfirmacionBancaria(cuenta, ctaBanco, ctaTransitoria, monto, esEgreso) {
+  return esEgreso ? [
+    { cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: monto, haber: 0, descripcion: 'Confirmado por banco' },
+    { cuenta_id: ctaBanco?.id||null,       cuenta_codigo: ctaBanco?.codigo||'BANCO',            cuenta_nombre: cuenta?.name||'Banco', debe: 0, haber: monto, descripcion: 'Salida confirmada' },
+  ] : [
+    { cuenta_id: ctaBanco?.id||null,       cuenta_codigo: ctaBanco?.codigo||'BANCO',            cuenta_nombre: cuenta?.name||'Banco', debe: monto, haber: 0, descripcion: 'Entrada confirmada' },
+    { cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'COBROS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Cobros Pendientes', debe: 0, haber: monto, descripcion: 'Confirmado por banco' },
+  ];
+}
+
+// Segundo asiento del patrón de cuenta transitoria: se dispara cuando un
+// pago (erp_pagos) queda vinculado con certeza a una línea del extracto
+// bancario (vincularManual() o autoMatchConciliacion()) — mueve el monto de
+// la cuenta "Pendiente de Confirmar" a la cuenta real del banco. Idempotente
+// vía _saldoConfirmacionPago(): no duplica la confirmación si ya hay una
+// vigente. No genera nada si no se puede determinar la dirección del pago
+// (evita adivinar y dejar un asiento mal formado).
+async function asientoConfirmacionBancaria(pagoId, fechaConfirmacion) {
+  const pago = (state.pagos||[]).find(p => p.id === pagoId);
+  if (!pago) return;
+  if (_saldoConfirmacionPago(pagoId) > 0) return;
+
+  const direccion = _direccionPago(pago);
+  if (!direccion) return;
+
+  const cuenta = (state.cuentas||[]).find(c => c.id === pago.cuenta_id);
+  const moneda = cuenta?.moneda || 'GTQ';
+  const monto  = Number(pago.monto||0);
+  if (!monto) return;
+
+  const esEgreso       = direccion === 'egreso';
+  const ctaBanco       = bancoNomenclatura(pago.cuenta_id);
+  const ctaTransitoria = transitoriaNomenclatura(moneda, esEgreso ? 'pago' : 'cobro');
+
+  await crearAsiento({
+    diario: 'CONCILIACION', fecha: fechaConfirmacion || pago.fecha,
+    descripcion: `Confirmación bancaria — ${cuenta?.name||'Banco'}`,
+    referencia: 'Conciliación de pago', referencia_id: pagoId,
+    moneda,
+    lineas: _lineasConfirmacionBancaria(cuenta, ctaBanco, ctaTransitoria, monto, esEgreso),
+  });
+}
+
+// Reverso del asiento anterior — se dispara desde deshacerConciliacion()
+// cuando se desvincula un pago que ya tenía una confirmación bancaria
+// vigente. Se registra como un asiento NUEVO con Debe/Haber invertidos (no
+// se edita ni se borra el asiento original) — es la práctica contable
+// correcta y mantiene el rastro de auditoría completo.
+async function reversoConfirmacionBancaria(pagoId, fecha) {
+  const pago = (state.pagos||[]).find(p => p.id === pagoId);
+  if (!pago) return;
+  if (_saldoConfirmacionPago(pagoId) <= 0) return;
+
+  const direccion = _direccionPago(pago);
+  if (!direccion) return;
+
+  const cuenta = (state.cuentas||[]).find(c => c.id === pago.cuenta_id);
+  const moneda = cuenta?.moneda || 'GTQ';
+  const monto  = Number(pago.monto||0);
+  if (!monto) return;
+
+  const esEgreso       = direccion === 'egreso';
+  const ctaBanco       = bancoNomenclatura(pago.cuenta_id);
+  const ctaTransitoria = transitoriaNomenclatura(moneda, esEgreso ? 'pago' : 'cobro');
+
+  const lineasBase = _lineasConfirmacionBancaria(cuenta, ctaBanco, ctaTransitoria, monto, esEgreso);
+  const lineasReversas = lineasBase.map(l => ({ ...l, debe: l.haber, haber: l.debe, descripcion: 'Reverso — ' + (l.descripcion||'') }));
+
+  await crearAsiento({
+    diario: 'CONCILIACION-REVERSO', fecha: fecha || today(),
+    descripcion: `Reverso de confirmación bancaria — ${cuenta?.name||'Banco'}`,
+    referencia: 'Deshacer conciliación', referencia_id: pagoId,
+    moneda,
+    lineas: lineasReversas,
+  });
+}
+
 async function vincularManual(extractoId, pagoId) {
+  const linea = (state.extractoBancario||[]).find(l => l.id === extractoId);
   const { error } = await sb.from('erp_extracto_bancario').update({
     pago_id: pagoId, estado:'conciliado', match_tipo:'manual', conciliado_at: new Date().toISOString(), motivo_ignorado: null,
   }).eq('id', extractoId);
   if (error) { toast('Error: '+error.message,'error'); return; }
+  await asientoConfirmacionBancaria(pagoId, linea?.fecha);
   toast('✓ Línea conciliada');
   closeModal('modal-conciliar-manual');
   await loadAll();
@@ -8069,10 +8215,17 @@ async function ignorarLineaExtracto() {
 
 async function deshacerConciliacion(extractoId) {
   if (!confirm('¿Deshacer la conciliación de esta línea? Volverá a quedar pendiente.')) return;
+  const linea = (state.extractoBancario||[]).find(l => l.id === extractoId);
+  const pagoIdPrevio = linea?.pago_id || null;
   const { error } = await sb.from('erp_extracto_bancario').update({
     estado:'pendiente', pago_id:null, match_tipo:null, motivo_ignorado:null, conciliado_at:null,
   }).eq('id', extractoId);
   if (error) { toast('Error: '+error.message,'error'); return; }
+  // Si el pago ya tenía una confirmación bancaria vigente (Debe/Haber contra
+  // el banco real), hay que revertirla — si no, el dinero quedaría "salido
+  // del banco" en la contabilidad aunque la conciliación que lo confirmaba
+  // se acaba de deshacer.
+  if (pagoIdPrevio) await reversoConfirmacionBancaria(pagoIdPrevio, today());
   toast('Conciliación deshecha');
   await loadAll();
   renderConciliacion();
@@ -12845,17 +12998,22 @@ async function crearAsiento({ diario, fecha, descripcion, referencia, referencia
 }
 
 // 1. VENTA — Al publicar factura de venta (con conversión USD→GTQ)
+// moneda: 'GTQ' o 'USD' — la de la factura/cliente, NUNCA forzada a GTQ. Las
+// líneas se arman con los montos en SU MONEDA ORIGINAL (sin convertir); es
+// crearAsiento() quien, recibiendo esa moneda a nivel de asiento, calcula el
+// equivalente en GTQ por línea (debe_gtq/haber_gtq, para el balance general)
+// Y conserva el monto real (monto_orig/moneda_orig) — necesario para poder
+// conciliar Cuentas x Cobrar o una cuenta bancaria cuando están configuradas
+// en USD en la nomenclatura. Mismo patrón que buildLineasFacturaCompra()/
+// buildLineasPago().
 async function asientoFacturaVenta(facturaId) {
   const f = state.facturas.find(x => x.id === facturaId);
   if (!f) return;
   const cliente   = state.clientes.find(c => c.id === f.customer_id);
   const monedaCli = cliente?.moneda || 'GTQ';
-  const esUSD     = monedaCli === 'USD';
   const totalOrig = Number(f.total||0);
-  const tc        = getTCFecha(f.date);
-  const totalGTQ  = esUSD ? totalOrig * tc : totalOrig;
-  const ivaGTQ    = totalGTQ - (totalGTQ / 1.12);
-  const netoGTQ   = totalGTQ - ivaGTQ;
+  const ivaOrig   = totalOrig - (totalOrig / 1.12);
+  const netoOrig  = totalOrig - ivaOrig;
 
   const ctaPorCobrar = state.nomenclatura.find(n => n.tipo === 'Por cobrar');
   const ctaIngresos  = state.nomenclatura.find(n => n.tipo === 'Ingreso');
@@ -12864,13 +13022,13 @@ async function asientoFacturaVenta(facturaId) {
 
   await crearAsiento({
     diario: 'VENTAS', fecha: f.date,
-    descripcion: `Factura ${f.serie||''}${f.invoice_number} — ${cliente?.name||''}${esUSD ? ` | USD ${totalOrig.toFixed(2)} × Q${tc.toFixed(4)}` : ''}`,
+    descripcion: `Factura ${f.serie||''}${f.invoice_number} — ${cliente?.name||''}`,
     referencia: `Factura ${f.invoice_number}`, referencia_id: facturaId,
-    moneda: 'GTQ', tipo_cambio: esUSD ? tc : 1,
+    moneda: monedaCli,
     lineas: [
-      { cuenta_id: ctaPorCobrar?.id||null, cuenta_codigo: ctaPorCobrar?.codigo||'POR COBRAR', cuenta_nombre: ctaPorCobrar?.nombre||'Cuentas x Cobrar', debe: totalGTQ, haber: 0, descripcion: `Factura ${f.invoice_number}${esUSD?` (USD ${totalOrig.toFixed(2)})`:''}`  },
-      { cuenta_id: ctaIngresos?.id||null,  cuenta_codigo: ctaIngresos?.codigo||'INGRESOS',    cuenta_nombre: ctaIngresos?.nombre||'Ingresos por Ventas', debe: 0, haber: netoGTQ, descripcion: 'Ingreso neto en GTQ' },
-      { cuenta_id: ctaIVA?.id||null,       cuenta_codigo: ctaIVA?.codigo||'IVA-POR-PAGAR',   cuenta_nombre: ctaIVA?.nombre||'IVA por Pagar', debe: 0, haber: ivaGTQ, descripcion: 'IVA 12%' },
+      { cuenta_id: ctaPorCobrar?.id||null, cuenta_codigo: ctaPorCobrar?.codigo||'POR COBRAR', cuenta_nombre: ctaPorCobrar?.nombre||'Cuentas x Cobrar', debe: totalOrig, haber: 0, descripcion: `Factura ${f.invoice_number}` },
+      { cuenta_id: ctaIngresos?.id||null,  cuenta_codigo: ctaIngresos?.codigo||'INGRESOS',    cuenta_nombre: ctaIngresos?.nombre||'Ingresos por Ventas', debe: 0, haber: netoOrig, descripcion: 'Ingreso neto' },
+      { cuenta_id: ctaIVA?.id||null,       cuenta_codigo: ctaIVA?.codigo||'IVA-POR-PAGAR',   cuenta_nombre: ctaIVA?.nombre||'IVA por Pagar', debe: 0, haber: ivaOrig, descripcion: 'IVA 12%' },
     ],
   });
 }
@@ -12885,24 +13043,32 @@ async function asientoPagoVenta(pagoId) {
   const monedaCli = cliente?.moneda || 'GTQ';
   const esUSD     = monedaCli === 'USD';
   const montoOrig = Number(pg.monto||0);
-  const tcCobro   = getTCFecha(pg.fecha);
-  const montoGTQ  = esUSD ? montoOrig * tcCobro : montoOrig;
 
   const ctaPorCobrar = state.nomenclatura.find(n => n.tipo === 'Por cobrar');
-  const ctaBanco     = bancoNomenclatura(pg.cuenta_id);
+  // El cobro NO se contabiliza directo contra el banco — se contabiliza
+  // contra la cuenta transitoria "Cobros Pendientes" de su moneda. El
+  // segundo asiento (Debe Banco real / Haber Cobros Pendientes) se genera
+  // recién cuando el extracto bancario confirma el ingreso, vía
+  // asientoConfirmacionBancaria() (ver vincularManual()/autoMatchConciliacion()).
+  const ctaTransitoria = transitoriaNomenclatura(cuenta?.moneda || monedaCli, 'cobro');
 
   await crearAsiento({
     diario: 'COBROS', fecha: pg.fecha,
-    descripcion: `Cobro factura ${factura?.invoice_number||''} — ${cuenta?.name||''}${esUSD ? ` | USD ${montoOrig.toFixed(2)} × Q${tcCobro.toFixed(4)}` : ''}`,
+    descripcion: `Cobro factura ${factura?.invoice_number||''} — ${cuenta?.name||''}`,
     referencia: `Pago factura ${factura?.invoice_number||''}`, referencia_id: pagoId,
-    moneda: 'GTQ', tipo_cambio: esUSD ? tcCobro : 1,
+    moneda: monedaCli,
     lineas: [
-      { cuenta_id: ctaBanco?.id||null,     cuenta_codigo: ctaBanco?.codigo||'BANCO',      cuenta_nombre: cuenta?.name||'Banco/Caja', debe: montoGTQ, haber: 0, descripcion: `Cobro recibido${esUSD?` USD ${montoOrig.toFixed(2)}`:''}` },
-      { cuenta_id: ctaPorCobrar?.id||null, cuenta_codigo: ctaPorCobrar?.codigo||'COBRAR', cuenta_nombre: ctaPorCobrar?.nombre||'Cuentas x Cobrar', debe: 0, haber: montoGTQ, descripcion: 'Cancelación x cobrar' },
+      { cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'COBROS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Cobros Pendientes', debe: montoOrig, haber: 0, descripcion: `Pendiente de confirmar — ${cuenta?.name||''}` },
+      { cuenta_id: ctaPorCobrar?.id||null, cuenta_codigo: ctaPorCobrar?.codigo||'COBRAR', cuenta_nombre: ctaPorCobrar?.nombre||'Cuentas x Cobrar', debe: 0, haber: montoOrig, descripcion: 'Cancelación x cobrar' },
     ],
   });
 
-  // Diferencial cambiario — solo si la factura es en USD
+  // Diferencial cambiario — compara el TC del día de cobro contra el TC
+  // vigente cuando se emitió la factura (independiente de la conversión que
+  // ya hace crearAsiento línea por línea; esto corrige el desfase acumulado
+  // en el saldo de Cuentas x Cobrar cuando el TC cambió entre ambas fechas).
+  // Solo aplica si la factura es en USD.
+  const tcCobro = getTCFecha(pg.fecha);
   if (esUSD && factura?.date) {
     const tcFactura = getTCFecha(factura.date);
     if (Math.abs(tcCobro - tcFactura) > 0.0001) {
@@ -13040,6 +13206,20 @@ async function asientoFacturaCompra(ocFacturaId) {
 }
 
 // 4. PAGO PROVEEDOR — Anticipo OC con diferencial cambiario
+// moneda: monedaProv (la de la OC), no forzada a GTQ — misma razón que en
+// asientoFacturaVenta/asientoPagoVenta/buildLineasPago: la cuenta de Banco
+// (o de Anticipos) puede estar configurada en USD en la nomenclatura, y
+// necesita su monto real (moneda_orig/monto_orig) para poder conciliarse,
+// además del equivalente en GTQ que ya calcula crearAsiento() para el
+// balance general.
+//
+// NOTA — a diferencia de buildLineasPago()/asientoPagoVenta(), este asiento
+// SÍ sigue contabilizando directo contra el banco (no contra una cuenta
+// transitoria). Motivo: erp_extracto_bancario.pago_id solo referencia
+// erp_pagos, no erp_oc_anticipos — hoy no hay forma de vincular un anticipo
+// a una línea del extracto bancario, así que si se contabilizara contra la
+// transitoria, ese saldo nunca se limpiaría. Pendiente: extender la
+// conciliación bancaria para soportar anticipos y homologar este asiento.
 async function asientoAnticipoOC(anticipoId) {
   const ant    = state.ocAnticipos.find(x => x.id === anticipoId);
   if (!ant) return;
@@ -13049,16 +13229,18 @@ async function asientoAnticipoOC(anticipoId) {
   const monedaProv = getMonedaOC(oc?.id);
   const esUSD      = monedaProv === 'USD';
   const montoOrig  = Number(ant.monto||0);
-  const tcPago     = getTCFecha(ant.fecha);
-  const montoGTQ   = esUSD ? montoOrig * tcPago : montoOrig;
 
   const ctaBanco    = bancoNomenclatura(ant.cuenta_id);
   const ctaAnticipo = state.nomenclatura.find(n => n.codigo === '11204001')
     || state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('anticipo') && (n.nombre||'').toLowerCase().includes('proveedor'));
 
-  // Si hay factura previa de OC, calcular diferencial
+  // Si hay factura previa de OC, calcular diferencial cambiario (desfase
+  // entre el TC vigente cuando se emitió la factura y el TC del día del
+  // anticipo) — independiente de la conversión GTQ que hace crearAsiento
+  // línea por línea.
   const facturaOC = state.ocFacturas.find(f => f.oc_id === oc?.id);
   if (esUSD && facturaOC?.fecha) {
+    const tcPago    = getTCFecha(ant.fecha);
     const tcFactura = getTCFecha(facturaOC.fecha);
     if (Math.abs(tcPago - tcFactura) > 0.0001) {
       await asientoDiferencialCambiario({
@@ -13075,12 +13257,12 @@ async function asientoAnticipoOC(anticipoId) {
 
   await crearAsiento({
     diario: 'PAGOS', fecha: ant.fecha,
-    descripcion: `Anticipo a ${prov?.name||'Proveedor'} — ${oc?.numero||''}${esUSD ? ` | USD ${montoOrig.toFixed(2)} × Q${tcPago.toFixed(4)}` : ''}`,
+    descripcion: `Anticipo a ${prov?.name||'Proveedor'} — ${oc?.numero||''}`,
     referencia: `Anticipo OC ${oc?.numero||''}`, referencia_id: anticipoId,
-    moneda: 'GTQ', tipo_cambio: esUSD ? tcPago : 1,
+    moneda: monedaProv,
     lineas: [
-      { cuenta_id: ctaAnticipo?.id||null, cuenta_codigo: ctaAnticipo?.codigo||'ANTICIPOS', cuenta_nombre: ctaAnticipo?.nombre||'Anticipos a Proveedores', debe: montoGTQ, haber: 0, descripcion: `Anticipo${esUSD?` USD ${montoOrig.toFixed(2)}`:''}` },
-      { cuenta_id: ctaBanco?.id||null,    cuenta_codigo: ctaBanco?.codigo||'BANCO',        cuenta_nombre: cuenta?.name||'Banco/Caja', debe: 0, haber: montoGTQ, descripcion: 'Salida de banco' },
+      { cuenta_id: ctaAnticipo?.id||null, cuenta_codigo: ctaAnticipo?.codigo||'ANTICIPOS', cuenta_nombre: ctaAnticipo?.nombre||'Anticipos a Proveedores', debe: montoOrig, haber: 0, descripcion: 'Anticipo' },
+      { cuenta_id: ctaBanco?.id||null,    cuenta_codigo: ctaBanco?.codigo||'BANCO',        cuenta_nombre: cuenta?.name||'Banco/Caja', debe: 0, haber: montoOrig, descripcion: 'Salida de banco' },
     ],
   });
 }
