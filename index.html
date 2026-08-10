@@ -3078,17 +3078,18 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <thead><tr style="background:var(--surface2)">
             <th style="padding:8px 12px;text-align:left;font-size:11px">Cuenta</th>
             <th style="padding:8px 12px;text-align:left;font-size:11px">Descripción</th>
+            <th style="padding:8px 12px;text-align:right;font-size:11px">Monto Original</th>
             <th style="padding:8px 12px;text-align:right;font-size:11px">Debe</th>
             <th style="padding:8px 12px;text-align:right;font-size:11px">Haber</th>
           </tr></thead>
           <tbody id="pago-apuntes-tbody">
-            <tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
+            <tr><td colspan="5" style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
               Completa los datos del pago para previsualizar los apuntes contables.
             </td></tr>
           </tbody>
           <tfoot>
             <tr style="border-top:2px solid var(--border);font-weight:700">
-              <td colspan="2" style="padding:8px 12px">
+              <td colspan="3" style="padding:8px 12px">
                 Total <span id="pago-balance-badge"></span>
               </td>
               <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace" id="pago-total-debe">—</td>
@@ -7174,8 +7175,13 @@ function buildLineasPago() {
     const f = state.ocFacturas.find(x => x.id === facturaId);
     if (!f) return [];
     const ctaPorPagar = ctaPorPagarOC(f.oc_id);
+    // Descripción de la línea de Cuentas x Pagar: "Proveedor - Serie - Número"
+    // (antes solo mostraba serie+número, sin identificar al proveedor).
+    const ocSingle   = state.oc.find(o => o.id === f.oc_id);
+    const provSingle = state.proveedores.find(p => p.id === ocSingle?.proveedor_id);
+    const descCxP    = [provSingle?.name, f.serie, f.numero].filter(Boolean).join(' - ');
     return [
-      { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: monto, haber: 0, descripcion: `${f.serie||''}${f.numero||''}` },
+      { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: monto, haber: 0, descripcion: descCxP },
       { cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: 0, haber: monto, descripcion: `Pendiente de confirmar — ${cuentaBancaria?.name||''}` },
     ];
   }
@@ -7196,7 +7202,12 @@ function buildLineasPago() {
   const lineas = distribs.map(d => {
     const f = state.ocFacturas.find(x => x.id === d.factura_id);
     const ctaPorPagar = ctaPorPagarOC(f?.oc_id);
-    return { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: d.monto, haber: 0, descripcion: `${f?.serie||''}${f?.numero||''}` };
+    // Misma descripción "Proveedor - Serie - Número" por factura (pueden ser
+    // de proveedores distintos en un pago múltiple).
+    const ocMulti   = state.oc.find(o => o.id === f?.oc_id);
+    const provMulti = state.proveedores.find(p => p.id === ocMulti?.proveedor_id);
+    const descCxP   = [provMulti?.name, f?.serie, f?.numero].filter(Boolean).join(' - ');
+    return { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: d.monto, haber: 0, descripcion: descCxP };
   });
   lineas.push({ cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: 0, haber: monto, descripcion: `Pago múltiple — pendiente de confirmar (${cuentaBancaria?.name||''})` });
   return lineas;
@@ -7228,7 +7239,7 @@ function renderPagoApuntesPreview() {
   const moneda  = document.getElementById('pago-factura-id')?.dataset.moneda || 'GTQ';
 
   if (tipo && tipo !== 'OC') {
-    tbody.innerHTML = `<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
+    tbody.innerHTML = `<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
       Los cobros a clientes (OV) todavía no generan un asiento automático desde este modal — solo se registra el pago.
     </td></tr>`;
     document.getElementById('pago-total-debe').textContent  = '—';
@@ -7253,7 +7264,7 @@ function renderPagoApuntesPreview() {
   } else if (tcNote) tcNote.textContent = '';
 
   if (!lineas.length) {
-    tbody.innerHTML = `<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
+    tbody.innerHTML = `<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
       Completa fecha, cuenta de origen y monto para previsualizar los apuntes contables.
     </td></tr>`;
     document.getElementById('pago-total-debe').textContent  = '—';
@@ -7268,9 +7279,11 @@ function renderPagoApuntesPreview() {
     totalHaber += Number(l.haber||0);
     const debeGTQ  = Number(l.debe||0)  > 0 ? parseFloat((Number(l.debe||0)*tc).toFixed(4))  : 0;
     const haberGTQ = Number(l.haber||0) > 0 ? parseFloat((Number(l.haber||0)*tc).toFixed(4)) : 0;
+    const montoOriginal = Number(l.debe||0) > 0 ? Number(l.debe||0) : Number(l.haber||0);
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:7px 12px;font-size:12px;font-family:'DM Mono',monospace">${l.cuenta_codigo||'—'} ${l.cuenta_nombre||''}</td>
       <td style="padding:7px 12px;font-size:12px;color:var(--text3)">${l.descripcion||'—'}${moneda==='USD'?`<div style="font-size:10px">${Number(l.debe||0)>0?fmtGTQ(debeGTQ):Number(l.haber||0)>0?fmtGTQ(haberGTQ):''}</div>`:''}</td>
+      <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;color:var(--text3)">${fmtMoney(montoOriginal, moneda)}</td>
       <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.debe||0)>0  ? fmtMoney(Number(l.debe||0), moneda)  : ''}</td>
       <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.haber||0)>0 ? fmtMoney(Number(l.haber||0), moneda) : ''}</td>
     </tr>`;
