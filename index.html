@@ -2954,7 +2954,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 <!-- PAGO MODAL -->
 <div class="modal-overlay" id="modal-pago">
-  <div class="modal modal-lg" style="max-width:820px;width:95vw">
+  <div class="modal modal-lg" style="max-width:1066px;width:95vw">
     <div class="modal-header">
       <div>
         <div class="modal-title" id="modal-pago-title">Registrar Pago</div>
@@ -5551,7 +5551,7 @@ async function loadAll() {
     sb.from('erp_oc_recepcion_items').select('*'),
     sb.from('erp_oc_pl').select('*').order('no_caja'),
     sb.from('erp_oc_facturas').select('*').order('fecha',{ascending:false}),
-    sb.from('erp_pagos').select('*').order('fecha',{ascending:false}),
+    sb.from('erp_pagos_oc').select('*').order('fecha',{ascending:false}),
     sb.from('erp_oc_anticipos').select('*').order('fecha',{ascending:false}),
     sb.from('erp_asientos').select('*').order('fecha',{ascending:false}),
     sb.from('erp_asiento_lineas').select('*'),
@@ -7558,13 +7558,18 @@ async function savePago() {
       const prov = state.proveedores.find(p=>p.id===document.getElementById('pago-proveedor-id').value);
 
       const num_pago = document.getElementById('pago-factura-id').dataset.numPago || nextNumPago();
-      // OJO: la columna real en erp_pagos se llama "forma", no "metodo" — un
-      // desajuste de nombre que hacía fallar CADA intento de guardar un pago
-      // (Supabase rechaza inserts con columnas inexistentes). erp_pagos
-      // también carecía de "moneda" y "referencia" — se agregaron vía
-      // migración (fix_erp_pagos_columnas_faltantes) para que este insert,
-      // que ya las esperaba, funcione de verdad.
-      const { error: ePago } = await sb.from('erp_pagos').insert({
+      // OJO: la columna real se llama "forma", no "metodo" — un desajuste de
+      // nombre que hacía fallar CADA intento de guardar un pago (Supabase
+      // rechaza inserts con columnas inexistentes).
+      //
+      // Pagos a proveedores (OC) se guardan en erp_pagos_oc, NO en erp_pagos
+      // — son tablas separadas a propósito: erp_pagos_oc.factura_id apunta a
+      // erp_oc_facturas, mientras que erp_pagos.factura_id apunta a
+      // erp_invoices (ventas). Antes ambos flujos escribían en la misma
+      // tabla erp_pagos, cuya llave foránea solo permitía valores de
+      // erp_invoices — por eso CADA pago a proveedor fallaba con 409
+      // (violación de llave foránea), aunque el pago fuera válido.
+      const { error: ePago } = await sb.from('erp_pagos_oc').insert({
         factura_id: facturaId, fecha, forma: metodo, cuenta_id, monto, referencia, num_pago,
         notas: [notas, bancoInfo?`Banco: ${bancoInfo}`:''].filter(Boolean).join(' | ') || null,
         moneda,
@@ -7631,11 +7636,21 @@ async function savePago() {
       const tcPagoMulti = esUSD ? getTCFecha(fecha) : 1;
       for (const d of distribs) {
         const f = state.ocFacturas.find(x=>x.id===d.factura_id);
-        await sb.from('erp_pagos').insert({
+        // Pagos a proveedores (OC) van a erp_pagos_oc, no a erp_pagos (ver
+        // nota en el modo single arriba). Antes este insert tampoco
+        // revisaba si fallaba — seguía de largo marcando la factura como
+        // pagada y generando el asiento contable aunque el pago nunca se
+        // hubiera guardado. Ahora se detiene y avisa en el primer error.
+        const { error: ePagoMulti } = await sb.from('erp_pagos_oc').insert({
           factura_id: d.factura_id,
           num_pago: num_pago_multi,
           fecha, forma: metodo, cuenta_id, monto: d.monto, referencia, notas, moneda,
         });
+        if (ePagoMulti) {
+          toast(`Error guardando pago de factura ${f?.serie||''}${f?.numero||''}: ${ePagoMulti.message}`,'error');
+          await loadAll();
+          return;
+        }
         // Update factura estado
         const pagosAnt = (state.pagosOC||[]).filter(p=>p.factura_id===d.factura_id);
         const totalPag = pagosAnt.reduce((s,p)=>s+Number(p.monto||0),0) + d.monto;
