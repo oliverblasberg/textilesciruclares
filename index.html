@@ -5487,6 +5487,11 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
          .modal-body heredado. -->
     <div class="modal-body" id="vfoc-body" style="padding:0"></div>
     <div class="modal-footer">
+      <!-- Editar/Cancelar/Pagar Factura — poblado por verFacturaOC() según
+           el estado de la factura (mismas reglas que tenía el viewer
+           anterior de Libro de Compras, verDetalleFactura(), ya eliminado
+           para que ambas pantallas usen este mismo visualizador). -->
+      <div id="vfoc-footer-actions" style="display:flex;gap:8px"></div>
       <button class="btn btn-ghost" onclick="closeModal('modal-ver-factura-oc')">Cerrar</button>
     </div>
   </div>
@@ -12183,123 +12188,6 @@ function openPagoDesdeCompras() {
   openModal('modal-pago');
 }
 
-function verDetalleFactura(facturaId) {
-  const f    = (state.ocFacturas||[]).find(x=>x.id===facturaId);
-  if (!f) { toast('Factura no encontrada','error'); return; }
-  const oc   = (state.oc||[]).find(o=>o.id===f.oc_id);
-  const prov = (state.proveedores||[]).find(p=>p.id===oc?.proveedor_id);
-  const items = (state.ocItems||[]).filter(i=>i.oc_id===f.oc_id);
-  const pagosF = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
-  const pagado = pagosF.reduce((s,p)=>s+Number(p.monto||0),0);
-  const saldo  = Math.max(0, Number(f.total||0)-pagado);
-  const esCancelada = f.status === 'cancelada';
-  const esPagada = !esCancelada && saldo<=0.01;
-  const esParcial = !esCancelada && pagado>0 && !esPagada;
-  const statusLabel = esCancelada?'Cancelada':esPagada?'Pagada':esParcial?'Parcialmente Pagada':'Generada';
-  const statusColor = esCancelada?'#9CA3AF':esPagada?'#16A34A':esParcial?'#D97706':'#2563EB';
-  const compra = (state.compras||[]).find(c => c.factura_id === facturaId);
-
-  const itemsHtml = items.map(i=>{
-    const prod = (state.productos||[]).find(p=>p.id===i.producto_id);
-    const qty  = prod?.tipo==='servicio' ? Number(i.cantidad||0) : ocRecibidoQty(f.oc_id, i.producto_id);
-    const t    = qty * Number(i.precio_unit||0);
-    return `<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:8px 12px;font-size:13px">${prod?.description||'—'}</td>
-      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${qty.toFixed(3)} ${i.unidad||''}</td>
-      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${fmtMoney(i.precio_unit)}</td>
-      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtMoney(t)}</td>
-    </tr>`;
-  }).join('');
-
-  const pagosHtml = pagosF.length ? pagosF.map(p=>`
-    <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px">
-      <div>
-        <span style="font-family:'DM Mono',monospace;font-weight:700;color:var(--accent);margin-right:8px">${p.num_pago||'—'}</span>
-        <span>${fmtDate(p.fecha)}</span>
-        <span style="color:var(--text3);margin-left:8px">${p.metodo||'—'}</span>
-        ${p.referencia?`<span style="color:var(--text3);margin-left:8px;font-size:11px">${p.referencia}</span>`:''}
-        ${p.notas?`<span style="color:var(--text3);margin-left:8px;font-size:11px">${p.notas}</span>`:''}
-      </div>
-      <strong style="font-family:'DM Mono',monospace;color:var(--green)">${fmtGTQ(p.monto)}</strong>
-    </div>`).join('') : '<div style="color:var(--text3);font-size:12px;font-style:italic">Sin pagos registrados</div>';
-
-  const html = `
-    <div style="max-width:700px;width:95vw;background:var(--bg);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
-      <!-- Header -->
-      <div style="padding:20px 24px;display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1.5px solid var(--border)">
-        <div>
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:0.1em;margin-bottom:4px">Factura de Proveedor</div>
-          <div style="font-family:'DM Mono',monospace;font-size:22px;font-weight:700;color:var(--accent)">${f.num_interno||'—'}</div>
-          <div style="font-size:13px;color:var(--text2);margin-top:4px">${prov?.name||'—'} · ${oc?.numero||'—'}</div>
-        </div>
-        <div style="text-align:right">
-          <span style="padding:4px 12px;border-radius:99px;font-size:12px;font-weight:700;background:${statusColor}18;color:${statusColor}">${statusLabel}</span>
-          <button onclick="this.closest('.modal-overlay').remove()"
-            style="display:block;margin-top:10px;margin-left:auto;background:transparent;border:none;cursor:pointer;font-size:20px;color:var(--text3)">✕</button>
-        </div>
-      </div>
-      <!-- Datos -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px;border-bottom:1.5px solid var(--border)">
-        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Serie / No.</span>
-          <div style="font-family:'DM Mono',monospace;font-weight:600">${f.serie||''}${f.numero||'—'}</div></div>
-        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Tipo</span>
-          <div>${f.tipo||'—'}</div></div>
-        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Fecha Factura</span>
-          <div>${fmtDate(f.fecha)}</div></div>
-        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Fecha Vencimiento</span>
-          <div style="color:${f.fecha_vencimiento&&new Date(f.fecha_vencimiento)<new Date()&&!esPagada?'var(--red)':'inherit'}">${fmtDate(f.fecha_vencimiento)||'—'}</div></div>
-        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Método de Pago</span>
-          <div>${f.metodo_pago||'—'}</div></div>
-        <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Ref. Pago</span>
-          <div style="font-family:'DM Mono',monospace">${f.ref_pago||'—'}</div></div>
-      </div>
-      <!-- Items -->
-      <div style="padding:16px 24px;border-bottom:1.5px solid var(--border)">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Detalle</div>
-        <table style="width:100%;border-collapse:collapse">
-          <thead><tr style="background:var(--surface2)">
-            <th style="padding:7px 12px;text-align:left;font-size:11px">Producto/Servicio</th>
-            <th style="padding:7px 12px;text-align:right;font-size:11px">Cantidad</th>
-            <th style="padding:7px 12px;text-align:right;font-size:11px">Precio Unit.</th>
-            <th style="padding:7px 12px;text-align:right;font-size:11px">Total</th>
-          </tr></thead>
-          <tbody>${itemsHtml}</tbody>
-        </table>
-        <div style="display:flex;justify-content:flex-end;gap:24px;padding:10px 12px;background:var(--surface2);border-radius:0 0 8px 8px;font-size:13px">
-          <span style="color:var(--text3)">Total: <strong style="font-family:'DM Mono',monospace;font-size:16px">${fmtMoney(f.total)}</strong></span>
-        </div>
-      </div>
-      <!-- Pagos -->
-      <div style="padding:16px 24px;border-bottom:1.5px solid var(--border)">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Pagos Registrados</div>
-        ${pagosHtml}
-        ${pagado>0?`<div style="display:flex;justify-content:space-between;margin-top:10px;font-size:13px;font-weight:600">
-          <span>Saldo pendiente:</span>
-          <span style="font-family:'DM Mono',monospace;color:${esPagada?'var(--green)':'var(--accent)'}">${esPagada?'✓ Pagado':fmtGTQ(saldo)}</span>
-        </div>`:''}
-      </div>
-      <!-- Footer -->
-      <div style="padding:14px 24px;display:flex;justify-content:flex-end;gap:8px">
-        ${compra && !esCancelada ? `<button class="btn btn-ghost btn-sm" onclick="this.closest('.modal-overlay').remove();editCompra('${compra.id}')">✏️ Editar Factura</button>` : ''}
-        ${!esCancelada && !esPagada && pagado<=0 ? `<button class="btn btn-danger btn-sm" onclick="this.closest('.modal-overlay').remove();cancelarFacturaOC('${facturaId}')">✕ Cancelar Factura</button>` : ''}
-        ${!esCancelada && !esPagada ? `<button class="btn btn-primary btn-sm" onclick="this.closest('.modal-overlay').remove();openPagoOC('${facturaId}')">💳 Pagar Factura</button>` : ''}
-        <button class="btn btn-ghost btn-sm" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
-      </div>
-    </div>`;
-
-  // Show as overlay
-  // .open es la clase que hace visible un .modal-overlay (la clase base
-  // arranca en opacity:0/pointer-events:none — ver openModal()/closeModal()
-  // y la regla CSS .modal-overlay.open). Sin agregarla, este overlay se
-  // queda invisible aunque sí esté en el DOM.
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay open';
-  overlay.style.cssText = 'display:flex;align-items:center;justify-content:center;z-index:2000';
-  overlay.innerHTML = html;
-  overlay.onclick = e => { if(e.target===overlay) overlay.remove(); };
-  document.body.appendChild(overlay);
-}
-
 function renderCompras() {
   const q   = (document.getElementById('search-compras')?.value||'').toLowerCase();
   const tp  = document.getElementById('filter-compras-tipo')?.value||'';
@@ -12347,7 +12235,7 @@ function renderCompras() {
       </td>
       <td style="padding:8px 10px">
         ${c.factura_id
-          ? `<span onclick="verDetalleFactura('${c.factura_id}')"
+          ? `<span onclick="verFacturaOC('${c.factura_id}')"
               style="font-family:'DM Mono',monospace;font-size:12px;font-weight:700;color:var(--accent);cursor:pointer"
               title="Ver detalles de la factura">
               ${(state.ocFacturas||[]).find(f=>f.id===c.factura_id)?.num_interno||'—'}
@@ -15656,9 +15544,9 @@ function _asientosTablaHTML(asientos, forPrint, contexto) {
 }
 
 // ── VER PAGO OC (popup de detalle, click en el No. de Nota de Pago) ──
-// Mismo patrón de overlay dinámico que verDetalleFactura() — los pagos a
-// proveedor viven en erp_pagos_oc (state.pagosOC), separado de erp_pagos
-// (cobros de clientes).
+// Overlay dinámico (document.createElement) — los pagos a proveedor viven
+// en erp_pagos_oc (state.pagosOC), separado de erp_pagos (cobros de
+// clientes).
 function verDetallePago(pagoId) {
   const p = (state.pagosOC||[]).find(x => x.id === pagoId);
   if (!p) { toast('Pago no encontrado','error'); return; }
@@ -15845,6 +15733,24 @@ function imprimirPago(pagoId) {
   setTimeout(()=>win.print(), 600);
 }
 
+// Proporción real de IVA de una factura de OC — valor_iva/valor_neto de
+// erp_compras (el registro que se llenó en Libro de Compras, que sí respeta
+// el checkbox de "lleva IVA" de cada línea del formulario). El detalle por
+// línea de verFacturaOC()/imprimirFacturaOC() no sabe cuál línea llevó IVA
+// (ese checkbox no se persiste por línea, solo el agregado), así que en vez
+// de asumir 12% fijo en TODAS las líneas (lo que inflaba el total de líneas
+// por encima del Total Factura real en facturas sin IVA, o con IVA parcial),
+// se usa esta proporción real — si la factura no lleva IVA, ivaReal es 0 y
+// el detalle por línea también muestra 0, coincidiendo con el Total Factura.
+// Si no se encuentra el registro de compra (no debería pasar), cae de
+// regreso al 12% estándar (IVA_RATE) como antes.
+function facturaIvaRatio(facturaId) {
+  const compra   = (state.compras||[]).find(c => c.factura_id === facturaId);
+  const netoReal = compra ? Number(compra.valor_neto||0) : 0;
+  const ivaReal  = compra ? Number(compra.valor_iva||0)  : 0;
+  return netoReal > 0 ? (ivaReal / netoReal) : IVA_RATE;
+}
+
 // ── VER FACTURA OC (popup de detalle, click en el número de factura) ──
 function verFacturaOC(facturaId) {
   const f = (state.ocFacturas||[]).find(x => x.id === facturaId);
@@ -15857,21 +15763,22 @@ function verFacturaOC(facturaId) {
   const pagado = pagos.reduce((s,p)=>s+Number(p.monto||0),0);
   const total  = Number(f.total||0);
   const saldo  = Math.max(0, total - pagado);
-  const esPagada  = saldo <= 0.01;
-  const esParcial = pagado > 0 && !esPagada;
-  const statusLabel = esPagada ? 'Pagada' : esParcial ? 'Pagada Parcialmente' : 'Generada';
-  const statusColor = esPagada ? '#16A34A' : esParcial ? '#D97706' : '#2563EB'; // verde / naranja / azul
+  const esCancelada = f.status === 'cancelada';
+  const esPagada  = !esCancelada && saldo <= 0.01;
+  const esParcial = !esCancelada && pagado > 0 && !esPagada;
+  const statusLabel = esCancelada ? 'Cancelada' : esPagada ? 'Pagada' : esParcial ? 'Pagada Parcialmente' : 'Generada';
+  const statusColor = esCancelada ? '#9CA3AF' : esPagada ? '#16A34A' : esParcial ? '#D97706' : '#2563EB'; // gris / verde / naranja / azul
   const monedaOC = getMonedaOC(f.oc_id);
   const tipoMap = { FC:'Factura cambiaria', FE:'Factura especial', FCAM:'Factura cambiaria' };
   const formaLabel = { transferencia:'Transferencia Bancaria', cheque:'Cheque', efectivo:'Efectivo', deposito:'Depósito' };
 
-  // Detalle por línea — misma fuente que verDetalleFactura() (state.ocItems
-  // de la OC; el esquema no separa items por factura cuando una OC se
-  // factura en partes). IVA fijo de Guatemala (12%, IVA_RATE) aplicado a
-  // cada línea: el sistema no guarda cuál línea llevó IVA al momento de
-  // facturar (ese checkbox es solo del formulario, no se persiste), así que
-  // esta es una descomposición estándar, no necesariamente idéntica centavo
-  // a centavo al Neto/IVA agregado que se grabó en la factura.
+  // Detalle por línea — fuente: state.ocItems de la OC (el esquema no
+  // separa items por factura cuando una OC se factura en partes). El IVA
+  // por línea usa la proporción REAL de la
+  // factura (facturaIvaRatio — respeta si la factura llevó IVA o no), no un
+  // 12% fijo: aplicar 12% a TODAS las líneas inflaba el Total de línea por
+  // encima del Total Factura real en facturas sin IVA (o con IVA parcial).
+  const ivaRatio = facturaIvaRatio(facturaId);
   const items = (state.ocItems||[]).filter(i => i.oc_id === f.oc_id);
   const itemsHtml = items.map(i => {
     const prod = (state.productos||[]).find(p => p.id === i.producto_id);
@@ -15880,7 +15787,7 @@ function verFacturaOC(facturaId) {
     const precioUnit = Number(i.precio_unit||0);
     const precioTotal = qty * precioUnit;
     const neto = precioTotal;
-    const iva  = neto * IVA_RATE;
+    const iva  = neto * ivaRatio;
     const lineaTotal = neto + iva;
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 12px;font-size:13px">${prod?.description||'—'}</td>
@@ -16001,6 +15908,20 @@ function verFacturaOC(facturaId) {
       </div>
     </div>
   `;
+
+  // Acciones del footer — mismas reglas que tenía el viewer anterior de
+  // Libro de Compras (verDetalleFactura(), ya eliminado): Editar solo si no
+  // está cancelada; Cancelar solo si no está cancelada, no está pagada y no
+  // tiene pagos registrados; Pagar solo si no está cancelada ni pagada
+  // (aunque también hay un botón "Pagar" independiente en el tab Facturas
+  // del panel de OC — este es para cuando se llega aquí desde Libro de
+  // Compras, que no tiene esa columna).
+  document.getElementById('vfoc-footer-actions').innerHTML = `
+    ${compra && !esCancelada ? `<button class="btn btn-ghost btn-sm" onclick="closeModal('modal-ver-factura-oc');editCompra('${compra.id}')">✏️ Editar Factura</button>` : ''}
+    ${!esCancelada && !esPagada && pagado<=0 ? `<button class="btn btn-danger btn-sm" onclick="closeModal('modal-ver-factura-oc');cancelarFacturaOC('${facturaId}')">✕ Cancelar Factura</button>` : ''}
+    ${!esCancelada && !esPagada ? `<button class="btn btn-primary btn-sm" onclick="closeModal('modal-ver-factura-oc');openPagoOC('${facturaId}')">💳 Pagar Factura</button>` : ''}
+  `;
+
   vfocTab('info');
   openModal('modal-ver-factura-oc');
 }
@@ -16033,6 +15954,9 @@ function imprimirFacturaOC(facturaId) {
   const tipoMap = { FC:'Factura cambiaria', FE:'Factura especial', FCAM:'Factura cambiaria' };
   const formaLabel = { transferencia:'Transferencia Bancaria', cheque:'Cheque', efectivo:'Efectivo', deposito:'Depósito' };
 
+  // Mismo criterio que verFacturaOC(): IVA por línea con la proporción real
+  // de la factura (facturaIvaRatio), no un 12% fijo — ver comentario ahí.
+  const ivaRatio = facturaIvaRatio(facturaId);
   const items = (state.ocItems||[]).filter(i => i.oc_id === f.oc_id);
   const itemsRows = items.map(i => {
     const prod = (state.productos||[]).find(p => p.id === i.producto_id);
@@ -16041,7 +15965,7 @@ function imprimirFacturaOC(facturaId) {
     const precioUnit = Number(i.precio_unit||0);
     const precioTotal = qty * precioUnit;
     const neto = precioTotal;
-    const iva  = neto * IVA_RATE;
+    const iva  = neto * ivaRatio;
     const lineaTotal = neto + iva;
     return `<tr>
       <td>${prod?.description||'—'}</td>
