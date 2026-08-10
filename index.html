@@ -1659,6 +1659,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
                   <th class="hide-mobile">OC</th>
                   <th style="text-align:right">Total</th>
                   <th style="text-align:right">Saldo</th>
+                  <th>Vencimiento</th>
                   <th>Estado</th>
                 </tr>
               </thead>
@@ -12265,6 +12266,7 @@ function renderCompras() {
       <td class="td-mono" style="text-align:right;color:${esPagado?'var(--text3)':'var(--accent)'};font-weight:${esPagado?'400':'700'}">
         ${esPagado?'✓':fmtMoney(saldo, c.moneda||'GTQ')}
       </td>
+      <td class="td-mono" style="white-space:nowrap;font-size:12px">${factura?.fecha_vencimiento?fmtDate(factura.fecha_vencimiento):'—'}</td>
       <td><div class="td-actions">
         <span class="badge ${estadoColor}" style="font-size:10px">${estadoLabel}</span>
         ${!c.factura_id ? `
@@ -12273,13 +12275,14 @@ function renderCompras() {
         ` : ''}
       </div></td>
     </tr>`;
-  }).join('') : '<tr><td colspan="12"><div class="empty-state"><div class="empty-icon">▣</div><p>Sin registros de compra</p></div></td></tr>';
+  }).join('') : '<tr><td colspan="13"><div class="empty-state"><div class="empty-icon">▣</div><p>Sin registros de compra</p></div></td></tr>';
 
-  // Totals row — colspan 9 covers checkbox..OC, then Total / Saldo / Estado
+  // Totals row — colspan 9 covers checkbox..OC, then Total / Saldo / Vencimiento / Estado
   const tfoot = document.getElementById('tfoot-compras');
   if (tfoot) tfoot.innerHTML = data.length ? `<tr style="background:var(--surface2);font-weight:600">
     <td colspan="9" style="padding:10px 14px;font-size:12px;color:var(--text2)">TOTALES (${data.length} registro${data.length!==1?'s':''})</td>
     <td class="td-mono" style="text-align:right;padding:10px 14px">${fmtMoney(sumTotal)}</td>
+    <td></td>
     <td></td>
     <td></td>
   </tr>` : '';
