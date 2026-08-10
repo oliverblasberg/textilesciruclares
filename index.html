@@ -813,8 +813,6 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div class="nav-item" onclick="showPage('proveedores',this)">Proveedores</div>
       <div class="nav-item" onclick="showPage('productos',this)">Productos</div>
       <div class="nav-item" onclick="showPage('precios',this)">Listas de Precios</div>
-      <div class="nav-item nav-soon">Recetas de Producción</div>
-      <div class="nav-item nav-soon">Contabilidad</div>
       <div class="nav-item" onclick="showPage('categorias',this)">Categorías</div>
       <div class="nav-item" onclick="showPage('cuentas',this)">Cuentas Bancarias</div>
       <div class="nav-item" onclick="showPage('nomenclatura',this)">Nomenclatura Contable</div>
@@ -1006,16 +1004,6 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <div class="sub-module-name">Órdenes de Venta</div>
             <div class="sub-module-desc">Crear y gestionar órdenes de clientes</div>
           </div>
-          <div class="sub-module-card" onclick="showPage('packing',null)">
-            <div class="sub-module-icon">📦</div>
-            <div class="sub-module-name">Listas de Empaque</div>
-            <div class="sub-module-desc">Preparación y despacho de pedidos</div>
-          </div>
-          <div class="sub-module-card" onclick="showPage('facturas',null)">
-            <div class="sub-module-icon">🧾</div>
-            <div class="sub-module-name">Libro de Ventas</div>
-            <div class="sub-module-desc">Facturas emitidas y estado de cobros</div>
-          </div>
           <div class="sub-module-card" onclick="showPage('precios',null)">
             <div class="sub-module-icon">💲</div>
             <div class="sub-module-name">Listas de Precios</div>
@@ -1032,7 +1020,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             </div>
             <div>
               <div style="font-size:20px;font-weight:700;color:var(--text)">Compras</div>
-              <div style="font-size:13px;color:var(--text3)">Solicitudes, órdenes y facturas de proveedores</div>
+              <div style="font-size:13px;color:var(--text3)">Solicitudes y órdenes de compra a proveedores</div>
             </div>
           </div>
         </div>
@@ -1046,11 +1034,6 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <div class="sub-module-icon">🛒</div>
             <div class="sub-module-name">Órdenes de Compra</div>
             <div class="sub-module-desc">Gestión de compras y recepciones</div>
-          </div>
-          <div class="sub-module-card" onclick="showPage('compras',null)">
-            <div class="sub-module-icon">🗂️</div>
-            <div class="sub-module-name">Libro de Compras</div>
-            <div class="sub-module-desc">Registro de facturas de proveedores</div>
           </div>
         </div>
       </div>
@@ -1082,6 +1065,11 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <div class="sub-module-icon">🔄</div>
             <div class="sub-module-name">Movimientos</div>
             <div class="sub-module-desc">Entradas, salidas y transferencias</div>
+          </div>
+          <div class="sub-module-card" onclick="showPage('packing',null)">
+            <div class="sub-module-icon">📦</div>
+            <div class="sub-module-name">Listas de Empaque</div>
+            <div class="sub-module-desc">Preparación y despacho de pedidos</div>
           </div>
           <div class="sub-module-card" onclick="showPage('inv-ajustes',null)">
             <div class="sub-module-icon">⚖️</div>
@@ -1202,6 +1190,16 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <div class="sub-module-icon">📒</div>
             <div class="sub-module-name">Diario Mayor General</div>
             <div class="sub-module-desc">Todos los asientos contables</div>
+          </div>
+          <div class="sub-module-card" onclick="showPage('compras',null)">
+            <div class="sub-module-icon">🗂️</div>
+            <div class="sub-module-name">Libro de Compras</div>
+            <div class="sub-module-desc">Registro de facturas de proveedores</div>
+          </div>
+          <div class="sub-module-card" onclick="showPage('facturas',null)">
+            <div class="sub-module-icon">🧾</div>
+            <div class="sub-module-name">Libro de Ventas</div>
+            <div class="sub-module-desc">Facturas emitidas y estado de cobros</div>
           </div>
           <div class="sub-module-card" onclick="showPage('estado-resultados',null)">
             <div class="sub-module-icon">📊</div>
@@ -7640,11 +7638,11 @@ async function savePago() {
       // tabla erp_pagos, cuya llave foránea solo permitía valores de
       // erp_invoices — por eso CADA pago a proveedor fallaba con 409
       // (violación de llave foránea), aunque el pago fuera válido.
-      const { error: ePago } = await sb.from('erp_pagos_oc').insert({
+      const { data: pagoInsertado, error: ePago } = await sb.from('erp_pagos_oc').insert({
         factura_id: facturaId, fecha, forma: metodo, cuenta_id, monto, referencia, num_pago,
         notas: [notas, bancoInfo?`Banco: ${bancoInfo}`:''].filter(Boolean).join(' | ') || null,
         moneda,
-      });
+      }).select().single();
       if (ePago) { toast('Error guardando pago: '+ePago.message,'error'); return; }
 
       // Update factura estado
@@ -7675,10 +7673,15 @@ async function savePago() {
       // calcula el equivalente en GTQ para el balance Y conserva el monto real
       // por línea (monto_orig/moneda_orig), necesario para poder conciliar la
       // cuenta bancaria de origen cuando está configurada en USD.
+      //
+      // referencia_id: pagoInsertado?.id — enlaza el asiento directamente con
+      // la fila de erp_pagos_oc recién creada (antes se guardaba null, lo que
+      // hacía imposible encontrar "los asientos de este pago" desde el
+      // detalle de la Nota de Pago). Ver asientosDePago().
       await crearAsiento({
         diario:'BANCOS', fecha,
         descripcion: `Pago factura ${f?.serie||''}${f?.numero||''} — ${prov?.name||''} | ${metodo}${referencia?' Ref:'+referencia:''}`,
-        referencia: referencia||`PAGO-${f?.serie||''}${f?.numero||''}`, referencia_id: null, moneda,
+        referencia: referencia||`PAGO-${f?.serie||''}${f?.numero||''}`, referencia_id: pagoInsertado?.id||null, moneda,
         lineas: buildLineasPago(),
       });
 
@@ -7744,10 +7747,16 @@ async function savePago() {
         }
       }
 
+      // Un solo asiento cubre varias filas de erp_pagos_oc (una por factura
+      // distribuida), así que no puede enlazarse con un único referencia_id.
+      // En su lugar se embebe el num_pago compartido ("Nota ${num_pago_multi}")
+      // dentro de la descripción — texto siempre generado por el sistema, no
+      // editable por el usuario — para poder encontrarlo después desde
+      // asientosDePago().
       await crearAsiento({
         diario:'BANCOS', fecha,
-        descripcion: `Pago múltiple ${distribs.length} facturas — ${(state.proveedores||[]).find(p=>p.id===provId)?.name||''}${referencia?' Ref:'+referencia:''}`,
-        referencia: referencia||`PAGO-MULTI-${fecha}`, referencia_id: null, moneda,
+        descripcion: `Pago múltiple ${distribs.length} facturas — ${(state.proveedores||[]).find(p=>p.id===provId)?.name||''}${referencia?' Ref:'+referencia:''} · Nota ${num_pago_multi}`,
+        referencia: referencia||`PAGO-MULTI-${num_pago_multi}`, referencia_id: null, moneda,
         lineas: buildLineasPago(),
       });
 
@@ -15523,6 +15532,267 @@ function closeOCPanel() {
   currentOCId = null;
 }
 
+// ── Asientos contables generados por un pago a proveedor (erp_pagos_oc) ──
+// El asiento BANCOS principal enlaza referencia_id -> p.id (ver savePago()).
+// En pagos múltiples un solo asiento BANCOS cubre varias filas de
+// erp_pagos_oc, así que además se busca por el marcador "Nota ${num_pago}"
+// dentro de la descripción (embebido siempre por el sistema, ver savePago()).
+// El diferencial cambiario (si aplica) enlaza referencia_id -> factura_id,
+// no -> pago, así que se acota además por fecha para no traer diferenciales
+// de otros pagos a la misma factura en fechas distintas.
+function asientosDePago(p) {
+  if (!p) return [];
+  const list = (state.asientos||[]).filter(a =>
+    a.referencia_id === p.id ||
+    (a.diario === 'BANCOS' && p.num_pago && (a.descripcion||'').includes(`Nota ${p.num_pago}`)) ||
+    (a.diario === DIARIO_CAMBIARIO && a.referencia_id === p.factura_id && a.fecha === p.fecha)
+  );
+  return list.sort((x,y) => (x.numero||'').localeCompare(y.numero||''));
+}
+
+// Arma el bloque de tabla(s) Cuenta/Descripción/Monto Original/Debe/Haber
+// para cada asiento asociado a un pago — mismo formato de columnas que el
+// tab "Información Contable" del modal Registrar Pago (renderPagoApuntesPreview).
+function _pagoAsientosHTML(p, forPrint) {
+  const asientos = asientosDePago(p);
+  if (!asientos.length) {
+    return `<div style="padding:${forPrint?'16px 0':'32px 24px'};text-align:center;color:${forPrint?'#9EA4B0':'var(--text3)'};font-size:12px">
+      No se encontraron asientos contables asociados a este pago.
+    </div>`;
+  }
+  const border = forPrint ? '#E2E4E9' : 'var(--border)';
+  const text3  = forPrint ? '#9EA4B0' : 'var(--text3)';
+  const text2  = forPrint ? '#5E6470' : 'var(--text2)';
+  const accent = forPrint ? '#C84B2F' : 'var(--accent)';
+  return asientos.map(a => {
+    const lineas = (state.asientoLineas||[]).filter(l => l.asiento_id === a.id);
+    const monedaAsi = a.moneda || 'GTQ';
+    let totalDebe = 0, totalHaber = 0;
+    const filas = lineas.map(l => {
+      totalDebe  += Number(l.debe_gtq||0);
+      totalHaber += Number(l.haber_gtq||0);
+      const montoOriginal = Number(l.monto_orig||0) > 0
+        ? Number(l.monto_orig)
+        : (Number(l.debe||0) > 0 ? Number(l.debe) : Number(l.haber||0));
+      return `<tr style="border-bottom:1px solid ${border}">
+        <td style="padding:6px 10px;font-size:11px;font-family:'DM Mono',monospace">${l.cuenta_codigo||'—'} ${l.cuenta_nombre||''}</td>
+        <td style="padding:6px 10px;font-size:11px;color:${text3}">${l.descripcion||'—'}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:'DM Mono',monospace;font-size:11px">${fmtMoney(montoOriginal, l.moneda_orig||monedaAsi)}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:'DM Mono',monospace;font-size:11px">${Number(l.debe||0)>0?fmtMoney(Number(l.debe||0), monedaAsi):''}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:'DM Mono',monospace;font-size:11px">${Number(l.haber||0)>0?fmtMoney(Number(l.haber||0), monedaAsi):''}</td>
+      </tr>`;
+    }).join('');
+    return `<div style="margin-bottom:18px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="font-size:12px;font-weight:700;font-family:'DM Mono',monospace;color:${accent}">${a.numero||'—'} · ${a.diario||''}</div>
+        <div style="font-size:11px;color:${text3}">${fmtDate(a.fecha)}</div>
+      </div>
+      <div style="font-size:11px;color:${text2};margin-bottom:6px">${a.descripcion||''}</div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:1.5px solid ${border}">
+          <th style="padding:6px 10px;text-align:left;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Cuenta</th>
+          <th style="padding:6px 10px;text-align:left;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Descripción</th>
+          <th style="padding:6px 10px;text-align:right;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Monto Original</th>
+          <th style="padding:6px 10px;text-align:right;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Debe</th>
+          <th style="padding:6px 10px;text-align:right;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Haber</th>
+        </tr></thead>
+        <tbody>${filas}</tbody>
+        <tfoot><tr>
+          <td colspan="3"></td>
+          <td style="padding:6px 10px;text-align:right;font-weight:700;font-size:11px;font-family:'DM Mono',monospace;border-top:1.5px solid ${border}">${fmtMoney(totalDebe,'GTQ')}</td>
+          <td style="padding:6px 10px;text-align:right;font-weight:700;font-size:11px;font-family:'DM Mono',monospace;border-top:1.5px solid ${border}">${fmtMoney(totalHaber,'GTQ')}</td>
+        </tr></tfoot>
+      </table>
+    </div>`;
+  }).join('');
+}
+
+// ── VER PAGO OC (popup de detalle, click en el No. de Nota de Pago) ──
+// Mismo patrón de overlay dinámico que verDetalleFactura() — los pagos a
+// proveedor viven en erp_pagos_oc (state.pagosOC), separado de erp_pagos
+// (cobros de clientes).
+function verDetallePago(pagoId) {
+  const p = (state.pagosOC||[]).find(x => x.id === pagoId);
+  if (!p) { toast('Pago no encontrado','error'); return; }
+  const f    = (state.ocFacturas||[]).find(x => x.id === p.factura_id);
+  const oc   = f ? (state.oc||[]).find(o => o.id === f.oc_id) : null;
+  const prov = oc ? (state.proveedores||[]).find(pr => pr.id === oc.proveedor_id) : null;
+  const cta  = (state.cuentas||[]).find(c => c.id === p.cuenta_id);
+  const formaLabel = { transferencia:'Transferencia Bancaria', cheque:'Cheque', efectivo:'Efectivo', deposito:'Depósito' }[p.forma] || p.forma || '—';
+
+  const html = `
+    <div style="max-width:560px;width:95vw;background:var(--bg);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
+      <!-- Header -->
+      <div style="padding:20px 24px;display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1.5px solid var(--border)">
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:0.1em;margin-bottom:4px">Nota de Pago</div>
+          <div style="font-family:'DM Mono',monospace;font-size:22px;font-weight:700;color:var(--accent)">${p.num_pago||'—'}</div>
+          <div style="font-size:13px;color:var(--text2);margin-top:4px">${prov?.name||'—'}${f?` · ${f.serie||''}${f.numero||''}`:''}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn btn-ghost btn-sm" onclick="imprimirPago('${p.id}')">🖨 Imprimir Pago</button>
+          <button onclick="this.closest('.modal-overlay').remove()"
+            style="background:transparent;border:none;cursor:pointer;font-size:20px;color:var(--text3)">✕</button>
+        </div>
+      </div>
+
+      <!-- TABS -->
+      <div style="display:flex;border-bottom:2px solid var(--border);background:var(--surface2)">
+        <button id="vpago-tab-info" onclick="vpagoTab('info')"
+          style="padding:10px 18px;font-size:13px;font-weight:600;border:none;background:var(--bg);border-bottom:2px solid var(--accent);color:var(--accent);cursor:pointer;margin-bottom:-2px">
+          💰 Información de Pago
+        </button>
+        <button id="vpago-tab-contable" onclick="vpagoTab('contable')"
+          style="padding:10px 18px;font-size:13px;font-weight:600;border:none;background:transparent;color:var(--text3);cursor:pointer;margin-bottom:-2px">
+          📊 Información Contable
+        </button>
+      </div>
+
+      <!-- Ambos tabs se apilan en la misma celda de grid, igual que en el
+           modal Registrar Pago, para que la ventana no cambie de tamaño al
+           alternar entre tabs. -->
+      <div style="display:grid;max-height:60vh;overflow:auto">
+      <div id="vpago-panel-info" style="grid-column:1;grid-row:1">
+        <!-- Datos -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px;border-bottom:1.5px solid var(--border)">
+          <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Fecha</span>
+            <div style="font-weight:600">${fmtDate(p.fecha)}</div></div>
+          <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Monto</span>
+            <div style="font-family:'DM Mono',monospace;font-weight:700;color:var(--green)">${fmtMoney(p.monto, p.moneda||'GTQ')}</div></div>
+          <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Forma de Pago</span>
+            <div>${formaLabel}</div></div>
+          <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Cuenta de Origen</span>
+            <div>${cta?.name||'—'}</div></div>
+          <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Referencia</span>
+            <div style="font-family:'DM Mono',monospace">${p.referencia||'—'}</div></div>
+          <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Orden de Compra</span>
+            <div style="font-family:'DM Mono',monospace">${oc?.numero||'—'}</div></div>
+        </div>
+        ${p.notas ? `<div style="padding:16px 24px">
+          <span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Notas</span>
+          <div style="font-size:13px;margin-top:4px">${p.notas}</div>
+        </div>` : ''}
+      </div>
+      <div id="vpago-panel-contable" style="grid-column:1;grid-row:1;padding:16px 24px;visibility:hidden">
+        ${_pagoAsientosHTML(p, false)}
+      </div>
+      </div>
+
+      <!-- Footer -->
+      <div style="padding:14px 24px;display:flex;justify-content:flex-end;gap:8px;border-top:1.5px solid var(--border)">
+        ${f ? `<button class="btn btn-ghost btn-sm" onclick="this.closest('.modal-overlay').remove();verFacturaOC('${f.id}')">🧾 Ver Factura</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
+      </div>
+    </div>`;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.cssText = 'display:flex;align-items:center;justify-content:center;z-index:2000';
+  overlay.innerHTML = html;
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
+function vpagoTab(tab) {
+  document.getElementById('vpago-panel-info').style.visibility     = tab==='info'     ? 'visible' : 'hidden';
+  document.getElementById('vpago-panel-contable').style.visibility = tab==='contable' ? 'visible' : 'hidden';
+  document.getElementById('vpago-tab-info').style.background       = tab==='info'     ? 'var(--bg)' : 'transparent';
+  document.getElementById('vpago-tab-info').style.color            = tab==='info'     ? 'var(--accent)' : 'var(--text3)';
+  document.getElementById('vpago-tab-info').style.borderBottom     = tab==='info'     ? '2px solid var(--accent)' : 'none';
+  document.getElementById('vpago-tab-contable').style.background   = tab==='contable' ? 'var(--bg)' : 'transparent';
+  document.getElementById('vpago-tab-contable').style.color        = tab==='contable' ? 'var(--accent)' : 'var(--text3)';
+  document.getElementById('vpago-tab-contable').style.borderBottom = tab==='contable' ? '2px solid var(--accent)' : 'none';
+}
+
+// ── IMPRIMIR PAGO — documento con 2 secciones: Información de Pago +
+// Información Contable (asientos generados). Mismo patrón que imprimirOC():
+// ventana nueva, HTML autocontenido, window.print() automático.
+function imprimirPago(pagoId) {
+  const p = (state.pagosOC||[]).find(x => x.id === pagoId);
+  if (!p) { toast('Pago no encontrado','error'); return; }
+  const f    = (state.ocFacturas||[]).find(x => x.id === p.factura_id);
+  const oc   = f ? (state.oc||[]).find(o => o.id === f.oc_id) : null;
+  const prov = oc ? (state.proveedores||[]).find(pr => pr.id === oc.proveedor_id) : null;
+  const cta  = (state.cuentas||[]).find(c => c.id === p.cuenta_id);
+  const formaLabel = { transferencia:'Transferencia Bancaria', cheque:'Cheque', efectivo:'Efectivo', deposito:'Depósito' }[p.forma] || p.forma || '—';
+
+  const infoRow = (label, val) => val ? `<div class="info-row"><span class="info-label">${label}</span><span class="info-val">${val}</span></div>` : '';
+
+  const win = window.open('','_blank','width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8"/>
+    <title>Nota de Pago ${p.num_pago||''}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Inter',sans-serif;font-size:12px;color:#1A1C21;padding:32px;background:#fff}
+      .doc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;padding-bottom:18px;border-bottom:2px solid #101820}
+      .brand{font-size:11px;color:#5E6470;margin-top:4px}
+      .doc-num{font-size:26px;font-weight:700;color:#C84B2F;font-family:monospace}
+      .doc-fecha{font-size:11px;color:#5E6470;text-align:right;margin-top:4px}
+      .two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin:20px 0}
+      .col-title{font-size:9px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:#9EA4B0;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #E2E4E9}
+      .info-row{display:flex;flex-direction:column;margin-bottom:6px}
+      .info-label{font-size:9px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9EA4B0;margin-bottom:1px}
+      .info-val{font-size:12px;font-weight:500;color:#1A1C21}
+      .section-title{font-size:9px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:#9EA4B0;margin:24px 0 8px;padding-top:16px;border-top:2px solid #101820}
+      table{width:100%;border-collapse:collapse;margin-bottom:12px}
+      thead th{background:#F4F5F7;padding:6px 10px;text-align:left;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5E6470;border-bottom:1px solid #E2E4E9}
+      tbody td{padding:6px 10px;border-bottom:1px solid #F0F1F3;font-size:11px}
+      tbody tr:last-child td{border-bottom:none}
+      tfoot td{padding:6px 10px;font-size:11px;font-weight:700;border-top:1.5px solid #E2E4E9}
+      .num{text-align:right;font-family:monospace}
+      .asiento-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+      .asiento-num{font-size:11px;font-weight:700;font-family:monospace;color:#C84B2F}
+      .asiento-fecha{font-size:10px;color:#9EA4B0}
+      .asiento-desc{font-size:10px;color:#5E6470;margin-bottom:6px}
+      .notas{margin-top:12px;padding:10px 14px;background:#FFFBEB;border-radius:6px;font-size:11px;color:#5E6470}
+      @media print{body{padding:16px} @page{margin:12mm}}
+    </style>
+  </head><body>
+
+    <!-- HEADER -->
+    <div class="doc-header">
+      <div>
+        <h1 style="font-size:20px;font-weight:700">Nota de Pago</h1>
+        <div class="brand">TEXTILES CIRCULARES, S.A.</div>
+      </div>
+      <div style="text-align:right">
+        <div class="doc-num">${p.num_pago||'—'}</div>
+        <div class="doc-fecha">Fecha de Pago: ${fmtDate(p.fecha)}</div>
+      </div>
+    </div>
+
+    <!-- SECCIÓN 1: INFORMACIÓN DE PAGO -->
+    <div class="section-title" style="border-top:none;padding-top:0;margin-top:16px">Información de Pago</div>
+    <div class="two-col">
+      <div>
+        <div class="col-title">Proveedor</div>
+        ${infoRow('Proveedor', prov?.name)}
+        ${infoRow('NIT', prov?.nit)}
+        ${infoRow('Orden de Compra', oc?.numero)}
+        ${infoRow('Factura', f?`${f.serie||''}${f.numero||''}`:null)}
+      </div>
+      <div>
+        <div class="col-title">Detalle del Pago</div>
+        ${infoRow('Monto', fmtMoney(p.monto, p.moneda||'GTQ'))}
+        ${infoRow('Forma de Pago', formaLabel)}
+        ${infoRow('Cuenta de Origen', cta?.name)}
+        ${infoRow('Referencia', p.referencia)}
+      </div>
+    </div>
+    ${p.notas ? `<div class="notas"><strong>Notas:</strong> ${p.notas}</div>` : ''}
+
+    <!-- SECCIÓN 2: INFORMACIÓN CONTABLE -->
+    <div class="section-title">Información Contable — Asientos Generados</div>
+    ${_pagoAsientosHTML(p, true)}
+
+  </body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(()=>win.print(), 600);
+}
+
 // ── VER FACTURA OC (popup de detalle, click en el número de factura) ──
 function verFacturaOC(facturaId) {
   const f = (state.ocFacturas||[]).find(x => x.id === facturaId);
@@ -15537,28 +15807,60 @@ function verFacturaOC(facturaId) {
   const esPagada  = saldo <= 0.01;
   const esParcial = pagado > 0 && !esPagada;
   const statusLabel = esPagada ? 'Pagada' : esParcial ? 'Pagada Parcialmente' : 'Generada';
-  const statusColor = esPagada ? 'badge-green' : esParcial ? 'badge-yellow' : 'badge-blue';
+  const statusColor = esPagada ? '#16A34A' : esParcial ? '#D97706' : '#2563EB'; // verde / naranja / azul
   const monedaOC = getMonedaOC(f.oc_id);
   const tipoMap = { FC:'Factura cambiaria', FE:'Factura especial', FCAM:'Factura cambiaria' };
+  const formaLabel = { transferencia:'Transferencia Bancaria', cheque:'Cheque', efectivo:'Efectivo', deposito:'Depósito' };
 
-  document.getElementById('vfoc-title').textContent = `Factura ${f.serie||''}${f.numero||'—'}`;
+  // Detalle por línea — misma fuente que verDetalleFactura() (state.ocItems
+  // de la OC; el esquema no separa items por factura cuando una OC se
+  // factura en partes). IVA fijo de Guatemala (12%, IVA_RATE) aplicado a
+  // cada línea: el sistema no guarda cuál línea llevó IVA al momento de
+  // facturar (ese checkbox es solo del formulario, no se persiste), así que
+  // esta es una descomposición estándar, no necesariamente idéntica centavo
+  // a centavo al Neto/IVA agregado que se grabó en la factura.
+  const items = (state.ocItems||[]).filter(i => i.oc_id === f.oc_id);
+  const itemsHtml = items.map(i => {
+    const prod = (state.productos||[]).find(p => p.id === i.producto_id);
+    const esServicio = prod?.tipo === 'servicio';
+    const qty = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(f.oc_id, i.producto_id);
+    const precioUnit = Number(i.precio_unit||0);
+    const precioTotal = qty * precioUnit;
+    const neto = precioTotal;
+    const iva  = neto * IVA_RATE;
+    const lineaTotal = neto + iva;
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 12px;font-size:13px">${prod?.description||'—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${qty.toFixed(3)}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${fmtMoney(precioUnit, monedaOC)}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${fmtMoney(precioTotal, monedaOC)}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${fmtMoney(neto, monedaOC)}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${fmtMoney(iva, monedaOC)}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:600">${fmtMoney(lineaTotal, monedaOC)}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:12px">Sin líneas</td></tr>`;
+
+  document.getElementById('vfoc-title').textContent = f.num_interno || '—';
   document.getElementById('vfoc-body').innerHTML = `
+    <!-- Ribbon de estado — entre el título y la primera tabla de información -->
+    <div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;letter-spacing:0.03em;margin-bottom:16px;background:${statusColor};color:#fff">${statusLabel}</div>
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
       <div style="padding:12px 16px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
-        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">No. Factura</div>
-        <div style="font-size:16px;font-weight:700;font-family:'DM Mono',monospace">${f.serie||''}${f.numero||'—'}</div>
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Serie</div>
+        <div style="font-size:16px;font-weight:700;font-family:'DM Mono',monospace">${f.serie||'—'}</div>
       </div>
       <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
-        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Fecha</div>
-        <div style="font-size:14px;font-weight:500">${fmtDate(f.fecha)}</div>
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Factura</div>
+        <div style="font-size:16px;font-weight:700;font-family:'DM Mono',monospace">${f.numero||'—'}</div>
       </div>
       <div style="padding:12px 16px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
         <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Proveedor</div>
         <div style="font-size:14px;font-weight:500">${prov?.name||'—'}</div>
       </div>
       <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
-        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Orden de Compra</div>
-        <div style="font-size:14px;font-weight:500;font-family:'DM Mono',monospace">${oc?.numero||'—'}</div>
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Fecha</div>
+        <div style="font-size:14px;font-weight:500">${fmtDate(f.fecha)}</div>
       </div>
       <div style="padding:12px 16px;border-right:1px solid var(--border)">
         <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Tipo</div>
@@ -15568,36 +15870,47 @@ function verFacturaOC(facturaId) {
         <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Vencimiento</div>
         <div style="font-size:13px">${f.fecha_vencimiento?fmtDate(f.fecha_vencimiento):'—'}</div>
       </div>
+      <div style="padding:12px 16px;border-top:1px solid var(--border);grid-column:1 / -1">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Orden de Compra</div>
+        <div style="font-size:14px;font-weight:500;font-family:'DM Mono',monospace">${oc?.numero||'—'}</div>
+      </div>
     </div>
 
+    <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Detalle</div>
     <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px">
-        <span style="color:var(--text2)">Neto</span>
-        <span style="font-family:'DM Mono',monospace">${compra ? fmtMoney(compra.valor_neto, monedaOC) : '—'}</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px">
-        <span style="color:var(--text2)">IVA</span>
-        <span style="font-family:'DM Mono',monospace">${compra ? fmtMoney(compra.valor_iva, monedaOC) : '—'}</span>
-      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--surface2)">
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Producto</th>
+          <th style="padding:7px 12px;text-align:right;font-size:11px">Cantidad</th>
+          <th style="padding:7px 12px;text-align:right;font-size:11px">Precio Unitario</th>
+          <th style="padding:7px 12px;text-align:right;font-size:11px">Precio Total</th>
+          <th style="padding:7px 12px;text-align:right;font-size:11px">Neto</th>
+          <th style="padding:7px 12px;text-align:right;font-size:11px">IVA</th>
+          <th style="padding:7px 12px;text-align:right;font-size:11px">Total</th>
+        </tr></thead>
+        <tbody>${itemsHtml}</tbody>
+      </table>
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:var(--surface2);font-weight:600">
-        <span>Total</span>
+        <span>Total Factura</span>
         <span style="font-family:'DM Mono',monospace;font-size:18px">${fmtMoney(total, monedaOC)}</span>
       </div>
     </div>
-
-    <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Estado</div>
-    <div style="margin-bottom:20px"><span class="badge ${statusColor}">${statusLabel}</span></div>
 
     <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Pagos</div>
     <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px">
       ${pagos.length ? pagos.map(p => {
         const cta = state.cuentas.find(c => c.id === p.cuenta_id);
-        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px">
-          <div style="color:var(--text2)">${fmtDate(p.fecha)} · ${p.forma||'—'} · ${cta?.name||'—'}${p.notas ? ' · '+p.notas : ''}</div>
-          <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--green)">${fmtMoney(p.monto, monedaOC)}</span>
+        return `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px">
+          <div style="color:var(--text2);line-height:1.6">
+            <div><strong style="color:var(--text)">Fecha de pago:</strong> ${fmtDate(p.fecha)}</div>
+            <div><strong style="color:var(--text)">Banco de origen:</strong> ${cta?.name||'—'}</div>
+            <div><strong style="color:var(--text)">Forma de pago:</strong> ${formaLabel[p.forma]||p.forma||'—'}</div>
+            <div style="margin-top:6px"><strong style="color:var(--text)">Banco destino:</strong> ${prov?.banco||'—'}${prov?.num_cuenta?' - '+prov.num_cuenta:''}</div>
+          </div>
+          <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--green);white-space:nowrap;margin-left:16px">${fmtMoney(p.monto, monedaOC)}</span>
         </div>`;
       }).join('') : '<div style="padding:12px 16px;color:var(--text3);font-size:13px">Sin pagos registrados</div>'}
-      <div style="display:flex;justify-content:space-between;padding:10px 16px;background:var(--surface2);font-size:13px">
+      <div style="display:flex;justify-content:flex-end;padding:10px 16px;background:var(--surface2);font-size:13px">
         <div style="display:flex;gap:20px">
           <span>Pagado: <strong style="color:var(--green)">${fmtMoney(pagado, monedaOC)}</strong></span>
           <span>Saldo: <strong style="color:${esPagada?'var(--text3)':'var(--accent)'}">${fmtMoney(saldo, monedaOC)}</strong></span>
@@ -15685,10 +15998,12 @@ function renderOCPanel(ocId) {
     const statusColor = esPagada ? 'badge-green' : esParcial ? 'badge-yellow' : 'badge-blue';
     return `<tr style="${esPagada?'opacity:0.75':''}">
       <td class="td-mono" style="font-size:11px;color:var(--accent);cursor:pointer;text-decoration:underline" onclick="verFacturaOC('${f.id}')">${f.num_interno||'—'}</td>
-      <td class="td-mono" style="cursor:pointer;color:var(--accent);text-decoration:underline" onclick="verFacturaOC('${f.id}')">${f.serie||'—'}${f.numero||'—'}</td>
+      <td class="td-mono">${f.serie||'—'}${f.numero||'—'}</td>
       <td>${fmtDate(f.fecha)}</td>
       <td class="td-mono">${fmtMoney(f.total, monedaOCFacturas)}</td>
-      <td class="td-mono" style="color:var(--green)">${pagado>0?pagosF.map(p=>p.num_pago||'').filter(Boolean).join(', ')||fmtMoney(pagado, monedaOCFacturas):'—'}</td>
+      <td class="td-mono" style="color:var(--green)">${pagado>0
+        ? (pagosF.filter(p=>p.num_pago).map(p=>`<span style="cursor:pointer;text-decoration:underline" onclick="verDetallePago('${p.id}')" title="Ver detalle del pago">${p.num_pago}</span>`).join(', ') || fmtMoney(pagado, monedaOCFacturas))
+        : '—'}</td>
       <td class="td-mono" style="color:${esPagada?'var(--text3)':'var(--accent)'};font-weight:${esPagada?'400':'700'}">${esPagada?'—':fmtMoney(saldo, monedaOCFacturas)}</td>
       <td><span class="badge ${statusColor}">${statusLabel}</span></td>
       <td>${!esPagada
