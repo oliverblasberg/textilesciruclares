@@ -360,6 +360,10 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 .modal-body { padding: 18px 20px; }
 .prov-tab { padding:12px 18px;font-size:13px;font-weight:600;border:none;background:transparent;color:var(--text3);cursor:pointer;margin-bottom:-2px;white-space:nowrap;border-bottom:2px solid transparent; }
 .prov-tab-active { background:var(--bg)!important;color:var(--accent)!important;border-bottom:2px solid var(--accent)!important; }
+/* Mismo estilo que .prov-tab/.prov-tab-active — el modal de Cliente usa esta
+   clase equivalente para no acoplar su modal a nombres "prov-*". */
+.clt-tab { padding:12px 18px;font-size:13px;font-weight:600;border:none;background:transparent;color:var(--text3);cursor:pointer;margin-bottom:-2px;white-space:nowrap;border-bottom:2px solid transparent; }
+.clt-tab-active { background:var(--bg)!important;color:var(--accent)!important;border-bottom:2px solid var(--accent)!important; }
 .modal-footer {
   padding: 12px 20px; border-top: 1px solid var(--border);
   display: flex; justify-content: flex-end; gap: 8px;
@@ -1363,7 +1367,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <span class="search-icon">⌕</span>
             <input type="text" id="search-clientes" placeholder="Buscar cliente..." oninput="renderClientes()"/>
           </div>
-          <button class="btn btn-primary" onclick="openModal('modal-cliente')">+ Nuevo Cliente</button>
+          <button class="btn btn-primary" onclick="resetClienteForm()">+ Nuevo Cliente</button>
         </div>
         <div class="card">
           <div class="table-wrap">
@@ -2315,15 +2319,29 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 <!-- CLIENTE -->
 <div class="modal-overlay" id="modal-cliente" onclick="if(event.target===this)closeModal('modal-cliente')">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg" style="max-width:700px;width:95vw">
     <div class="modal-header">
       <div class="modal-title" id="modal-cliente-title">Nuevo Cliente</div>
       <button class="modal-close" onclick="closeModal('modal-cliente')">✕</button>
     </div>
-    <div class="modal-body">
+    <div class="modal-body" style="padding:0">
       <input type="hidden" id="clt-id"/>
-      <div class="form-grid form-grid-2">
-        <div class="form-section-title">Identificación</div>
+
+      <!-- TABS -->
+      <div style="display:flex;flex-wrap:wrap;border-bottom:2px solid var(--border);background:var(--surface2)">
+        <button id="clt-tab-general"     onclick="clienteTab('general')"     class="clt-tab clt-tab-active">🏢 General</button>
+        <button id="clt-tab-contab"      onclick="clienteTab('contab')"      class="clt-tab">💰 Contabilidad</button>
+        <button id="clt-tab-produccion"  onclick="clienteTab('produccion')"  class="clt-tab">🏭 Producción</button>
+        <button id="clt-tab-otros"       onclick="clienteTab('otros')"       class="clt-tab">⚙️ Otros</button>
+      </div>
+
+      <!-- Los 4 tabs se apilan en la misma celda de grid (igual que Proveedor)
+           para que el modal mantenga siempre la altura del tab más alto y no
+           se encoja/crezca al cambiar de tab. -->
+      <div style="display:grid">
+      <!-- TAB 1: GENERAL -->
+      <div id="clt-panel-general" style="grid-column:1;grid-row:1;padding:20px">
+        <div class="form-grid form-grid-2">
         <div class="field"><label id="clt-nit-label">NIT *</label><input type="text" id="clt-code" placeholder="1234567-8"/></div>
         <div class="field field-full"><label>Nombre / Razón Social *</label><input type="text" id="clt-name"/></div>
 
@@ -2530,30 +2548,69 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           </select>
         </div>
 
-        <div class="form-section-title">Contacto de Facturación</div>
-        <div class="field field-full"><label>Nombre</label><input type="text" id="clt-fact-nombre" placeholder="Nombre del contacto de facturación"/></div>
-        <div class="field"><label>Email</label><input type="email" id="clt-fact-email" placeholder="facturacion@empresa.com"/></div>
-        <div class="field"><label>Teléfono</label><input type="text" id="clt-fact-tel" placeholder="+502 0000-0000"/></div>
-
-        <div class="form-section-title">Contacto de Producción</div>
-        <div class="field field-full"><label>Nombre</label><input type="text" id="clt-prod-nombre" placeholder="Nombre del contacto de producción"/></div>
-        <div class="field"><label>Email</label><input type="email" id="clt-prod-email" placeholder="produccion@empresa.com"/></div>
-        <div class="field"><label>Teléfono</label><input type="text" id="clt-prod-tel" placeholder="+502 0000-0000"/></div>
-
         <div class="form-section-title">General</div>
         <div class="field"><label>Teléfono General</label><input type="text" id="clt-phone" placeholder="+502 0000-0000"/></div>
         <div class="field"><label>Email General</label><input type="email" id="clt-email" placeholder="info@empresa.com"/></div>
-        <div class="field field-full"><label>Notas</label><textarea id="clt-notes"></textarea></div>
-        <div class="field"><label>Términos de Pago</label>
-          <select id="clt-terminos"><option value="">— Seleccionar —</option></select>
-        </div>
-        <div class="field"><label>Incoterms</label>
-          <select id="clt-incoterms"><option value="">— Seleccionar —</option></select>
-        </div>
-        <div class="field field-full"><label>Bodega Predeterminada</label>
-          <select id="clt-bodega"><option value="">— Seleccionar bodega —</option></select>
+        <div class="field field-full"><label>Notas</label><textarea id="clt-notes" rows="2"></textarea></div>
         </div>
       </div>
+
+      <!-- TAB 2: CONTABILIDAD -->
+      <div id="clt-panel-contab" style="grid-column:1;grid-row:1;visibility:hidden;padding:20px">
+        <div class="form-grid form-grid-2">
+          <div class="form-section-title">Contacto de Facturación</div>
+          <div class="field field-full"><label>Nombre</label><input type="text" id="clt-fact-nombre" placeholder="Nombre del contacto de facturación"/></div>
+          <div class="field"><label>Email</label><input type="email" id="clt-fact-email" placeholder="facturacion@empresa.com"/></div>
+          <div class="field"><label>Teléfono</label><input type="text" id="clt-fact-tel" placeholder="+502 0000-0000"/></div>
+          <div class="form-section-title">Moneda</div>
+          <div class="field"><label>Moneda Principal *</label>
+            <select id="clt-moneda" onchange="onCltMonedaChange()">
+              <option value="GTQ">GTQ — Quetzal</option>
+              <option value="USD">USD — Dólar</option>
+            </select>
+          </div>
+          <div class="field"><label>También opera en</label>
+            <select id="clt-moneda2">
+              <option value="">— Solo moneda principal —</option>
+              <option value="GTQ">GTQ — Quetzal</option>
+              <option value="USD">USD — Dólar</option>
+            </select>
+          </div>
+          <div class="form-section-title">Términos</div>
+          <div class="field field-full"><label>Términos de Pago</label>
+            <select id="clt-terminos"><option value="">— Seleccionar —</option></select>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: PRODUCCIÓN -->
+      <div id="clt-panel-produccion" style="grid-column:1;grid-row:1;visibility:hidden;padding:20px">
+        <div class="form-grid form-grid-2">
+          <div class="form-section-title">Contacto de Producción</div>
+          <div class="field field-full"><label>Nombre</label><input type="text" id="clt-prod-nombre" placeholder="Nombre del contacto de producción"/></div>
+          <div class="field"><label>Email</label><input type="email" id="clt-prod-email" placeholder="produccion@empresa.com"/></div>
+          <div class="field"><label>Teléfono</label><input type="text" id="clt-prod-tel" placeholder="+502 0000-0000"/></div>
+          <div class="form-section-title">Logística</div>
+          <div class="field field-full"><label>Bodega Predeterminada</label>
+            <select id="clt-bodega"><option value="">— Seleccionar bodega —</option></select>
+          </div>
+          <div class="field field-full"><label>Incoterms Predeterminado</label>
+            <select id="clt-incoterms"><option value="">— Seleccionar —</option></select>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 4: OTROS -->
+      <div id="clt-panel-otros" style="grid-column:1;grid-row:1;visibility:hidden;padding:20px">
+        <div class="form-grid form-grid-2">
+          <div class="form-section-title">Otros</div>
+          <div class="field field-full" style="padding:14px 16px;background:var(--surface2);border-radius:8px;color:var(--text3);font-size:12px">
+            Sin configuraciones adicionales por ahora — reservado para futuras integraciones específicas de clientes.
+          </div>
+        </div>
+      </div>
+      </div><!-- /grid tabs wrapper -->
+
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-cliente')">Cerrar</button>
@@ -4953,15 +5010,19 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <input type="hidden" id="prov-id"/>
 
       <!-- TABS -->
-      <div style="display:flex;border-bottom:2px solid var(--border);background:var(--surface2);overflow-x:auto">
+      <div style="display:flex;flex-wrap:wrap;border-bottom:2px solid var(--border);background:var(--surface2)">
         <button id="prov-tab-general"     onclick="provTab('general')"     class="prov-tab prov-tab-active">🏢 General</button>
         <button id="prov-tab-contab"      onclick="provTab('contab')"      class="prov-tab">💰 Contabilidad</button>
         <button id="prov-tab-produccion"  onclick="provTab('produccion')"  class="prov-tab">🏭 Producción</button>
         <button id="prov-tab-otros"       onclick="provTab('otros')"       class="prov-tab">⚙️ Otros</button>
       </div>
 
+      <!-- Los 4 tabs se apilan en la misma celda de grid (igual que el modal
+           Registrar Pago) para que el modal mantenga siempre la altura del
+           tab más alto y no se encoja/crezca al cambiar de tab. -->
+      <div style="display:grid">
       <!-- TAB 1: GENERAL -->
-      <div id="prov-panel-general" style="padding:20px">
+      <div id="prov-panel-general" style="grid-column:1;grid-row:1;padding:20px">
         <div class="form-grid form-grid-2">
           <div class="field"><label>NIT *</label><input type="text" id="prov-nit" placeholder="1234567-8"/></div>
           <div class="field field-full"><label>Nombre / Razón Social *</label><input type="text" id="prov-name"/></div>
@@ -4985,7 +5046,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       </div>
 
       <!-- TAB 2: CONTABILIDAD -->
-      <div id="prov-panel-contab" style="display:none;padding:20px">
+      <div id="prov-panel-contab" style="grid-column:1;grid-row:1;visibility:hidden;padding:20px">
         <div class="form-grid form-grid-2">
           <div class="form-section-title">Contacto de Facturación</div>
           <div class="field field-full"><label>Nombre</label><input type="text" id="prov-fact-nombre" placeholder="Nombre del contacto"/></div>
@@ -5023,7 +5084,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       </div>
 
       <!-- TAB 3: PRODUCCIÓN -->
-      <div id="prov-panel-produccion" style="display:none;padding:20px">
+      <div id="prov-panel-produccion" style="grid-column:1;grid-row:1;visibility:hidden;padding:20px">
         <div class="form-grid form-grid-2">
           <div class="form-section-title">Contacto de Producción</div>
           <div class="field field-full"><label>Nombre</label><input type="text" id="prov-prod-nombre" placeholder="Nombre del contacto"/></div>
@@ -5040,7 +5101,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       </div>
 
       <!-- TAB 4: OTROS -->
-      <div id="prov-panel-otros" style="display:none;padding:20px">
+      <div id="prov-panel-otros" style="grid-column:1;grid-row:1;visibility:hidden;padding:20px">
         <div class="form-grid form-grid-2">
           <div class="form-section-title">Integraciones Configuradas</div>
           <div class="field field-full" style="padding:14px 16px;background:var(--surface2);border-radius:8px">
@@ -5063,6 +5124,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           </div>
         </div>
       </div>
+      </div><!-- /grid tabs wrapper -->
 
     </div>
     <div class="modal-footer">
@@ -5940,8 +6002,11 @@ function editCliente(id) {
     '<option value="">— Seleccionar bodega —</option>' +
     (state.bodegas||[]).filter(b=>b.activa!==false)
       .map(b=>`<option value="${b.id}"${b.id===c.bodega_id?' selected':''}>${b.codigo?b.codigo+' — ':''}${b.nombre}</option>`).join('');
-  document.getElementById('clt-moneda') && (document.getElementById('clt-moneda').value = '');
-  document.getElementById('clt-moneda2') && (document.getElementById('clt-moneda2').value = '');
+  document.getElementById('clt-moneda').value   = c.moneda||'GTQ';
+  document.getElementById('clt-moneda2').value  = c.moneda2||'';
+  onCltMonedaChange();
+  if (c.moneda2) document.getElementById('clt-moneda2').value = c.moneda2;
+  clienteTab('general');
   document.getElementById('modal-cliente-title').textContent = 'Editar Cliente';
   openModal('modal-cliente');
 }
@@ -5955,9 +6020,12 @@ function resetClienteForm() {
     '<option value="">— Seleccionar bodega —</option>' +
     (state.bodegas||[]).filter(b=>b.activa!==false)
       .map(b=>`<option value="${b.id}">${b.codigo?b.codigo+' — ':''}${b.nombre}</option>`).join('');
-  document.getElementById('clt-moneda') && (document.getElementById('clt-moneda').value = 'GTQ');
-  document.getElementById('clt-moneda2') && (document.getElementById('clt-moneda2').value = '');
+  document.getElementById('clt-moneda').value  = 'GTQ';
+  document.getElementById('clt-moneda2').value = '';
+  onCltMonedaChange();
+  clienteTab('general');
   document.getElementById('modal-cliente-title').textContent = 'Nuevo Cliente';
+  openModal('modal-cliente');
 }
 
 async function saveCliente() {
@@ -5980,8 +6048,11 @@ async function saveCliente() {
       toast(`Ya existe un cliente con NIT ${code}: "${duplicate.name}"`, 'error');
       return;
     }
+    const moneda  = document.getElementById('clt-moneda').value;
+    const moneda2 = document.getElementById('clt-moneda2').value;
     const row = {
-      code, name,
+      code, name, moneda,
+      moneda2:       moneda2 || null,
       address:       document.getElementById('clt-address').value.trim(),
       address2:      document.getElementById('clt-address2').value.trim(),
       estado:        document.getElementById('clt-estado').value.trim(),
@@ -9404,8 +9475,20 @@ function renderProveedores() {
 
 function provTab(tab) {
   ['general','contab','produccion','otros'].forEach(t => {
-    document.getElementById(`prov-panel-${t}`).style.display = t===tab ? '' : 'none';
+    document.getElementById(`prov-panel-${t}`).style.visibility = t===tab ? 'visible' : 'hidden';
     const btn = document.getElementById(`prov-tab-${t}`);
+    btn.style.background   = t===tab ? 'var(--bg)' : 'transparent';
+    btn.style.color        = t===tab ? 'var(--accent)' : 'var(--text3)';
+    btn.style.borderBottom = t===tab ? '2px solid var(--accent)' : 'none';
+  });
+}
+
+// Igual a provTab() — modal de Cliente usa la misma estructura de tabs
+// apilados en grid que Proveedor (ver comentario en el HTML del modal).
+function clienteTab(tab) {
+  ['general','contab','produccion','otros'].forEach(t => {
+    document.getElementById(`clt-panel-${t}`).style.visibility = t===tab ? 'visible' : 'hidden';
+    const btn = document.getElementById(`clt-tab-${t}`);
     btn.style.background   = t===tab ? 'var(--bg)' : 'transparent';
     btn.style.color        = t===tab ? 'var(--accent)' : 'var(--text3)';
     btn.style.borderBottom = t===tab ? '2px solid var(--accent)' : 'none';
@@ -9517,7 +9600,19 @@ function onProvMonedaChange() {
   if (current2 && current2 !== principal) sel2.value = current2;
 }
 
-// onCltMonedaChange removed — cliente no longer has moneda field
+// Igual a onProvMonedaChange() — restaurada junto con el tab Contabilidad
+// del modal de Cliente (moneda/moneda2 ya eran leídas por monedasDisponibles()/
+// getMonedaOV() en el resto del código, pero el modal no tenía UI para
+// capturarlas).
+function onCltMonedaChange() {
+  const principal = document.getElementById('clt-moneda').value;
+  const sel2      = document.getElementById('clt-moneda2');
+  const current2  = sel2.value;
+  sel2.innerHTML  = '<option value="">— Solo moneda principal —</option>' +
+    ['GTQ','USD'].filter(m => m !== principal)
+      .map(m => `<option value="${m}">${m === 'GTQ' ? 'GTQ — Quetzal' : 'USD — Dólar'}</option>`).join('');
+  if (current2 && current2 !== principal) sel2.value = current2;
+}
 
 async function saveProveedor() {
   try {
