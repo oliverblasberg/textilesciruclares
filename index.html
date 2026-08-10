@@ -5476,9 +5476,16 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   <div class="modal modal-lg">
     <div class="modal-header">
       <div class="modal-title" id="vfoc-title">Factura</div>
-      <button class="modal-close" onclick="closeModal('modal-ver-factura-oc')">✕</button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="imprimirFacturaOC(currentVerFacturaOCId)">🖨 Imprimir Factura</button>
+        <button class="modal-close" onclick="closeModal('modal-ver-factura-oc')">✕</button>
+      </div>
     </div>
-    <div class="modal-body" id="vfoc-body"></div>
+    <!-- padding:0 — el padding lo maneja cada panel (vfoc-panel-info /
+         vfoc-panel-contable) por separado, igual que el modal Registrar Pago,
+         así la barra de tabs queda a todo lo ancho, sin el padding del
+         .modal-body heredado. -->
+    <div class="modal-body" id="vfoc-body" style="padding:0"></div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-ver-factura-oc')">Cerrar</button>
     </div>
@@ -15031,6 +15038,11 @@ const OC_STATUS_LABEL = {
 };
 
 let currentOCId = null;
+// Factura OC actualmente mostrada en el modal "modal-ver-factura-oc" — el
+// botón "Imprimir Factura" del header (estático en el HTML, fuera del
+// innerHTML que arma verFacturaOC()) lo necesita para saber cuál factura
+// imprimir.
+let currentVerFacturaOCId = null;
 
 // ── Correlativos ──
 function nextRecepcionNum() {
@@ -15557,11 +15569,43 @@ function asientosDePago(p) {
 // Arma el bloque de tabla(s) Cuenta/Descripción/Monto Original/Debe/Haber
 // para cada asiento asociado a un pago — mismo formato de columnas que el
 // tab "Información Contable" del modal Registrar Pago (renderPagoApuntesPreview).
+// Todos los asientos relacionados con una factura de OC: el asiento propio
+// de la factura (asientoFacturaCompra, referencia_id -> facturaId — incluye
+// también cualquier diferencial cambiario, que también enlaza referencia_id
+// -> facturaId) MÁS los asientos de cada uno de sus pagos (vía
+// asientosDePago(), que ya sabe encontrar single-mode, multi-mode, etc.).
+function asientosDeFactura(facturaId) {
+  if (!facturaId) return [];
+  const pagos = (state.pagosOC||[]).filter(p => p.factura_id === facturaId);
+  const directos = (state.asientos||[]).filter(a => a.referencia_id === facturaId);
+  const dePagos   = pagos.flatMap(p => asientosDePago(p));
+  const seen = new Set();
+  const todos = [...directos, ...dePagos].filter(a => {
+    if (seen.has(a.id)) return false;
+    seen.add(a.id); return true;
+  });
+  return todos.sort((x,y) => (x.numero||'').localeCompare(y.numero||''));
+}
+
 function _pagoAsientosHTML(p, forPrint) {
-  const asientos = asientosDePago(p);
+  return _asientosTablaHTML(asientosDePago(p), forPrint, 'este pago');
+}
+
+function _facturaAsientosHTML(facturaId, forPrint) {
+  return _asientosTablaHTML(asientosDeFactura(facturaId), forPrint, 'esta factura');
+}
+
+// Tabla Cuenta/Descripción/Monto Original/Debe/Haber por cada asiento —
+// mismo formato que el tab "Información Contable" del modal Registrar Pago
+// (ver renderPagoApuntesPreview). Reutilizado tanto por el detalle de Nota
+// de Pago como por el detalle de Factura OC, y por sus respectivos
+// documentos de impresión (forPrint=true usa colores hex fijos en vez de
+// variables CSS, ya que la ventana de impresión no carga la hoja de estilos
+// de la app).
+function _asientosTablaHTML(asientos, forPrint, contexto) {
   if (!asientos.length) {
     return `<div style="padding:${forPrint?'16px 0':'32px 24px'};text-align:center;color:${forPrint?'#9EA4B0':'var(--text3)'};font-size:12px">
-      No se encontraron asientos contables asociados a este pago.
+      No se encontraron asientos contables asociados a ${contexto||'esto'}.
     </div>`;
   }
   const border = forPrint ? '#E2E4E9' : 'var(--border)';
@@ -15625,9 +15669,9 @@ function verDetallePago(pagoId) {
   const formaLabel = { transferencia:'Transferencia Bancaria', cheque:'Cheque', efectivo:'Efectivo', deposito:'Depósito' }[p.forma] || p.forma || '—';
 
   const html = `
-    <div style="max-width:560px;width:95vw;background:var(--bg);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
-      <!-- Header -->
-      <div style="padding:20px 24px;display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1.5px solid var(--border)">
+    <div class="modal modal-lg">
+      <!-- Header — mismo tamaño (modal-lg, 860px) que el detalle de Factura OC -->
+      <div class="modal-header">
         <div>
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text3);letter-spacing:0.1em;margin-bottom:4px">Nota de Pago</div>
           <div style="font-family:'DM Mono',monospace;font-size:22px;font-weight:700;color:var(--accent)">${p.num_pago||'—'}</div>
@@ -15635,8 +15679,7 @@ function verDetallePago(pagoId) {
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <button class="btn btn-ghost btn-sm" onclick="imprimirPago('${p.id}')">🖨 Imprimir Pago</button>
-          <button onclick="this.closest('.modal-overlay').remove()"
-            style="background:transparent;border:none;cursor:pointer;font-size:20px;color:var(--text3)">✕</button>
+          <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
         </div>
       </div>
 
@@ -15655,7 +15698,7 @@ function verDetallePago(pagoId) {
       <!-- Ambos tabs se apilan en la misma celda de grid, igual que en el
            modal Registrar Pago, para que la ventana no cambie de tamaño al
            alternar entre tabs. -->
-      <div style="display:grid;max-height:60vh;overflow:auto">
+      <div style="display:grid">
       <div id="vpago-panel-info" style="grid-column:1;grid-row:1">
         <!-- Datos -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 24px;border-bottom:1.5px solid var(--border)">
@@ -15683,7 +15726,7 @@ function verDetallePago(pagoId) {
       </div>
 
       <!-- Footer -->
-      <div style="padding:14px 24px;display:flex;justify-content:flex-end;gap:8px;border-top:1.5px solid var(--border)">
+      <div class="modal-footer">
         ${f ? `<button class="btn btn-ghost btn-sm" onclick="this.closest('.modal-overlay').remove();verFacturaOC('${f.id}')">🧾 Ver Factura</button>` : ''}
         <button class="btn btn-ghost btn-sm" onclick="this.closest('.modal-overlay').remove()">Cerrar</button>
       </div>
@@ -15806,6 +15849,7 @@ function imprimirPago(pagoId) {
 function verFacturaOC(facturaId) {
   const f = (state.ocFacturas||[]).find(x => x.id === facturaId);
   if (!f) return;
+  currentVerFacturaOCId = facturaId;
   const oc     = state.oc.find(o => o.id === f.oc_id);
   const prov   = state.proveedores.find(p => p.id === oc?.proveedor_id);
   const compra = (state.compras||[]).find(c => c.factura_id === facturaId);
@@ -15850,7 +15894,12 @@ function verFacturaOC(facturaId) {
   }).join('') || `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:12px">Sin líneas</td></tr>`;
 
   document.getElementById('vfoc-title').textContent = f.num_interno || '—';
-  document.getElementById('vfoc-body').innerHTML = `
+
+  // Contenido del tab "Información de Factura" — el mismo layout que ya
+  // existía (ribbon de estado, datos, detalle por línea, pagos), ahora
+  // dentro de un panel propio para poder alternarlo con el nuevo tab
+  // "Información Contable".
+  const infoHtml = `
     <!-- Ribbon de estado — entre el título y la primera tabla de información -->
     <div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;letter-spacing:0.03em;margin-bottom:16px;background:${statusColor};color:#fff">${statusLabel}</div>
 
@@ -15928,7 +15977,180 @@ function verFacturaOC(facturaId) {
     </div>
     ${f.notas ? `<div style="font-size:12px;color:var(--text2)"><strong>Notas:</strong> ${f.notas}</div>` : ''}
   `;
+
+  document.getElementById('vfoc-body').innerHTML = `
+    <!-- TABS -->
+    <div style="display:flex;border-bottom:2px solid var(--border);background:var(--surface2)">
+      <button id="vfoc-tab-info" onclick="vfocTab('info')"
+        style="padding:10px 18px;font-size:13px;font-weight:600;border:none;background:var(--bg);border-bottom:2px solid var(--accent);color:var(--accent);cursor:pointer;margin-bottom:-2px">
+        📄 Información de Factura
+      </button>
+      <button id="vfoc-tab-contable" onclick="vfocTab('contable')"
+        style="padding:10px 18px;font-size:13px;font-weight:600;border:none;background:transparent;color:var(--text3);cursor:pointer;margin-bottom:-2px">
+        📊 Información Contable
+      </button>
+    </div>
+
+    <!-- Ambos tabs se apilan en la misma celda de grid, igual que en el
+         modal Registrar Pago / detalle de Nota de Pago, para que la ventana
+         no cambie de tamaño al alternar entre tabs. -->
+    <div style="display:grid">
+      <div id="vfoc-panel-info" style="grid-column:1;grid-row:1;padding:20px">${infoHtml}</div>
+      <div id="vfoc-panel-contable" style="grid-column:1;grid-row:1;padding:20px;visibility:hidden">
+        ${_facturaAsientosHTML(facturaId, false)}
+      </div>
+    </div>
+  `;
+  vfocTab('info');
   openModal('modal-ver-factura-oc');
+}
+
+function vfocTab(tab) {
+  document.getElementById('vfoc-panel-info').style.visibility     = tab==='info'     ? 'visible' : 'hidden';
+  document.getElementById('vfoc-panel-contable').style.visibility = tab==='contable' ? 'visible' : 'hidden';
+  document.getElementById('vfoc-tab-info').style.background       = tab==='info'     ? 'var(--bg)' : 'transparent';
+  document.getElementById('vfoc-tab-info').style.color            = tab==='info'     ? 'var(--accent)' : 'var(--text3)';
+  document.getElementById('vfoc-tab-info').style.borderBottom     = tab==='info'     ? '2px solid var(--accent)' : 'none';
+  document.getElementById('vfoc-tab-contable').style.background   = tab==='contable' ? 'var(--bg)' : 'transparent';
+  document.getElementById('vfoc-tab-contable').style.color        = tab==='contable' ? 'var(--accent)' : 'var(--text3)';
+  document.getElementById('vfoc-tab-contable').style.borderBottom = tab==='contable' ? '2px solid var(--accent)' : 'none';
+}
+
+// ── IMPRIMIR FACTURA OC — documento con 2 secciones: Información de
+// Factura + Información Contable (asientos generados por la factura y sus
+// pagos). Mismo patrón que imprimirOC()/imprimirPago(): ventana nueva, HTML
+// autocontenido, window.print() automático.
+function imprimirFacturaOC(facturaId) {
+  const f = (state.ocFacturas||[]).find(x => x.id === facturaId);
+  if (!f) { toast('Factura no encontrada','error'); return; }
+  const oc     = state.oc.find(o => o.id === f.oc_id);
+  const prov   = state.proveedores.find(p => p.id === oc?.proveedor_id);
+  const pagos  = (state.pagosOC||[]).filter(p => p.factura_id === facturaId);
+  const pagado = pagos.reduce((s,p)=>s+Number(p.monto||0),0);
+  const total  = Number(f.total||0);
+  const saldo  = Math.max(0, total - pagado);
+  const monedaOC = getMonedaOC(f.oc_id);
+  const tipoMap = { FC:'Factura cambiaria', FE:'Factura especial', FCAM:'Factura cambiaria' };
+  const formaLabel = { transferencia:'Transferencia Bancaria', cheque:'Cheque', efectivo:'Efectivo', deposito:'Depósito' };
+
+  const items = (state.ocItems||[]).filter(i => i.oc_id === f.oc_id);
+  const itemsRows = items.map(i => {
+    const prod = (state.productos||[]).find(p => p.id === i.producto_id);
+    const esServicio = prod?.tipo === 'servicio';
+    const qty = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(f.oc_id, i.producto_id);
+    const precioUnit = Number(i.precio_unit||0);
+    const precioTotal = qty * precioUnit;
+    const neto = precioTotal;
+    const iva  = neto * IVA_RATE;
+    const lineaTotal = neto + iva;
+    return `<tr>
+      <td>${prod?.description||'—'}</td>
+      <td class="num">${qty.toFixed(3)}</td>
+      <td class="num">${fmtMoney(precioUnit, monedaOC)}</td>
+      <td class="num">${fmtMoney(precioTotal, monedaOC)}</td>
+      <td class="num">${fmtMoney(neto, monedaOC)}</td>
+      <td class="num">${fmtMoney(iva, monedaOC)}</td>
+      <td class="num" style="font-weight:600">${fmtMoney(lineaTotal, monedaOC)}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="7" style="text-align:center;color:#9EA4B0">Sin líneas</td></tr>`;
+
+  const pagosRows = pagos.length ? pagos.map(p => {
+    const cta = state.cuentas.find(c => c.id === p.cuenta_id);
+    return `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 0;border-bottom:1px solid #F0F1F3;font-size:11px">
+      <div style="color:#5E6470;line-height:1.6">
+        <div><strong style="color:#1A1C21">Fecha de pago:</strong> ${fmtDate(p.fecha)}</div>
+        <div><strong style="color:#1A1C21">Banco de origen:</strong> ${cta?.name||'—'}</div>
+        <div><strong style="color:#1A1C21">Forma de pago:</strong> ${formaLabel[p.forma]||p.forma||'—'}</div>
+        <div><strong style="color:#1A1C21">Banco destino:</strong> ${prov?.banco||'—'}${prov?.num_cuenta?' - '+prov.num_cuenta:''}</div>
+      </div>
+      <span style="font-weight:600;color:#16A34A;white-space:nowrap;margin-left:16px">${fmtMoney(p.monto, monedaOC)}</span>
+    </div>`;
+  }).join('') : '<div style="color:#9EA4B0;font-size:11px">Sin pagos registrados</div>';
+
+  const win = window.open('','_blank','width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8"/>
+    <title>Factura ${f.num_interno||''}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Inter',sans-serif;font-size:12px;color:#1A1C21;padding:32px;background:#fff}
+      .doc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;padding-bottom:18px;border-bottom:2px solid #101820}
+      .brand{font-size:11px;color:#5E6470;margin-top:4px}
+      .doc-num{font-size:26px;font-weight:700;color:#C84B2F;font-family:monospace}
+      .doc-fecha{font-size:11px;color:#5E6470;text-align:right;margin-top:4px}
+      .two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin:20px 0}
+      .col-title{font-size:9px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:#9EA4B0;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #E2E4E9}
+      .info-row{display:flex;flex-direction:column;margin-bottom:6px}
+      .info-label{font-size:9px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9EA4B0;margin-bottom:1px}
+      .info-val{font-size:12px;font-weight:500;color:#1A1C21}
+      .section-title{font-size:9px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:#9EA4B0;margin:24px 0 8px;padding-top:16px;border-top:2px solid #101820}
+      table{width:100%;border-collapse:collapse;margin-bottom:12px}
+      thead th{background:#F4F5F7;padding:6px 10px;text-align:left;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5E6470;border-bottom:1px solid #E2E4E9}
+      tbody td{padding:6px 10px;border-bottom:1px solid #F0F1F3;font-size:11px}
+      tbody tr:last-child td{border-bottom:none}
+      .num{text-align:right;font-family:monospace}
+      .totals{margin-left:auto;width:280px;border:1px solid #E2E4E9;border-radius:8px;overflow:hidden;margin-bottom:16px}
+      .tot-row{display:flex;justify-content:space-between;padding:8px 14px;font-size:12px}
+      .tot-row:not(:last-child){border-bottom:1px solid #F0F1F3}
+      .tot-final{background:#101820;color:#fff;font-weight:700;font-size:13px}
+      .notas{margin-top:12px;padding:10px 14px;background:#FFFBEB;border-radius:6px;font-size:11px;color:#5E6470}
+      @media print{body{padding:16px} @page{margin:12mm}}
+    </style>
+  </head><body>
+
+    <!-- HEADER -->
+    <div class="doc-header">
+      <div>
+        <h1 style="font-size:20px;font-weight:700">Factura ${f.num_interno||''}</h1>
+        <div class="brand">TEXTILES CIRCULARES, S.A.</div>
+      </div>
+      <div style="text-align:right">
+        <div class="doc-num">${f.serie||''}${f.numero||''}</div>
+        <div class="doc-fecha">Fecha: ${fmtDate(f.fecha)}</div>
+      </div>
+    </div>
+
+    <!-- SECCIÓN 1: INFORMACIÓN DE FACTURA -->
+    <div class="section-title" style="border-top:none;padding-top:0;margin-top:16px">Información de Factura</div>
+    <div class="two-col">
+      <div>
+        <div class="col-title">Proveedor / Factura</div>
+        <div class="info-row"><span class="info-label">Proveedor</span><span class="info-val">${prov?.name||'—'}</span></div>
+        <div class="info-row"><span class="info-label">Tipo</span><span class="info-val">${tipoMap[f.tipo]||f.tipo||'—'}</span></div>
+        <div class="info-row"><span class="info-label">Vencimiento</span><span class="info-val">${f.fecha_vencimiento?fmtDate(f.fecha_vencimiento):'—'}</span></div>
+        <div class="info-row"><span class="info-label">Orden de Compra</span><span class="info-val">${oc?.numero||'—'}</span></div>
+      </div>
+      <div>
+        <div class="col-title">Pagos</div>
+        ${pagosRows}
+        <div style="display:flex;justify-content:flex-end;gap:16px;margin-top:8px;font-size:11px">
+          <span>Pagado: <strong style="color:#16A34A">${fmtMoney(pagado, monedaOC)}</strong></span>
+          <span>Saldo: <strong>${fmtMoney(saldo, monedaOC)}</strong></span>
+        </div>
+      </div>
+    </div>
+
+    <table>
+      <thead><tr>
+        <th>Producto</th><th class="num">Cantidad</th><th class="num">Precio Unit.</th>
+        <th class="num">Precio Total</th><th class="num">Neto</th><th class="num">IVA</th><th class="num">Total</th>
+      </tr></thead>
+      <tbody>${itemsRows}</tbody>
+    </table>
+    <div class="totals">
+      <div class="tot-row tot-final"><span>TOTAL FACTURA</span><span style="font-family:monospace">${fmtMoney(total, monedaOC)}</span></div>
+    </div>
+    ${f.notas ? `<div class="notas"><strong>Notas:</strong> ${f.notas}</div>` : ''}
+
+    <!-- SECCIÓN 2: INFORMACIÓN CONTABLE -->
+    <div class="section-title">Información Contable — Asientos Generados</div>
+    ${_facturaAsientosHTML(facturaId, true)}
+
+  </body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(()=>win.print(), 600);
 }
 
 function renderOCPanel(ocId) {
