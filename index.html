@@ -12281,8 +12281,12 @@ function verDetalleFactura(facturaId) {
     </div>`;
 
   // Show as overlay
+  // .open es la clase que hace visible un .modal-overlay (la clase base
+  // arranca en opacity:0/pointer-events:none — ver openModal()/closeModal()
+  // y la regla CSS .modal-overlay.open). Sin agregarla, este overlay se
+  // queda invisible aunque sí esté en el DOM.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'modal-overlay open';
   overlay.style.cssText = 'display:flex;align-items:center;justify-content:center;z-index:2000';
   overlay.innerHTML = html;
   overlay.onclick = e => { if(e.target===overlay) overlay.remove(); };
@@ -15685,8 +15689,13 @@ function verDetallePago(pagoId) {
       </div>
     </div>`;
 
+  // .open es la clase que hace visible un .modal-overlay (la clase base
+  // arranca en opacity:0/pointer-events:none — ver openModal()/closeModal()
+  // y la regla CSS .modal-overlay.open). Sin agregarla, este overlay se
+  // queda invisible aunque sí esté en el DOM — esto es lo que hacía que
+  // "no se despliegue la ventana" al hacer click en la Nota de Pago.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'modal-overlay open';
   overlay.style.cssText = 'display:flex;align-items:center;justify-content:center;z-index:2000';
   overlay.innerHTML = html;
   overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
