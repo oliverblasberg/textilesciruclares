@@ -2188,7 +2188,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
               <option value="anio">Este Año</option>
             </select>
           </div>
-          <div class="field" style="max-width:150px;margin-bottom:0">
+          <div class="field" style="max-width:180px;margin-bottom:0">
             <label>Intervalo</label>
             <select class="filter-select" id="fc-intervalo" onchange="renderFlujoCajaChart()">
               <option value="dia">Día</option>
@@ -14179,14 +14179,10 @@ function renderFlujoCajaChart() {
         y: { stacked: true, ticks: { callback: v => fmtGTQ(v) }, grid: { color: '#E2E4E9' } },
       },
       plugins: {
-        // Con muchas facturas la leyenda se vuelve ilegible si se muestra
-        // una entrada por cada una — se deja solo "Balance acumulado"; el
-        // detalle de cada factura (num_interno + monto) se ve en el
-        // tooltip al pasar el mouse sobre su segmento en la barra.
-        legend: {
-          position: 'bottom', labels: { boxWidth: 12, usePointStyle: true },
-          filter: item => item.text === 'Balance acumulado',
-        },
+        // Leyenda desactivada por completo — con una entrada por factura,
+        // se sobrepobla rápido. La identificación de cada factura
+        // (num_interno + monto) se ve en el tooltip al pasar el mouse.
+        legend: { display: false },
         tooltip: {
           filter: item => Number(item.raw) !== 0,
           callbacks: {
