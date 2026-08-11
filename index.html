@@ -1636,6 +1636,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="pendiente">Generada</option>
             <option value="parcial">Parcialmente Pagada</option>
             <option value="pagado">Pagada</option>
+            <option value="cancelada">Cancelada</option>
           </select>
           <input type="month" id="filter-compras-mes" class="filter-select" onchange="renderCompras()" style="max-width:160px"/>
           <button class="btn btn-sm" id="btn-pago-compras" onclick="openPagoDesdeCompras()" style="background:#EFF6FF;color:#3B82F6;border:1px solid #BFDBFE;display:none">
@@ -12360,7 +12361,7 @@ function renderCompras() {
     const factura = c.factura_id ? state.ocFacturas.find(f=>f.id===c.factura_id) : null;
     const pagado  = factura ? (state.pagosOC||[]).filter(p=>p.factura_id===factura.id).reduce((s,p)=>s+Number(p.monto||0),0) : 0;
     const saldo   = factura ? Math.max(0, Number(factura.total||c.valor_total||0) - pagado) : Number(c.valor_total||0);
-    const estadoC = factura ? (saldo<=0?'pagado':pagado>0?'parcial':'pendiente') : (c.estado_pago||'pendiente');
+    const estadoC = factura?.status === 'cancelada' ? 'cancelada' : (saldo<=0?'pagado':pagado>0?'parcial':'pendiente');
     return (!tp  || c.tipo === tp) &&
            (!mes || (c.fecha||'').startsWith(mes)) &&
            (!estadoFilt || estadoC === estadoFilt) &&
@@ -12381,13 +12382,14 @@ function renderCompras() {
     const total   = Number(c.valor_total||0);
     const saldo   = factura ? Math.max(0, Number(factura.total||total) - pagado) : total;
     const esPagado = saldo <= 0.01;
-    const estadoColor = esPagado ? 'badge-green' : pagado>0 ? 'badge-yellow' : 'badge-blue';
-    const estadoLabel = esPagado ? 'Pagada' : pagado>0 ? 'Parcialmente Pagada' : 'Generada';
+    const esCancelada = factura?.status === 'cancelada';
+    const estadoColor = esCancelada ? 'badge-gray' : esPagado ? 'badge-green' : pagado>0 ? 'badge-yellow' : 'badge-blue';
+    const estadoLabel = esCancelada ? 'Cancelada' : esPagado ? 'Pagada' : pagado>0 ? 'Parcialmente Pagada' : 'Generada';
     sumTotal += total;
     const fechaFmt = fmtDate(c.fecha);
     return `<tr id="compra-row-${c.id}">
       <td style="padding:8px 10px;text-align:center">
-        ${!esPagado?`<input type="checkbox" class="compra-check" data-id="${c.id}"
+        ${!esPagado && !esCancelada?`<input type="checkbox" class="compra-check" data-id="${c.id}"
           data-proveedor="${c.proveedor_id||''}" data-moneda="${c.moneda||'GTQ'}"
           data-saldo="${saldo.toFixed(2)}" data-factura="${c.factura_id||''}"
           onclick="onCompraCheckChange()"
@@ -15618,11 +15620,13 @@ async function cancelarOC() {
   showOCPanel(currentOCId);
 }
 
-// Cancelación "suave" de una factura de proveedor: solo cambia el status a
-// 'cancelada' (ya respetado por ocFacturadoTotal/ocSaldoPorFacturar). No
-// elimina el registro ni el asiento contable ya generado — si la factura ya
-// fue contabilizada, la reversión contable se hace con un asiento manual,
-// igual que en cualquier sistema contable (no se editan asientos posteados).
+// Cancelación "suave" de una factura de proveedor: cambia el status a
+// 'cancelada' y, si la factura ya estaba contabilizada (asientoFacturaCompra
+// se disparó al generarla), postea un asiento de REVERSA — mismo patrón que
+// deleteOP(): swap debe/haber por línea del asiento original, mismo diario,
+// mismo referencia_id. Nunca se edita ni se borra el asiento original ya
+// posteado (no se editan asientos posteados); la reversa es un asiento
+// nuevo e independiente que lo neutraliza.
 async function cancelarFacturaOC(facturaId) {
   const f = (state.ocFacturas||[]).find(x=>x.id===facturaId);
   if (!f) { toast('Factura no encontrada','error'); return; }
@@ -15636,7 +15640,31 @@ async function cancelarFacturaOC(facturaId) {
     notas: [f.notas, motivo ? `Cancelada: ${motivo}` : 'Cancelada'].filter(Boolean).join(' | ')
   }).eq('id', facturaId);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast(`Factura ${f.num_interno||f.numero} cancelada`);
+
+  // Reversar el/los asiento(s) ya posteados para esta factura (Asiento de
+  // Factura de Compra: Gasto/Inventario + IVA Crédito Fiscal contra
+  // Cuentas por Pagar Proveedores).
+  const asientosFactura = (state.asientos||[]).filter(a => a.referencia_id === facturaId);
+  for (const a of asientosFactura) {
+    const lineasOrig = (state.asientoLineas||[]).filter(l => l.asiento_id === a.id);
+    if (!lineasOrig.length) continue;
+    await crearAsiento({
+      diario: 'COMPRAS', fecha: today(),
+      descripcion: `REVERSA — ${a.descripcion}`,
+      referencia: a.referencia, referencia_id: facturaId,
+      moneda: 'GTQ', tipo_cambio: 1,
+      lineas: lineasOrig.map(l => ({
+        cuenta_id:     l.cuenta_id,
+        cuenta_codigo: l.cuenta_codigo,
+        cuenta_nombre: l.cuenta_nombre,
+        debe:  l.haber,  // swapped
+        haber: l.debe,   // swapped
+        descripcion: `Reversa: ${l.descripcion||''}`,
+      })),
+    });
+  }
+
+  toast(`Factura ${f.num_interno||f.numero} cancelada${asientosFactura.length?' — asiento de reversa generado':''}`);
   await loadAll();
 }
 
