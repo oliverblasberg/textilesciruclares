@@ -5423,7 +5423,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         </div>
 
         <div class="form-section-title">Datos del Documento</div>
-        <div class="field"><label>Fecha *</label><input type="date" id="cmp-fecha"/></div>
+        <div class="field"><label>Fecha *</label><input type="date" id="cmp-fecha" onchange="onCompraFechaChange()"/></div>
         <div class="field"><label>Tipo de Documento *</label>
           <select id="cmp-tipo">
             <option value="">— Seleccionar —</option>
@@ -5435,6 +5435,11 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         </div>
         <div class="field"><label>Serie</label><input type="text" id="cmp-serie" placeholder="Ej. A"/></div>
         <div class="field"><label>No. Documento *</label><input type="text" id="cmp-numero" placeholder="Ej. 00001234"/></div>
+        <div class="field">
+          <label>Fecha de Vencimiento</label>
+          <input type="date" id="cmp-fecha-vencimiento"/>
+          <div id="cmp-venc-hint" style="font-size:11px;color:var(--text3);margin-top:3px"></div>
+        </div>
 
         <div class="form-section-title">Proveedor</div>
         <div class="field field-full"><label>Proveedor *</label>
@@ -12313,9 +12318,40 @@ function populateCompraOCSelect(ocId='') {
   if (ocId) sel.value = ocId;
 }
 
+// Recalcula la fecha de vencimiento sugerida (fecha + dias_credito de la OC)
+// cada vez que cambia la OC ligada o la fecha del documento. Solo autocompleta
+// si el campo está vacío o si el valor actual coincide con un cálculo previo
+// (guardado en data-auto) — así no pisa una fecha que el usuario ya editó
+// a mano, igual que el flujo de "Generar Factura" desde la OC.
+function _recalcCompraVencimientoSugerido() {
+  const ocId  = document.getElementById('cmp-oc-id')?.value;
+  const fecha = document.getElementById('cmp-fecha')?.value;
+  const vencInput = document.getElementById('cmp-fecha-vencimiento');
+  const hint      = document.getElementById('cmp-venc-hint');
+  if (!vencInput) return;
+  const oc = ocId ? (state.oc||[]).find(x=>x.id===ocId) : null;
+  const dias = oc?.dias_credito ?? null;
+  if (!oc || !dias || !fecha) {
+    if (hint) hint.textContent = '';
+    return;
+  }
+  const d = new Date(fecha); d.setDate(d.getDate()+Number(dias));
+  const sugerido = d.toISOString().split('T')[0];
+  const wasAuto = !vencInput.value || vencInput.value === vencInput.dataset.auto;
+  if (wasAuto) {
+    vencInput.value = sugerido;
+    vencInput.dataset.auto = sugerido;
+  }
+  if (hint) hint.textContent = `Sugerido según ${dias} días de crédito de la OC (editable)`;
+}
+
+function onCompraFechaChange() {
+  _recalcCompraVencimientoSugerido();
+}
+
 function onCompraOCChange() {
   const ocId = document.getElementById('cmp-oc-id')?.value;
-  if (!ocId) return;
+  if (!ocId) { _recalcCompraVencimientoSugerido(); return; }
   const oc   = (state.oc||[]).find(x=>x.id===ocId);
   if (!oc) return;
   // Auto-fill proveedor from OC
@@ -12324,6 +12360,7 @@ function onCompraOCChange() {
     pvSel.value = oc.proveedor_id;
     onCompraProveedorChange();
   }
+  _recalcCompraVencimientoSugerido();
 }
 
 function openNewCompra() {
@@ -12339,6 +12376,10 @@ function openNewCompra() {
   document.getElementById('cmp-iva-display').textContent   = '$0.00';
   document.getElementById('cmp-total-display').textContent = '$0.00';
   document.getElementById('cmp-nit-display').textContent   = '—';
+  const vencInput = document.getElementById('cmp-fecha-vencimiento');
+  if (vencInput) { vencInput.value = ''; vencInput.dataset.auto = ''; }
+  const vencHint = document.getElementById('cmp-venc-hint');
+  if (vencHint) vencHint.textContent = '';
   document.getElementById('modal-compra-title').textContent = 'Nuevo Registro de Compra';
   populateCompraProveedorSelect();
   populateCompraOCSelect();
@@ -12348,12 +12389,19 @@ function openNewCompra() {
 function editCompra(id) {
   const c = state.compras.find(x => x.id === id);
   document.getElementById('cmp-id').value    = c.id;
-  document.getElementById('cmp-fecha').value = fmtDate(c.fecha);
+  document.getElementById('cmp-fecha').value = c.fecha||'';
   document.getElementById('cmp-tipo').value  = c.tipo||'';
   document.getElementById('cmp-serie').value = c.serie||'';
   document.getElementById('cmp-numero').value= c.numero||'';
   document.getElementById('cmp-neto').value  = c.valor_neto||'';
   document.getElementById('cmp-notas').value = c.notas||'';
+  // Si ya hay una fila espejo en erp_oc_facturas (factura_id), su
+  // fecha_vencimiento es la fuente real — precargarla aquí.
+  const focVinculada = c.factura_id ? (state.ocFacturas||[]).find(f=>f.id===c.factura_id) : null;
+  const vencInput = document.getElementById('cmp-fecha-vencimiento');
+  if (vencInput) { vencInput.value = focVinculada?.fecha_vencimiento || ''; vencInput.dataset.auto = ''; }
+  const vencHint = document.getElementById('cmp-venc-hint');
+  if (vencHint) vencHint.textContent = '';
   document.getElementById('modal-compra-title').textContent = 'Editar Registro';
   populateCompraProveedorSelect(c.proveedor_id||'');
   populateCompraOCSelect(c.oc_id||'');
@@ -12374,14 +12422,49 @@ async function saveCompra() {
   const valor_iva   = parseFloat(document.getElementById('cmp-iva').value)||0;
   const valor_total = parseFloat(document.getElementById('cmp-total').value)||0;
   const oc_id       = document.getElementById('cmp-oc-id')?.value || null;
+  const serie       = document.getElementById('cmp-serie').value.trim();
+  const notas       = document.getElementById('cmp-notas').value.trim();
+  const fecha_vencimiento = document.getElementById('cmp-fecha-vencimiento')?.value || null;
+
+  const existing   = id ? state.compras.find(x=>x.id===id) : null;
+  let factura_id   = existing?.factura_id || null;
+
+  // Si hay una OC ligada, mantener sincronizada la fila espejo en
+  // erp_oc_facturas — es la única fuente que lee la proyección de Flujo de
+  // Caja (por fecha_vencimiento) y el seguimiento de pagos/saldo. Antes,
+  // una factura cargada desde este modal (Libro de Compras → Nuevo Registro
+  // de Compra) nunca creaba esta fila, así que quedaba invisible para esos
+  // dos reportes aunque sí apareciera en el Libro de Compras.
+  if (oc_id) {
+    const oc          = state.oc.find(o=>o.id===oc_id);
+    const dias_credito = oc?.dias_credito ?? null;
+    const vencCalc = fecha_vencimiento || (() => {
+      if (!dias_credito) return null;
+      const d = new Date(fecha); d.setDate(d.getDate()+Number(dias_credito));
+      return d.toISOString().split('T')[0];
+    })();
+    const focRow = {
+      oc_id, serie, numero, fecha,
+      fecha_vencimiento: vencCalc,
+      tipo, total: valor_total, notas,
+      dias_credito,
+    };
+    if (factura_id) {
+      const { error: eFocUpd } = await sb.from('erp_oc_facturas').update(focRow).eq('id', factura_id);
+      if (eFocUpd) { toast('Error sincronizando factura de OC: '+eFocUpd.message,'error'); return; }
+    } else {
+      const { data: focArr, error: eFocIns } = await sb.from('erp_oc_facturas')
+        .insert({ ...focRow, status:'pendiente', num_interno: nextFacturaInterna() }).select();
+      if (eFocIns) { toast('Error creando factura de OC: '+eFocIns.message,'error'); return; }
+      factura_id = focArr[0]?.id || null;
+    }
+  }
+
   const row = {
-    fecha, tipo,
-    serie:        document.getElementById('cmp-serie').value.trim(),
-    numero,
+    fecha, tipo, serie, numero,
     proveedor_id: provId,
     valor_neto, valor_iva, valor_total,
-    oc_id,
-    notas:        document.getElementById('cmp-notas').value.trim(),
+    oc_id, factura_id, notas,
   };
   let err;
   if (id) { ({error:err} = await sb.from('erp_compras').update(row).eq('id',id)); }
@@ -14174,8 +14257,11 @@ function renderBalanceGeneral() {
 // A diferencia de renderFlujoCaja() (que muestra caja REAL: pagos ya
 // recibidos/realizados), este gráfico proyecta cuándo se DEBEN cancelar los
 // documentos ya emitidos — facturas de venta (ingresos) y facturas de
-// compra a proveedor (egresos) — según su fecha de vencimiento, sin importar
-// si ya fueron cobrados/pagados. Sirve para anticipar el calendario de caja.
+// compra a proveedor (egresos) — según su fecha de vencimiento.
+// Para egresos: se excluye toda factura de compra con
+// erp_oc_facturas.estado_pago === 'pagado' (ya no representa una salida de
+// caja futura). Todo lo demás (pendiente, parcial, o sin estado_pago aún)
+// sí se proyecta, por el monto total de la factura — no el saldo pendiente.
 let fcChartInstance = null;
 
 function diasCreditoVenta(credito) {
@@ -14199,38 +14285,50 @@ function facturaVentaVencimiento(f) {
 // tiempo. Función pura — sin tocar el DOM ni Chart.js — para poder probarla.
 function computeFlujoCajaChartData(desde, hasta) {
   const porFecha = {};
-  const addMonto = (fecha, campo, monto) => {
+  const addMonto = (fecha, campo, monto, detalle) => {
     if (!fecha || fecha < desde || fecha > hasta) return;
-    if (!porFecha[fecha]) porFecha[fecha] = { ingresos: 0, egresos: 0 };
+    if (!porFecha[fecha]) porFecha[fecha] = { ingresos: 0, egresos: 0, detalleEgresos: [] };
     porFecha[fecha][campo] += Number(monto || 0);
+    if (campo === 'egresos' && detalle) porFecha[fecha].detalleEgresos.push(detalle);
   };
 
   (state.facturas || []).filter(f => f.status !== 'cancelada').forEach(f => {
     addMonto(facturaVentaVencimiento(f), 'ingresos', f.total);
   });
 
-  (state.ocFacturas || []).filter(f => f.status !== 'cancelada').forEach(f => {
-    const venc = f.fecha_vencimiento || f.fecha;
-    const monedaOC = getMonedaOC(f.oc_id);
-    const montoGTQ = monedaOC === 'GTQ'
-      ? Number(f.total || 0)
-      : Number(f.total || 0) * (Number(f.tc) || getTCFecha(f.fecha) || 1);
-    addMonto(venc, 'egresos', montoGTQ);
-  });
+  // Facturas de compra pendientes de pago — fuente: erp_oc_facturas.
+  // Identificador: num_interno. Fecha: fecha_vencimiento. Monto: saldo
+  // pendiente (total - monto_pagado) — un abono parcial ya reduce lo que
+  // falta por salir de caja, no se proyecta el total original de nuevo.
+  // Se excluyen las ya pagadas (estado_pago === 'pagado'); todo lo demás
+  // (null, 'pendiente', 'parcial') sí cuenta para la proyección.
+  (state.ocFacturas || [])
+    .filter(f => f.status !== 'cancelada' && f.estado_pago !== 'pagado')
+    .forEach(f => {
+      const venc  = f.fecha_vencimiento || f.fecha;
+      const saldo = Math.max(0, Number(f.total || 0) - Number(f.monto_pagado || 0));
+      if (saldo <= 0) return;
+      const monedaOC = getMonedaOC(f.oc_id);
+      const saldoGTQ = monedaOC === 'GTQ'
+        ? saldo
+        : saldo * (Number(f.tc) || getTCFecha(f.fecha) || 1);
+      addMonto(venc, 'egresos', saldoGTQ, { id: f.num_interno || `${f.serie||''}${f.numero||''}` || '—', monto: saldoGTQ });
+    });
 
   const fechas = Object.keys(porFecha).sort();
   let balance = 0;
-  const labels = [], dataIngresos = [], dataEgresos = [], dataBalance = [];
+  const labels = [], dataIngresos = [], dataEgresos = [], dataBalance = [], detalleEgresos = [];
   fechas.forEach(fecha => {
     const v = porFecha[fecha];
     labels.push(fecha);
     dataIngresos.push(v.ingresos);
     dataEgresos.push(-v.egresos);
+    detalleEgresos.push(v.detalleEgresos);
     balance += (v.ingresos - v.egresos);
     dataBalance.push(balance);
   });
 
-  return { fechas, labels, dataIngresos, dataEgresos, dataBalance };
+  return { fechas, labels, dataIngresos, dataEgresos, dataBalance, detalleEgresos };
 }
 
 function renderFlujoCajaChart() {
@@ -14274,7 +14372,19 @@ function renderFlujoCajaChart() {
       },
       plugins: {
         legend: { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
-        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtGTQ(Math.abs(ctx.raw))}` } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${fmtGTQ(Math.abs(ctx.raw))}`,
+            // Desglosa las facturas de compra (num_interno) que componen el
+            // egreso proyectado de esa fecha, para identificar cuáles son.
+            afterBody: items => {
+              const idx = items?.[0]?.dataIndex;
+              const detalle = idx != null ? chartData.detalleEgresos[idx] : null;
+              if (!detalle || !detalle.length) return '';
+              return ['', 'Facturas por pagar:', ...detalle.map(d => `  ${d.id} — ${fmtGTQ(d.monto)}`)];
+            },
+          },
+        },
       },
     },
   });
