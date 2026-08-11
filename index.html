@@ -2179,12 +2179,23 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             </div>
           </div>
         </div>
-        <div class="filters-row">
-          <select class="filter-select" id="fc-periodo" onchange="renderFlujoCaja()" style="max-width:200px">
-            <option value="mes">Este Mes</option>
-            <option value="trimestre">Este Trimestre</option>
-            <option value="anio">Este Año</option>
-          </select>
+        <div class="filters-row" style="align-items:flex-end">
+          <div class="field" style="max-width:180px;margin-bottom:0">
+            <label>Plazo</label>
+            <select class="filter-select" id="fc-periodo" onchange="renderFlujoCaja()">
+              <option value="mes">Este Mes</option>
+              <option value="trimestre">Este Trimestre</option>
+              <option value="anio">Este Año</option>
+            </select>
+          </div>
+          <div class="field" style="max-width:150px;margin-bottom:0">
+            <label>Intervalo</label>
+            <select class="filter-select" id="fc-intervalo" onchange="renderFlujoCajaChart()">
+              <option value="dia">Día</option>
+              <option value="mes">Mes</option>
+              <option value="anio">Año</option>
+            </select>
+          </div>
           <button class="btn btn-ghost" onclick="renderFlujoCaja()">↻ Actualizar</button>
         </div>
         <div class="card"><div class="card-body" id="fc-report"></div></div>
@@ -14008,7 +14019,13 @@ function renderBalanceGeneral() {
 // Para egresos: se excluye toda factura de compra con
 // erp_oc_facturas.estado_pago === 'pagado' (ya no representa una salida de
 // caja futura). Todo lo demás (pendiente, parcial, o sin estado_pago aún)
-// sí se proyecta, por el monto total de la factura — no el saldo pendiente.
+// sí se proyecta, por el saldo pendiente (total - monto_pagado).
+//
+// Dos controles independientes:
+// - Plazo (fc-periodo): rango de fechas mostrado (mes/trimestre/año actual).
+// - Intervalo (fc-intervalo): granularidad del eje X dentro de ese rango
+//   (día/mes/año) — permite, por ejemplo, ver el Plazo "Este Año" agrupado
+//   por mes, o el Plazo "Este Mes" con el detalle día a día.
 let fcChartInstance = null;
 
 function diasCreditoVenta(credito) {
@@ -14026,29 +14043,45 @@ function facturaVentaVencimiento(f) {
   return d.toISOString().slice(0, 10);
 }
 
-// Agrega, por fecha exacta de vencimiento, los ingresos (facturas de venta)
-// y egresos (facturas de compra, convertidas a GTQ si están en otra moneda)
-// dentro del rango [desde, hasta], y calcula el balance acumulado en el
-// tiempo. Función pura — sin tocar el DOM ni Chart.js — para poder probarla.
-function computeFlujoCajaChartData(desde, hasta) {
-  const porFecha = {};
-  const addMonto = (fecha, campo, monto, detalle) => {
+// Reduce una fecha exacta (yyyy-mm-dd) al bucket del eje X según el
+// intervalo elegido: día = la fecha tal cual, mes = yyyy-mm, año = yyyy.
+function fcBucketKey(fecha, intervalo) {
+  if (!fecha) return null;
+  if (intervalo === 'anio') return fecha.slice(0, 4);
+  if (intervalo === 'mes')  return fecha.slice(0, 7);
+  return fecha;
+}
+
+function fcBucketLabel(key, intervalo) {
+  if (intervalo === 'anio') return key;
+  if (intervalo === 'mes') {
+    const [y, m] = key.split('-');
+    const mi = parseInt(m, 10) - 1;
+    return `${MESES_ABREV[mi] || m} ${y}`;
+  }
+  return fmtDate(key);
+}
+
+// Junta cada factura (ingreso o egreso) como un ítem individual, agrupado
+// por bucket de tiempo — a propósito NO suma los montos de antemano: cada
+// factura debe quedar identificable por separado para dibujarse como su
+// propio segmento dentro de la columna apilada (stacked column).
+function computeFlujoCajaItems(desde, hasta, intervalo) {
+  const porBucket = {};
+  const addItem = (fecha, campo, monto, id) => {
     if (!fecha || fecha < desde || fecha > hasta) return;
-    if (!porFecha[fecha]) porFecha[fecha] = { ingresos: 0, egresos: 0, detalleEgresos: [] };
-    porFecha[fecha][campo] += Number(monto || 0);
-    if (campo === 'egresos' && detalle) porFecha[fecha].detalleEgresos.push(detalle);
+    const key = fcBucketKey(fecha, intervalo);
+    if (!porBucket[key]) porBucket[key] = { ingresos: [], egresos: [] };
+    porBucket[key][campo].push({ id: id || '—', monto: Number(monto || 0) });
   };
 
   (state.facturas || []).filter(f => f.status !== 'cancelada').forEach(f => {
-    addMonto(facturaVentaVencimiento(f), 'ingresos', f.total);
+    addItem(facturaVentaVencimiento(f), 'ingresos', f.total, f.num_interno || f.numero || f.id);
   });
 
   // Facturas de compra pendientes de pago — fuente: erp_oc_facturas.
   // Identificador: num_interno. Fecha: fecha_vencimiento. Monto: saldo
-  // pendiente (total - monto_pagado) — un abono parcial ya reduce lo que
-  // falta por salir de caja, no se proyecta el total original de nuevo.
-  // Se excluyen las ya pagadas (estado_pago === 'pagado'); todo lo demás
-  // (null, 'pendiente', 'parcial') sí cuenta para la proyección.
+  // pendiente (total - monto_pagado).
   (state.ocFacturas || [])
     .filter(f => f.status !== 'cancelada' && f.estado_pago !== 'pagado')
     .forEach(f => {
@@ -14059,37 +14092,41 @@ function computeFlujoCajaChartData(desde, hasta) {
       const saldoGTQ = monedaOC === 'GTQ'
         ? saldo
         : saldo * (Number(f.tc) || getTCFecha(f.fecha) || 1);
-      addMonto(venc, 'egresos', saldoGTQ, { id: f.num_interno || `${f.serie||''}${f.numero||''}` || '—', monto: saldoGTQ });
+      addItem(venc, 'egresos', saldoGTQ, f.num_interno || `${f.serie||''}${f.numero||''}`);
     });
 
-  const fechas = Object.keys(porFecha).sort();
+  const buckets = Object.keys(porBucket).sort();
   let balance = 0;
-  const labels = [], dataIngresos = [], dataEgresos = [], dataBalance = [], detalleEgresos = [];
-  fechas.forEach(fecha => {
-    const v = porFecha[fecha];
-    labels.push(fecha);
-    dataIngresos.push(v.ingresos);
-    dataEgresos.push(-v.egresos);
-    detalleEgresos.push(v.detalleEgresos);
-    balance += (v.ingresos - v.egresos);
+  const dataBalance = [];
+  buckets.forEach(key => {
+    const v = porBucket[key];
+    const totIng = v.ingresos.reduce((s, i) => s + i.monto, 0);
+    const totEgr = v.egresos.reduce((s, i) => s + i.monto, 0);
+    balance += (totIng - totEgr);
     dataBalance.push(balance);
   });
 
-  return { fechas, labels, dataIngresos, dataEgresos, dataBalance, detalleEgresos };
+  return { buckets, porBucket, dataBalance };
 }
+
+// Paletas para diferenciar cada factura individual dentro de su columna
+// apilada, manteniendo la familia de color (verde=ingreso, rojo=egreso).
+const FC_GREENS = ['#16A34A','#22C55E','#4ADE80','#15803D','#10B981','#059669','#065F46','#86EFAC'];
+const FC_REDS   = ['#DC2626','#EF4444','#F87171','#B91C1C','#F43F5E','#E11D48','#7F1D1D','#FB7185'];
 
 function renderFlujoCajaChart() {
   const canvas = document.getElementById('fc-chart-canvas');
   const emptyEl = document.getElementById('fc-chart-empty');
   if (!canvas) return;
 
-  const periodo = document.getElementById('fc-periodo')?.value || 'mes';
+  const periodo   = document.getElementById('fc-periodo')?.value   || 'mes';
+  const intervalo = document.getElementById('fc-intervalo')?.value || 'dia';
   const { desde, hasta } = periodoFechas(periodo);
-  const chartData = computeFlujoCajaChartData(desde, hasta);
+  const { buckets, porBucket, dataBalance } = computeFlujoCajaItems(desde, hasta, intervalo);
 
   if (fcChartInstance) { fcChartInstance.destroy(); fcChartInstance = null; }
 
-  if (!chartData.fechas.length || typeof Chart === 'undefined') {
+  if (!buckets.length || typeof Chart === 'undefined') {
     canvas.style.display = 'none';
     if (emptyEl) emptyEl.style.display = 'flex';
     return;
@@ -14100,13 +14137,37 @@ function renderFlujoCajaChart() {
   const ctx = canvas.getContext && canvas.getContext('2d');
   if (!ctx) return;
 
+  // Cada factura se convierte en su propio dataset — Chart.js la dibuja
+  // como un segmento propio dentro de la barra apilada (stack: 'ingresos'
+  // o 'egresos'), en vez de un solo bloque agregado por fecha/mes/año.
+  const ingresoIds = [], egresoIds = [];
+  buckets.forEach(key => {
+    porBucket[key].ingresos.forEach(it => { if (!ingresoIds.includes(it.id)) ingresoIds.push(it.id); });
+    porBucket[key].egresos.forEach(it  => { if (!egresoIds.includes(it.id))  egresoIds.push(it.id); });
+  });
+
+  const datasetsIngresos = ingresoIds.map((id, idx) => ({
+    type: 'bar', label: id, stack: 'ingresos', order: 2,
+    backgroundColor: FC_GREENS[idx % FC_GREENS.length], borderRadius: 2,
+    data: buckets.map(key => (porBucket[key].ingresos.find(x => x.id === id)?.monto) || 0),
+  }));
+
+  const datasetsEgresos = egresoIds.map((id, idx) => ({
+    type: 'bar', label: id, stack: 'egresos', order: 2,
+    backgroundColor: FC_REDS[idx % FC_REDS.length], borderRadius: 2,
+    data: buckets.map(key => {
+      const it = porBucket[key].egresos.find(x => x.id === id);
+      return it ? -it.monto : 0;
+    }),
+  }));
+
   fcChartInstance = new Chart(ctx, {
     data: {
-      labels: chartData.fechas.map(f => fmtDate(f)),
+      labels: buckets.map(k => fcBucketLabel(k, intervalo)),
       datasets: [
-        { type: 'bar',  label: 'Ingresos (facturas por cobrar)', data: chartData.dataIngresos, backgroundColor: '#16A34A', borderRadius: 3, stack: 'caja', order: 2 },
-        { type: 'bar',  label: 'Egresos (facturas por pagar)',   data: chartData.dataEgresos,  backgroundColor: '#DC2626', borderRadius: 3, stack: 'caja', order: 2 },
-        { type: 'line', label: 'Balance acumulado', data: chartData.dataBalance, borderColor: '#2563EB', backgroundColor: '#2563EB', pointRadius: 3, pointBackgroundColor: '#2563EB', tension: 0.25, fill: false, order: 1 },
+        ...datasetsIngresos,
+        ...datasetsEgresos,
+        { type: 'line', label: 'Balance acumulado', data: dataBalance, borderColor: '#2563EB', backgroundColor: '#2563EB', pointRadius: 3, pointBackgroundColor: '#2563EB', tension: 0.25, fill: false, order: 1 },
       ],
     },
     options: {
@@ -14118,17 +14179,25 @@ function renderFlujoCajaChart() {
         y: { stacked: true, ticks: { callback: v => fmtGTQ(v) }, grid: { color: '#E2E4E9' } },
       },
       plugins: {
-        legend: { position: 'bottom', labels: { boxWidth: 12, usePointStyle: true } },
+        // Con muchas facturas la leyenda se vuelve ilegible si se muestra
+        // una entrada por cada una — se deja solo "Balance acumulado"; el
+        // detalle de cada factura (num_interno + monto) se ve en el
+        // tooltip al pasar el mouse sobre su segmento en la barra.
+        legend: {
+          position: 'bottom', labels: { boxWidth: 12, usePointStyle: true },
+          filter: item => item.text === 'Balance acumulado',
+        },
         tooltip: {
+          filter: item => Number(item.raw) !== 0,
           callbacks: {
             label: ctx => `${ctx.dataset.label}: ${fmtGTQ(Math.abs(ctx.raw))}`,
-            // Desglosa las facturas de compra (num_interno) que componen el
-            // egreso proyectado de esa fecha, para identificar cuáles son.
-            afterBody: items => {
-              const idx = items?.[0]?.dataIndex;
-              const detalle = idx != null ? chartData.detalleEgresos[idx] : null;
-              if (!detalle || !detalle.length) return '';
-              return ['', 'Facturas por pagar:', ...detalle.map(d => `  ${d.id} — ${fmtGTQ(d.monto)}`)];
+            footer: items => {
+              const ing = items.filter(i => i.dataset.stack==='ingresos').reduce((s,i)=>s+Number(i.raw||0),0);
+              const egr = items.filter(i => i.dataset.stack==='egresos').reduce((s,i)=>s+Math.abs(Number(i.raw||0)),0);
+              const lines = [];
+              if (ing) lines.push(`Total ingresos: ${fmtGTQ(ing)}`);
+              if (egr) lines.push(`Total egresos: ${fmtGTQ(egr)}`);
+              return lines;
             },
           },
         },
