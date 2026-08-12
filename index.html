@@ -802,6 +802,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div class="nav-item" onclick="showPage('diario-general',this)">Diario Mayor General</div>
       <div class="nav-item" onclick="showPage('compras',this)">Libro de Compras</div>
       <div class="nav-item" onclick="showPage('facturas',this)">Libro de Ventas</div>
+      <div class="nav-item" onclick="showPage('pagos',this)">Pagos</div>
       <div class="nav-item" onclick="showPage('estado-resultados',this)">Estado de Resultados</div>
       <div class="nav-item" onclick="showPage('balance-general',this)">Balance General</div>
       <div class="nav-item" onclick="showPage('flujo-caja',this)">Flujo de Caja</div>
@@ -2200,6 +2201,67 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <button class="btn btn-ghost" onclick="renderFlujoCaja()">↻ Actualizar</button>
         </div>
         <div class="card"><div class="card-body" id="fc-report"></div></div>
+      </div>
+
+      <!-- PAGOS — visibilidad de pagos/cobros y su aplicación a facturas -->
+      <div class="page" id="page-pagos">
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-body">
+            <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:2px">Pagos y Cobros</div>
+            <div style="font-size:12px;color:var(--text3)">Cada pago es un registro independiente contra el proveedor/cliente. Un pago "Sin aplicar" tiene saldo disponible para asignarse a cualquier factura pendiente del mismo proveedor/cliente.</div>
+          </div>
+        </div>
+        <div class="filters-row" style="align-items:center">
+          <div style="display:flex;gap:4px;background:var(--surface2);border-radius:8px;padding:3px">
+            <button class="btn btn-sm" id="pagos-tab-oc" onclick="pagosPageTab('oc')" style="border:none">💳 Pagos a Proveedores</button>
+            <button class="btn btn-sm" id="pagos-tab-ov" onclick="pagosPageTab('ov')" style="border:none">💰 Cobros a Clientes</button>
+          </div>
+          <select class="filter-select" id="pagos-filter-estado" onchange="renderPagos()" style="max-width:180px">
+            <option value="">Todos</option>
+            <option value="aplicado">Aplicados</option>
+            <option value="sinaplicar">Sin Aplicar</option>
+          </select>
+          <input type="text" id="pagos-search" class="filter-select" placeholder="Buscar proveedor/cliente..." oninput="renderPagos()" style="max-width:220px"/>
+        </div>
+        <div class="card"><div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Fecha</th><th>No. Pago</th><th>Proveedor/Cliente</th><th>Forma</th>
+              <th style="text-align:right">Monto</th><th>Aplicado a</th><th>Estado</th><th></th>
+            </tr></thead>
+            <tbody id="tbl-pagos"></tbody>
+          </table>
+        </div></div>
+      </div>
+
+      <!-- MODAL: Aplicar pago sin aplicar a una factura -->
+      <div class="modal-overlay" id="modal-aplicar-pago" onclick="if(event.target===this)closeModal('modal-aplicar-pago')">
+        <div class="modal">
+          <div class="modal-header"><div class="modal-title">Aplicar Pago a Factura</div></div>
+          <div class="modal-body">
+            <input type="hidden" id="aplicar-pago-id"/>
+            <input type="hidden" id="aplicar-pago-tipo"/>
+            <div class="field field-full" style="margin-bottom:10px">
+              <label>Pago</label>
+              <div id="aplicar-pago-info" style="font-size:13px;color:var(--text2);padding:8px 10px;background:var(--surface2);border-radius:6px"></div>
+            </div>
+            <div class="field field-full">
+              <label>Factura pendiente *</label>
+              <select id="aplicar-factura-id" onchange="onAplicarFacturaChange()">
+                <option value="">— Seleccionar factura —</option>
+              </select>
+            </div>
+            <div class="field field-full">
+              <label>Monto a aplicar *</label>
+              <input type="number" id="aplicar-monto" step="0.01" min="0"/>
+              <div id="aplicar-monto-hint" style="font-size:11px;color:var(--text3);margin-top:3px"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('modal-aplicar-pago')">Cancelar</button>
+            <button class="btn btn-primary" onclick="confirmarAplicarPago()">Aplicar</button>
+          </div>
+        </div>
       </div>
 
       <!-- CONCILIACIÓN BANCARIA -->
@@ -5635,6 +5697,7 @@ function showPage(name, bnav) {
     precios:'Listas de Precios',
     packing:'Listas de Empaque',
     facturas:'Libro de Ventas',
+    pagos:'Pagos',
     clientes:'Clientes',
     telas:'Catálogo de Telas',
     hilos:'Catálogo de Hilos',
@@ -5652,6 +5715,7 @@ function showPage(name, bnav) {
     'estado-resultados': () => renderEstadoResultados(),
     'balance-general':   () => { document.getElementById('bg-fecha').value = today(); renderBalanceGeneral(); },
     'flujo-caja':        () => renderFlujoCaja(),
+    pagos:               () => renderPagos(),
     nomenclatura:        () => renderNomenclatura(),
     categorias:          () => renderCategorias(),
     recetas:             () => renderRecetas(),
@@ -7164,8 +7228,18 @@ async function saveFactura() {
   closeModal('modal-fact');
 }
 
+// Cancelación de factura de venta — ahora en paridad con cancelarFacturaOC():
+// bloquea si tiene pagos aplicados (deben desasignarse primero) y postea un
+// asiento de REVERSA del asiento original (asientoFacturaVenta: Cuentas x
+// Cobrar / Ingresos + IVA por Pagar) con debe/haber invertidos. Antes esta
+// función solo cambiaba el status, sin validar pagos ni reversar nada —
+// aunque asientoFacturaVenta() sí generaba el asiento original al facturar.
 async function deleteFactura(id) {
   const f = state.facturas.find(x => x.id === id);
+  if (!f) { toast('Factura no encontrada','error'); return; }
+  if (f.status === 'cancelada') { toast('Esta factura ya está cancelada','error'); return; }
+  const pagosF = (state.pagos||[]).filter(p=>p.factura_id===id);
+  if (pagosF.length) { toast('No se puede cancelar — tiene pagos aplicados. Desasígnalos primero desde Pagos.','error'); return; }
   const action = confirm(
     `Factura ${f?.invoice_number||''}\n\n` +
     `¿Cancelar esta factura?\n\n` +
@@ -7175,10 +7249,290 @@ async function deleteFactura(id) {
   if (!action) return;
   const {error} = await sb.from('erp_invoices').update({status:'cancelada'}).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
+
+  // Reversar el asiento original de la factura (Cuentas x Cobrar / Ingresos
+  // + IVA por Pagar), si ya estaba contabilizada.
+  const asientosFactura = (state.asientos||[]).filter(a => a.referencia_id === id);
+  for (const a of asientosFactura) {
+    const lineasOrig = (state.asientoLineas||[]).filter(l => l.asiento_id === a.id);
+    if (!lineasOrig.length) continue;
+    await crearAsiento({
+      diario: 'VENTAS', fecha: today(),
+      descripcion: `REVERSA — ${a.descripcion}`,
+      referencia: a.referencia, referencia_id: id,
+      moneda: 'GTQ', tipo_cambio: 1,
+      lineas: lineasOrig.map(l => ({
+        cuenta_id: l.cuenta_id, cuenta_codigo: l.cuenta_codigo, cuenta_nombre: l.cuenta_nombre,
+        debe: l.haber, haber: l.debe, descripcion: `Reversa: ${l.descripcion||''}`,
+      })),
+    });
+  }
+
   await loadAll();
   await syncOrderStatus(f?.order_id);
   await loadAll();
-  toast('Factura cancelada — listas de empaque disponibles nuevamente');
+  toast(`Factura cancelada${asientosFactura.length?' — asiento de reversa generado':''} — listas de empaque disponibles nuevamente`);
+}
+
+function saldoSinAplicarPagoVenta(pagoId) {
+  const p = (state.pagos||[]).find(x=>x.id===pagoId);
+  if (!p) return 0;
+  return p.factura_id ? 0 : Number(p.monto||0);
+}
+
+async function desasignarPagoVenta(pagoId) {
+  const p = (state.pagos||[]).find(x=>x.id===pagoId);
+  if (!p) { toast('Pago no encontrado','error'); return; }
+  if (!p.factura_id) { toast('Este pago ya está sin aplicar','error'); return; }
+  const f   = state.facturas.find(x=>x.id===p.factura_id);
+  const cli = (state.clientes||[]).find(x=>x.id===p.cliente_id);
+  if (!confirm(`¿Desasignar el pago (${fmtMoney(p.monto, 'GTQ')}) de la factura ${f?.invoice_number||''}?\n\nEl monto quedará disponible para aplicarlo a otra factura del mismo cliente.`)) return;
+
+  const ctaPorCobrar = state.nomenclatura.find(n => n.tipo === 'Por cobrar');
+  const monedaCli = cli?.moneda || 'GTQ';
+  const ctaSinAplicar = sinAplicarNomenclatura(monedaCli, 'cobro');
+
+  await crearAsiento({
+    diario: 'COBROS', fecha: today(),
+    descripcion: `Desasignación de cobro — ${f?.invoice_number||''} — ${cli?.name||''}`,
+    referencia: `DESASIGNA-${pagoId}`, referencia_id: pagoId,
+    moneda: monedaCli, tipo_cambio: 1,
+    lineas: [
+      { cuenta_id: ctaSinAplicar?.id||null, cuenta_codigo: ctaSinAplicar?.codigo||'COBROS-SIN-APLICAR', cuenta_nombre: ctaSinAplicar?.nombre||'Cobros Sin Aplicar de Cliente', debe: 0, haber: Number(p.monto||0), descripcion: `Cobro sin aplicar` },
+      { cuenta_id: ctaPorCobrar?.id||null, cuenta_codigo: ctaPorCobrar?.codigo||'COBRAR', cuenta_nombre: ctaPorCobrar?.nombre||'Cuentas x Cobrar', debe: Number(p.monto||0), haber: 0, descripcion: `Reinstala saldo — ${f?.invoice_number||''}` },
+    ],
+  });
+
+  const asientosDiff = (state.asientos||[]).filter(a => a.referencia_id === pagoId && a.diario === DIARIO_CAMBIARIO);
+  for (const a of asientosDiff) {
+    const lineasOrig = (state.asientoLineas||[]).filter(l => l.asiento_id === a.id);
+    if (!lineasOrig.length) continue;
+    await crearAsiento({
+      diario: DIARIO_CAMBIARIO, fecha: today(),
+      descripcion: `REVERSA — ${a.descripcion}`,
+      referencia: a.referencia, referencia_id: pagoId,
+      moneda: 'GTQ', tipo_cambio: 1,
+      lineas: lineasOrig.map(l => ({ cuenta_id:l.cuenta_id, cuenta_codigo:l.cuenta_codigo, cuenta_nombre:l.cuenta_nombre, debe:l.haber, haber:l.debe, descripcion:`Reversa: ${l.descripcion||''}` })),
+    });
+  }
+
+  await sb.from('erp_pagos').update({ factura_id: null }).eq('id', pagoId);
+
+  if (f) {
+    const pagadoRestante = (state.pagos||[]).filter(x=>x.factura_id===f.id && x.id!==pagoId).reduce((s,x)=>s+Number(x.monto||0),0);
+    await sb.from('erp_invoices').update({
+      status: pagadoRestante >= Number(f.total||0) ? 'pagada' : (f.status==='pagada' ? 'enviada' : f.status),
+    }).eq('id', f.id);
+  }
+
+  toast('Pago desasignado — disponible para aplicar a otra factura');
+  await loadAll();
+}
+
+async function asignarPagoVenta(pagoId, facturaId, montoAplicar) {
+  const p = (state.pagos||[]).find(x=>x.id===pagoId);
+  const f = state.facturas.find(x=>x.id===facturaId);
+  if (!p || !f) { toast('Pago o factura no encontrados','error'); return; }
+  if (p.factura_id) { toast('Este pago ya está aplicado a una factura','error'); return; }
+  if (f.status === 'cancelada') { toast('Esa factura está cancelada','error'); return; }
+  if (p.cliente_id && f.customer_id && p.cliente_id !== f.customer_id) {
+    toast('El pago y la factura son de clientes distintos','error'); return;
+  }
+  const pagadoFactura = totalPagado(facturaId);
+  const saldoFactura = Math.max(0, Number(f.total||0) - pagadoFactura);
+  const monto = Math.min(Number(montoAplicar)||Number(p.monto||0), Number(p.monto||0), saldoFactura);
+  if (monto <= 0) { toast('No hay saldo pendiente que aplicar','error'); return; }
+
+  const cli = (state.clientes||[]).find(x=>x.id===(p.cliente_id||f.customer_id));
+  const monedaCli = cli?.moneda || 'GTQ';
+  const ctaPorCobrar  = state.nomenclatura.find(n => n.tipo === 'Por cobrar');
+  const ctaSinAplicar = sinAplicarNomenclatura(monedaCli, 'cobro');
+
+  await crearAsiento({
+    diario: 'COBROS', fecha: today(),
+    descripcion: `Aplicación de cobro — ${f.invoice_number} — ${cli?.name||''}`,
+    referencia: `APLICA-${pagoId}`, referencia_id: pagoId,
+    moneda: monedaCli, tipo_cambio: 1,
+    lineas: [
+      { cuenta_id: ctaPorCobrar?.id||null, cuenta_codigo: ctaPorCobrar?.codigo||'COBRAR', cuenta_nombre: ctaPorCobrar?.nombre||'Cuentas x Cobrar', debe: 0, haber: monto, descripcion: `Aplicado a ${f.invoice_number}` },
+      { cuenta_id: ctaSinAplicar?.id||null, cuenta_codigo: ctaSinAplicar?.codigo||'COBROS-SIN-APLICAR', cuenta_nombre: ctaSinAplicar?.nombre||'Cobros Sin Aplicar de Cliente', debe: monto, haber: 0, descripcion: `Cobro aplicado` },
+    ],
+  });
+
+  if (monedaCli === 'USD' && f.date) {
+    const tcPago    = getTCFecha(p.fecha);
+    const tcFactura = getTCFecha(f.date);
+    if (Math.abs(tcPago - tcFactura) > 0.0001) {
+      await asientoDiferencialCambiario({
+        montoUSD: monto, tcOriginal: tcFactura, tcLiquidacion: tcPago, fecha: today(),
+        referencia: `Factura ${f.invoice_number}`, referencia_id: pagoId, tipo: 'cobro',
+      });
+    }
+  }
+
+  if (monto < Number(p.monto||0)) {
+    const remanente = Number(p.monto||0) - monto;
+    await sb.from('erp_pagos').update({ factura_id: facturaId, monto }).eq('id', pagoId);
+    await sb.from('erp_pagos').insert({
+      cliente_id: p.cliente_id||f.customer_id||null, fecha: p.fecha, forma: p.forma, cuenta_id: p.cuenta_id,
+      monto: remanente, notas: `Remanente sin aplicar del pago ${pagoId}`,
+    });
+  } else {
+    await sb.from('erp_pagos').update({ factura_id: facturaId }).eq('id', pagoId);
+  }
+
+  const nuevoPagado = pagadoFactura + monto;
+  if (nuevoPagado >= Number(f.total||0)) {
+    await sb.from('erp_invoices').update({status:'pagada'}).eq('id', facturaId);
+  }
+
+  toast(`✓ Pago aplicado a ${f.invoice_number}`);
+  await loadAll();
+}
+
+// ══════════════════════════════════════════════════════════════
+// PÁGINA "PAGOS" — visibilidad de pagos/cobros (aplicados y sin aplicar)
+// y punto de entrada para desasignar/aplicar.
+// ══════════════════════════════════════════════════════════════
+let pagosPageActiveTab = 'oc';
+
+function pagosPageTab(tab) {
+  pagosPageActiveTab = tab;
+  const tabOC = document.getElementById('pagos-tab-oc');
+  const tabOV = document.getElementById('pagos-tab-ov');
+  if (tabOC) { tabOC.style.background = tab==='oc' ? 'var(--bg)' : 'transparent'; tabOC.style.color = tab==='oc' ? 'var(--accent)' : 'var(--text3)'; }
+  if (tabOV) { tabOV.style.background = tab==='ov' ? 'var(--bg)' : 'transparent'; tabOV.style.color = tab==='ov' ? 'var(--accent)' : 'var(--text3)'; }
+  renderPagos();
+}
+
+function renderPagos() {
+  pagosPageTab.lastTab = pagosPageActiveTab; // no-op, evita warning de función sin usar
+  const tab = pagosPageActiveTab;
+  const estadoFilt = document.getElementById('pagos-filter-estado')?.value || '';
+  const q = (document.getElementById('pagos-search')?.value||'').toLowerCase();
+  const tbody = document.getElementById('tbl-pagos');
+  if (!tbody) return;
+
+  let data;
+  if (tab === 'oc') {
+    data = (state.pagosOC||[]).map(p => {
+      const f    = p.factura_id ? (state.ocFacturas||[]).find(x=>x.id===p.factura_id) : null;
+      const prov = (state.proveedores||[]).find(x=>x.id===(p.proveedor_id || state.oc.find(o=>o.id===f?.oc_id)?.proveedor_id));
+      return { p, f, nombre: prov?.name||'—', aplicadoA: f ? `${f.serie||''}${f.numero||''}` : null };
+    });
+  } else {
+    data = (state.pagos||[]).map(p => {
+      const f   = p.factura_id ? state.facturas.find(x=>x.id===p.factura_id) : null;
+      const cli = (state.clientes||[]).find(x=>x.id===(p.cliente_id || f?.customer_id));
+      return { p, f, nombre: cli?.name||'—', aplicadoA: f ? f.invoice_number : null };
+    });
+  }
+
+  data = data.filter(row => {
+    const sinAplicar = !row.p.factura_id;
+    if (estadoFilt === 'aplicado' && sinAplicar) return false;
+    if (estadoFilt === 'sinaplicar' && !sinAplicar) return false;
+    if (q && !(row.nombre||'').toLowerCase().includes(q)) return false;
+    return true;
+  }).sort((a,b) => new Date(b.p.fecha) - new Date(a.p.fecha));
+
+  tbody.innerHTML = data.length ? data.map(row => {
+    const { p, f, nombre, aplicadoA } = row;
+    const sinAplicar = !p.factura_id;
+    const badge = sinAplicar
+      ? `<span class="badge badge-yellow">Sin Aplicar</span>`
+      : `<span class="badge badge-green">Aplicado</span>`;
+    const accion = sinAplicar
+      ? `<button class="btn btn-sm btn-primary" onclick="abrirAplicarPago('${p.id}','${tab}')">Aplicar</button>`
+      : `<button class="btn btn-sm btn-ghost" onclick="${tab==='oc'?'desasignarPagoOC':'desasignarPagoVenta'}('${p.id}')">Desasignar</button>`;
+    return `<tr>
+      <td style="white-space:nowrap">${fmtDate(p.fecha)}</td>
+      <td class="td-mono" style="font-size:12px">${p.num_pago||'—'}</td>
+      <td style="font-size:13px">${nombre}</td>
+      <td><span class="badge badge-blue">${p.forma||'—'}</span></td>
+      <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(p.monto, p.moneda||'GTQ')}</td>
+      <td style="font-size:12px">${aplicadoA||'—'}</td>
+      <td>${badge}</td>
+      <td>${accion}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:24px">Sin pagos registrados</td></tr>`;
+}
+
+// Abre el modal para aplicar un pago sin aplicar a una factura pendiente
+// del mismo proveedor/cliente.
+function abrirAplicarPago(pagoId, tipo) {
+  document.getElementById('aplicar-pago-id').value = pagoId;
+  document.getElementById('aplicar-pago-tipo').value = tipo;
+
+  const sel = document.getElementById('aplicar-factura-id');
+  let infoHTML = '', facturasOpts = '<option value="">— Seleccionar factura —</option>';
+
+  if (tipo === 'oc') {
+    const p = (state.pagosOC||[]).find(x=>x.id===pagoId);
+    const prov = (state.proveedores||[]).find(x=>x.id===p?.proveedor_id);
+    infoHTML = `${p?.num_pago||''} — ${prov?.name||'—'} — ${fmtMoney(p?.monto, p?.moneda||'GTQ')} (${fmtDate(p?.fecha)})`;
+    const pendientes = (state.ocFacturas||[]).filter(f => {
+      if (f.status === 'cancelada') return false;
+      const oc = state.oc.find(o=>o.id===f.oc_id);
+      if (p?.proveedor_id && oc?.proveedor_id !== p.proveedor_id) return false;
+      const pagado = (state.pagosOC||[]).filter(x=>x.factura_id===f.id).reduce((s,x)=>s+Number(x.monto||0),0);
+      return Number(f.total||0) - pagado > 0.01;
+    });
+    facturasOpts += pendientes.map(f => {
+      const pagado = (state.pagosOC||[]).filter(x=>x.factura_id===f.id).reduce((s,x)=>s+Number(x.monto||0),0);
+      const saldo = Number(f.total||0) - pagado;
+      return `<option value="${f.id}" data-saldo="${saldo.toFixed(2)}">${f.num_interno||f.numero} — saldo ${fmtMoney(saldo, p?.moneda||'GTQ')}</option>`;
+    }).join('');
+  } else {
+    const p = (state.pagos||[]).find(x=>x.id===pagoId);
+    const cli = (state.clientes||[]).find(x=>x.id===p?.cliente_id);
+    infoHTML = `${cli?.name||'—'} — ${fmtMoney(p?.monto, 'GTQ')} (${fmtDate(p?.fecha)})`;
+    const pendientes = state.facturas.filter(f => {
+      if (f.status === 'cancelada') return false;
+      if (p?.cliente_id && f.customer_id !== p.cliente_id) return false;
+      const pagado = totalPagado(f.id);
+      return Number(f.total||0) - pagado > 0.01;
+    });
+    facturasOpts += pendientes.map(f => {
+      const pagado = totalPagado(f.id);
+      const saldo = Number(f.total||0) - pagado;
+      return `<option value="${f.id}" data-saldo="${saldo.toFixed(2)}">${f.invoice_number} — saldo ${fmtMoney(saldo, 'GTQ')}</option>`;
+    }).join('');
+  }
+
+  document.getElementById('aplicar-pago-info').textContent = infoHTML;
+  sel.innerHTML = facturasOpts;
+  document.getElementById('aplicar-monto').value = '';
+  document.getElementById('aplicar-monto-hint').textContent = '';
+  openModal('modal-aplicar-pago');
+}
+
+function onAplicarFacturaChange() {
+  const sel = document.getElementById('aplicar-factura-id');
+  const opt = sel.options[sel.selectedIndex];
+  const saldo = parseFloat(opt?.dataset?.saldo) || 0;
+  const tipo = document.getElementById('aplicar-pago-tipo').value;
+  const pagoId = document.getElementById('aplicar-pago-id').value;
+  const pago = tipo === 'oc'
+    ? (state.pagosOC||[]).find(x=>x.id===pagoId)
+    : (state.pagos||[]).find(x=>x.id===pagoId);
+  const disponible = Number(pago?.monto||0);
+  const sugerido = Math.min(saldo, disponible);
+  document.getElementById('aplicar-monto').value = sugerido > 0 ? sugerido.toFixed(2) : '';
+  document.getElementById('aplicar-monto-hint').textContent =
+    `Disponible en el pago: ${fmtMoney(disponible,'GTQ')} · Saldo de la factura: ${fmtMoney(saldo,'GTQ')}`;
+}
+
+async function confirmarAplicarPago() {
+  const pagoId = document.getElementById('aplicar-pago-id').value;
+  const tipo = document.getElementById('aplicar-pago-tipo').value;
+  const facturaId = document.getElementById('aplicar-factura-id').value;
+  const monto = parseFloat(document.getElementById('aplicar-monto').value);
+  if (!facturaId || isNaN(monto) || monto <= 0) { toast('Selecciona una factura y un monto válido','error'); return; }
+  closeModal('modal-aplicar-pago');
+  if (tipo === 'oc') await asignarPagoOC(pagoId, facturaId, monto);
+  else await asignarPagoVenta(pagoId, facturaId, monto);
+  renderPagos();
 }
 
 async function hardDeleteFactura(id) {
@@ -7317,6 +7671,24 @@ function transitoriaNomenclatura(moneda, direccion) {
   const codigos = {
     pago:  { GTQ: '21102051', USD: '21102052' }, // Pagos Pendientes
     cobro: { GTQ: '11206001', USD: '11206002' }, // Cobros Pendientes
+  };
+  const porDireccion = codigos[direccion] || {};
+  const codigo = porDireccion[moneda] || porDireccion.GTQ;
+  return (state.nomenclatura||[]).find(n => n.codigo === codigo);
+}
+
+// Cuenta de compensación para pagos/cobros que se DESASIGNARON de una
+// factura y todavía no se han reaplicado a otra — mismo concepto que
+// "Outstanding Payments/Receipts" de Odoo, pero para el desfase entre
+// "el dinero ya se movió" y "a qué factura se le atribuye". Requiere que
+// estos códigos existan en la Nomenclatura Contable (crearlos si no
+// existen, mismo patrón que los de transitoriaNomenclatura arriba):
+//   21102071/072 — Pagos Sin Aplicar a Proveedores (GTQ/USD)
+//   11206021/022 — Cobros Sin Aplicar de Clientes (GTQ/USD)
+function sinAplicarNomenclatura(moneda, direccion) {
+  const codigos = {
+    pago:  { GTQ: '21102071', USD: '21102072' },
+    cobro: { GTQ: '11206021', USD: '11206022' },
   };
   const porDireccion = codigos[direccion] || {};
   const codigo = porDireccion[moneda] || porDireccion.GTQ;
@@ -7759,7 +8131,8 @@ async function savePago() {
       // erp_invoices — por eso CADA pago a proveedor fallaba con 409
       // (violación de llave foránea), aunque el pago fuera válido.
       const { data: pagoInsertado, error: ePago } = await sb.from('erp_pagos_oc').insert({
-        factura_id: facturaId, fecha, forma: metodo, cuenta_id, monto, referencia, num_pago,
+        factura_id: facturaId, proveedor_id: oc?.proveedor_id||null,
+        fecha, forma: metodo, cuenta_id, monto, referencia, num_pago,
         notas: [notas, bancoInfo?`Banco: ${bancoInfo}`:''].filter(Boolean).join(' | ') || null,
         moneda,
       }).select().single();
@@ -7783,7 +8156,7 @@ async function savePago() {
           await asientoDiferencialCambiario({
             montoUSD: monto, tcOriginal: tcFactura, tcLiquidacion: tcPago, fecha,
             referencia: `Factura ${f?.serie||''}${f?.numero||''} — ${oc?.numero||''}`,
-            referencia_id: facturaId, tipo: 'pago',
+            referencia_id: pagoInsertado?.id||facturaId, tipo: 'pago',
           });
         }
       }
@@ -7821,25 +8194,31 @@ async function savePago() {
       }
       if (!distribs.length) { toast('Asigna al menos una factura','error'); return; }
 
-      // Guarda cada pago individual por factura; el asiento contable combinado
-      // se arma después con buildLineasPago() (misma función que usa el tab de
-      // previsualización), así preview y grabación nunca pueden divergir —
-      // incluye la cuenta CxP correcta por factura (puede variar si las
-      // facturas distribuidas son de proveedores/monedas distintas).
+      // Guarda cada pago individual por factura, CADA UNO con su propio
+      // asiento (antes era un solo asiento combinado para todas las
+      // distribuciones, con referencia_id null — eso hacía imposible
+      // reversar/desasignar UNA sola factura del pago múltiple sin tocar
+      // las demás). Comparten num_pago para poder agruparse visualmente,
+      // pero cada fila de erp_pagos_oc y su asiento son independientes y
+      // reversables por separado — mismo requisito que single-mode.
       const num_pago_multi = document.getElementById('pago-factura-id').dataset.numPago || nextNumPago();
       const tcPagoMulti = esUSD ? getTCFecha(fecha) : 1;
+      const ctaTransitoriaMulti = transitoriaNomenclatura(moneda, 'pago');
+      const cuentaBancariaMulti = (state.cuentas||[]).find(c => c.id === cuenta_id);
       for (const d of distribs) {
-        const f = state.ocFacturas.find(x=>x.id===d.factura_id);
+        const f    = state.ocFacturas.find(x=>x.id===d.factura_id);
+        const ocF  = state.oc.find(o=>o.id===f?.oc_id);
+        const provF = state.proveedores.find(p=>p.id===ocF?.proveedor_id);
         // Pagos a proveedores (OC) van a erp_pagos_oc, no a erp_pagos (ver
         // nota en el modo single arriba). Antes este insert tampoco
         // revisaba si fallaba — seguía de largo marcando la factura como
         // pagada y generando el asiento contable aunque el pago nunca se
         // hubiera guardado. Ahora se detiene y avisa en el primer error.
-        const { error: ePagoMulti } = await sb.from('erp_pagos_oc').insert({
-          factura_id: d.factura_id,
+        const { data: pagoMultiRow, error: ePagoMulti } = await sb.from('erp_pagos_oc').insert({
+          factura_id: d.factura_id, proveedor_id: ocF?.proveedor_id||null,
           num_pago: num_pago_multi,
           fecha, forma: metodo, cuenta_id, monto: d.monto, referencia, notas, moneda,
-        });
+        }).select().single();
         if (ePagoMulti) {
           toast(`Error guardando pago de factura ${f?.serie||''}${f?.numero||''}: ${ePagoMulti.message}`,'error');
           await loadAll();
@@ -7852,42 +8231,52 @@ async function savePago() {
         const estadoPago = totalPag >= totalFac ? 'pagado' : 'parcial';
         await sb.from('erp_oc_facturas').update({ monto_pagado: totalPag, estado_pago: estadoPago }).eq('id', d.factura_id);
 
+        const ctaPorPagarF = ctaPorPagarOC(f?.oc_id);
+        const descCxP = [provF?.name, f?.serie, f?.numero].filter(Boolean).join(' - ');
+        await crearAsiento({
+          diario:'BANCOS', fecha,
+          descripcion: `Pago factura ${f?.serie||''}${f?.numero||''} — ${provF?.name||''} | ${metodo}${referencia?' Ref:'+referencia:''} · Nota ${num_pago_multi}`,
+          referencia: referencia||`PAGO-${f?.serie||''}${f?.numero||''}`, referencia_id: pagoMultiRow?.id||null, moneda,
+          lineas: [
+            { cuenta_id: ctaPorPagarF?.id||null, cuenta_codigo: ctaPorPagarF?.codigo||'CXP', cuenta_nombre: ctaPorPagarF?.nombre||'Cuentas x Pagar', debe: d.monto, haber: 0, descripcion: descCxP },
+            { cuenta_id: ctaTransitoriaMulti?.id||null, cuenta_codigo: ctaTransitoriaMulti?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoriaMulti?.nombre||'Pagos Pendientes', debe: 0, haber: d.monto, descripcion: `Pendiente de confirmar — ${cuentaBancariaMulti?.name||''}` },
+          ],
+        });
+
         // Diferencial cambiario por factura (cada una puede tener su propia
-        // fecha/TC de emisión, aunque compartan moneda).
+        // fecha/TC de emisión, aunque compartan moneda) — referencia_id
+        // apunta al pago de ESTA factura, no a la factura misma, para poder
+        // encontrarlo y reversarlo al desasignar solo esta aplicación.
         if (esUSD && f?.fecha) {
           const tcFactura = getTCFecha(f.fecha);
           if (Math.abs(tcPagoMulti - tcFactura) > 0.0001) {
-            const ocF = state.oc.find(o=>o.id===f.oc_id);
             await asientoDiferencialCambiario({
               montoUSD: d.monto, tcOriginal: tcFactura, tcLiquidacion: tcPagoMulti, fecha,
               referencia: `Factura ${f?.serie||''}${f?.numero||''} — ${ocF?.numero||''}`,
-              referencia_id: d.factura_id, tipo: 'pago',
+              referencia_id: pagoMultiRow?.id||d.factura_id, tipo: 'pago',
             });
           }
         }
       }
-
-      // Un solo asiento cubre varias filas de erp_pagos_oc (una por factura
-      // distribuida), así que no puede enlazarse con un único referencia_id.
-      // En su lugar se embebe el num_pago compartido ("Nota ${num_pago_multi}")
-      // dentro de la descripción — texto siempre generado por el sistema, no
-      // editable por el usuario — para poder encontrarlo después desde
-      // asientosDePago().
-      await crearAsiento({
-        diario:'BANCOS', fecha,
-        descripcion: `Pago múltiple ${distribs.length} facturas — ${(state.proveedores||[]).find(p=>p.id===provId)?.name||''}${referencia?' Ref:'+referencia:''} · Nota ${num_pago_multi}`,
-        referencia: referencia||`PAGO-MULTI-${num_pago_multi}`, referencia_id: null, moneda,
-        lineas: buildLineasPago(),
-      });
 
       await loadAll();
       toast(`✓ Pago registrado — ${distribs.length} facturas, ${fmtMoney(monto, moneda)}`);
       closeModal('modal-pago');
     }
   } else {
-    // OV pago (original logic)
-    const {error} = await sb.from('erp_pagos').insert({ factura_id: facturaId, fecha, forma: metodo, cuenta_id, monto, notas });
+    // OV pago — ahora también contabiliza (Cobros Pendientes / Cuentas x
+    // Cobrar + diferencial cambiario si aplica), vía asientoPagoVenta().
+    // Antes este branch solo insertaba erp_pagos sin generar ningún
+    // asiento, aunque asientoPagoVenta() ya existía en el código como
+    // "hook" preparado y nunca conectado — ver registrarPagoConAsiento().
+    const fCli = state.facturas.find(x=>x.id===facturaId);
+    const {data: pagoVenta, error} = await sb.from('erp_pagos').insert({
+      factura_id: facturaId, cliente_id: fCli?.customer_id||null,
+      fecha, forma: metodo, cuenta_id, monto, referencia, notas,
+    }).select().single();
     if (error) { toast('Error: '+error.message,'error'); return; }
+    await loadAll();
+    await asientoPagoVenta(pagoVenta.id);
     await loadAll();
     const f      = state.facturas.find(x=>x.id===facturaId);
     const pagado = totalPagado(facturaId);
@@ -14473,6 +14862,7 @@ const MODULE_META = {
   'estado-resultados':{ label: 'Estado de Resultados', parent: 'hub-contabilidad' },
   'balance-general':{ label: 'Balance General',     parent: 'hub-contabilidad' },
   'flujo-caja':     { label: 'Flujo de Caja',       parent: 'hub-contabilidad' },
+  pagos:            { label: 'Pagos',                parent: 'hub-contabilidad' },
   clientes:         { label: 'Clientes',            parent: 'hub-configuracion' },
   proveedores:      { label: 'Proveedores',         parent: 'hub-configuracion' },
   productos:        { label: 'Productos',           parent: 'hub-configuracion' },
@@ -15632,7 +16022,7 @@ async function cancelarFacturaOC(facturaId) {
   if (!f) { toast('Factura no encontrada','error'); return; }
   if (f.status === 'cancelada') { toast('Esta factura ya está cancelada','error'); return; }
   const pagosF = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
-  if (pagosF.length) { toast('No se puede cancelar — ya tiene pagos registrados','error'); return; }
+  if (pagosF.length) { toast('No se puede cancelar — tiene pagos aplicados. Desasígnalos primero desde Pagos.','error'); return; }
   const motivo = prompt(`¿Motivo de cancelación de la factura ${f.num_interno||f.numero}? (opcional)`);
   if (motivo === null) return; // usuario canceló el prompt
   const { error } = await sb.from('erp_oc_facturas').update({
@@ -15665,6 +16055,160 @@ async function cancelarFacturaOC(facturaId) {
   }
 
   toast(`Factura ${f.num_interno||f.numero} cancelada${asientosFactura.length?' — asiento de reversa generado':''}`);
+  await loadAll();
+}
+
+// ══════════════════════════════════════════════════════════════
+// DESASIGNAR / ASIGNAR PAGOS — modelo tipo Odoo: un pago es un registro
+// independiente contra el proveedor, no contra una factura. Aquí NO se creó
+// una tabla de aplicaciones aparte: cada fila de erp_pagos_oc YA ES una
+// aplicación (1 fila = 1 pago aplicado a 1 factura, o sin aplicar si
+// factura_id es null). "Desasignar" libera esa fila (factura_id → null) y
+// mueve su monto a la cuenta de compensación "Pagos Sin Aplicar a
+// Proveedor"; "Asignar" hace lo inverso contra una factura (nueva o
+// distinta). El asiento original del pago (CxP ↔ Transitoria/Banco) NUNCA
+// se toca — el dinero sí salió del banco, eso no cambia; lo único que se
+// mueve es a qué factura se le atribuye ese pago dentro de Cuentas x Pagar.
+// ══════════════════════════════════════════════════════════════
+
+// Saldo sin aplicar de un pago: en este modelo, una fila con factura_id=null
+// está 100% sin aplicar (todo su monto); una fila con factura_id ya asignado
+// está 100% aplicada (saldo 0) — no hay aplicación parcial dentro de una
+// misma fila (ver asignarPagoOC: una aplicación parcial separa el remanente
+// en una fila nueva, sin aplicar).
+function saldoSinAplicarPagoOC(pagoId) {
+  const p = (state.pagosOC||[]).find(x=>x.id===pagoId);
+  if (!p) return 0;
+  return p.factura_id ? 0 : Number(p.monto||0);
+}
+
+async function desasignarPagoOC(pagoId) {
+  const p = (state.pagosOC||[]).find(x=>x.id===pagoId);
+  if (!p) { toast('Pago no encontrado','error'); return; }
+  if (!p.factura_id) { toast('Este pago ya está sin aplicar','error'); return; }
+  const f    = (state.ocFacturas||[]).find(x=>x.id===p.factura_id);
+  const prov = (state.proveedores||[]).find(x=>x.id===p.proveedor_id);
+  if (!confirm(`¿Desasignar el pago ${p.num_pago||''} (${fmtMoney(p.monto, p.moneda||'GTQ')}) de la factura ${f?.num_interno||f?.numero||''}?\n\nEl monto quedará disponible para aplicarlo a otra factura del mismo proveedor.`)) return;
+
+  const ctaPorPagar   = ctaPorPagarOC(f?.oc_id);
+  const ctaSinAplicar = sinAplicarNomenclatura(p.moneda||'GTQ', 'pago');
+
+  // Reinstala el saldo pendiente de la factura (Haber CxP) y mueve el monto
+  // a la cuenta de compensación (Debe Pagos Sin Aplicar) — no toca el lado
+  // Banco/Transitoria del asiento original.
+  await crearAsiento({
+    diario: 'BANCOS', fecha: today(),
+    descripcion: `Desasignación de pago ${p.num_pago||''} — ${f?.serie||''}${f?.numero||''} — ${prov?.name||''}`,
+    referencia: `DESASIGNA-${p.num_pago||pagoId}`, referencia_id: pagoId,
+    moneda: p.moneda||'GTQ', tipo_cambio: 1,
+    lineas: [
+      { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: 0, haber: Number(p.monto||0), descripcion: `Reinstala saldo — ${f?.serie||''}${f?.numero||''}` },
+      { cuenta_id: ctaSinAplicar?.id||null, cuenta_codigo: ctaSinAplicar?.codigo||'PAGOS-SIN-APLICAR', cuenta_nombre: ctaSinAplicar?.nombre||'Pagos Sin Aplicar a Proveedor', debe: Number(p.monto||0), haber: 0, descripcion: `Pago ${p.num_pago||''} sin aplicar` },
+    ],
+  });
+
+  // Reversar el diferencial cambiario de este pago, si existió (ver
+  // savePago(): referencia_id apunta al id del pago, no de la factura).
+  const asientosDiff = (state.asientos||[]).filter(a => a.referencia_id === pagoId && a.diario === DIARIO_CAMBIARIO);
+  for (const a of asientosDiff) {
+    const lineasOrig = (state.asientoLineas||[]).filter(l => l.asiento_id === a.id);
+    if (!lineasOrig.length) continue;
+    await crearAsiento({
+      diario: DIARIO_CAMBIARIO, fecha: today(),
+      descripcion: `REVERSA — ${a.descripcion}`,
+      referencia: a.referencia, referencia_id: pagoId,
+      moneda: 'GTQ', tipo_cambio: 1,
+      lineas: lineasOrig.map(l => ({ cuenta_id:l.cuenta_id, cuenta_codigo:l.cuenta_codigo, cuenta_nombre:l.cuenta_nombre, debe:l.haber, haber:l.debe, descripcion:`Reversa: ${l.descripcion||''}` })),
+    });
+  }
+
+  // Libera el pago — ya no queda ligado a ninguna factura.
+  await sb.from('erp_pagos_oc').update({ factura_id: null }).eq('id', pagoId);
+
+  // Recalcular estado de la factura que quedó liberada.
+  if (f) {
+    const pagadoRestante = (state.pagosOC||[]).filter(x=>x.factura_id===f.id && x.id!==pagoId).reduce((s,x)=>s+Number(x.monto||0),0);
+    await sb.from('erp_oc_facturas').update({
+      monto_pagado: pagadoRestante,
+      estado_pago: pagadoRestante<=0 ? 'pendiente' : (pagadoRestante >= Number(f.total||0) ? 'pagado' : 'parcial'),
+    }).eq('id', f.id);
+  }
+
+  toast(`Pago ${p.num_pago||''} desasignado — disponible para aplicar a otra factura`);
+  await loadAll();
+}
+
+// Aplica un pago sin aplicar (o su remanente) a una factura — `monto`
+// opcional: por default aplica lo máximo posible (el menor entre el saldo
+// del pago y el saldo pendiente de la factura). Si aplica menos que el
+// monto total del pago, la fila original se divide: la porción aplicada se
+// queda ligada a la factura, y el remanente se separa en una fila nueva,
+// todavía sin aplicar — así una misma fila de erp_pagos_oc nunca queda
+// "parcialmente aplicada".
+async function asignarPagoOC(pagoId, facturaId, montoAplicar) {
+  const p = (state.pagosOC||[]).find(x=>x.id===pagoId);
+  const f = (state.ocFacturas||[]).find(x=>x.id===facturaId);
+  if (!p || !f) { toast('Pago o factura no encontrados','error'); return; }
+  if (p.factura_id) { toast('Este pago ya está aplicado a una factura','error'); return; }
+  if (f.status === 'cancelada') { toast('Esa factura está cancelada','error'); return; }
+  const oc = state.oc.find(o=>o.id===f.oc_id);
+  if (p.proveedor_id && oc?.proveedor_id && oc.proveedor_id !== p.proveedor_id) {
+    toast('El pago y la factura son de proveedores distintos','error'); return;
+  }
+  const pagadoFactura = (state.pagosOC||[]).filter(x=>x.factura_id===facturaId).reduce((s,x)=>s+Number(x.monto||0),0);
+  const saldoFactura = Math.max(0, Number(f.total||0) - pagadoFactura);
+  const monto = Math.min(Number(montoAplicar)||Number(p.monto||0), Number(p.monto||0), saldoFactura);
+  if (monto <= 0) { toast('No hay saldo pendiente que aplicar','error'); return; }
+
+  const prov = (state.proveedores||[]).find(x=>x.id===(p.proveedor_id||oc?.proveedor_id));
+  const ctaPorPagar   = ctaPorPagarOC(f.oc_id);
+  const ctaSinAplicar = sinAplicarNomenclatura(p.moneda||'GTQ', 'pago');
+
+  await crearAsiento({
+    diario: 'BANCOS', fecha: today(),
+    descripcion: `Aplicación de pago ${p.num_pago||''} — ${f.serie||''}${f.numero} — ${prov?.name||''}`,
+    referencia: `APLICA-${p.num_pago||pagoId}`, referencia_id: pagoId,
+    moneda: p.moneda||'GTQ', tipo_cambio: 1,
+    lineas: [
+      { cuenta_id: ctaSinAplicar?.id||null, cuenta_codigo: ctaSinAplicar?.codigo||'PAGOS-SIN-APLICAR', cuenta_nombre: ctaSinAplicar?.nombre||'Pagos Sin Aplicar a Proveedor', debe: 0, haber: monto, descripcion: `Pago ${p.num_pago||''} aplicado` },
+      { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: monto, haber: 0, descripcion: `Aplicado a ${f.serie||''}${f.numero}` },
+    ],
+  });
+
+  // Diferencial cambiario contra la factura nueva, si aplica (mismo
+  // criterio que en savePago(): TC de la fecha del pago vs. TC de la fecha
+  // de la factura).
+  if ((p.moneda||'GTQ') === 'USD' && f.fecha) {
+    const tcPago    = getTCFecha(p.fecha);
+    const tcFactura = getTCFecha(f.fecha);
+    if (Math.abs(tcPago - tcFactura) > 0.0001) {
+      await asientoDiferencialCambiario({
+        montoUSD: monto, tcOriginal: tcFactura, tcLiquidacion: tcPago, fecha: today(),
+        referencia: `Factura ${f.serie||''}${f.numero} — ${oc?.numero||''}`,
+        referencia_id: pagoId, tipo: 'pago',
+      });
+    }
+  }
+
+  if (monto < Number(p.monto||0)) {
+    const remanente = Number(p.monto||0) - monto;
+    await sb.from('erp_pagos_oc').update({ factura_id: facturaId, monto }).eq('id', pagoId);
+    await sb.from('erp_pagos_oc').insert({
+      proveedor_id: p.proveedor_id||oc?.proveedor_id||null, fecha: p.fecha, forma: p.forma, cuenta_id: p.cuenta_id,
+      monto: remanente, referencia: p.referencia, num_pago: p.num_pago, moneda: p.moneda,
+      notas: `Remanente sin aplicar de ${p.num_pago||''}`,
+    });
+  } else {
+    await sb.from('erp_pagos_oc').update({ factura_id: facturaId }).eq('id', pagoId);
+  }
+
+  const nuevoPagado = pagadoFactura + monto;
+  await sb.from('erp_oc_facturas').update({
+    monto_pagado: nuevoPagado,
+    estado_pago: nuevoPagado >= Number(f.total||0) ? 'pagado' : 'parcial',
+  }).eq('id', facturaId);
+
+  toast(`✓ Pago aplicado a ${f.serie||''}${f.numero}`);
   await loadAll();
 }
 
