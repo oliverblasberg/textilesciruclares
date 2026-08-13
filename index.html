@@ -1756,6 +1756,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
                 <th class="hide-mobile">Representante</th>
                 <th class="hide-mobile">Fecha Entrega</th>
                 <th>Estado</th>
+                <th>Pago</th>
                 <th></th>
               </tr></thead>
               <tbody id="tbl-oc"></tbody>
@@ -2222,6 +2223,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="sinaplicar">Sin Aplicar</option>
           </select>
           <input type="text" id="pagos-search" class="filter-select" placeholder="Buscar proveedor/cliente..." oninput="renderPagos()" style="max-width:220px"/>
+          <button class="btn btn-primary" onclick="abrirNuevoPagoLibre()" style="margin-left:auto">+ Nuevo Pago</button>
         </div>
         <div class="card"><div class="table-wrap">
           <table>
@@ -2260,6 +2262,55 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <div class="modal-footer">
             <button class="btn btn-ghost" onclick="closeModal('modal-aplicar-pago')">Cancelar</button>
             <button class="btn btn-primary" onclick="confirmarAplicarPago()">Aplicar</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- MODAL: Nuevo pago SIN factura (independiente, se aplica después) -->
+      <div class="modal-overlay" id="modal-nuevo-pago-libre" onclick="if(event.target===this)closeModal('modal-nuevo-pago-libre')">
+        <div class="modal">
+          <div class="modal-header"><div class="modal-title">Nuevo Pago</div></div>
+          <div class="modal-body">
+            <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Se registra contra el proveedor/cliente sin ligarlo a ninguna factura todavía — podrás aplicarlo después desde esta misma página.</div>
+            <div class="form-grid form-grid-2">
+              <div class="field field-full">
+                <label>Tipo *</label>
+                <select id="npl-tipo" onchange="onNplTipoChange()">
+                  <option value="oc">Pago a Proveedor</option>
+                  <option value="ov">Cobro de Cliente</option>
+                </select>
+              </div>
+              <div class="field field-full" id="npl-entidad-wrap">
+                <label id="npl-entidad-label">Proveedor *</label>
+                <select id="npl-entidad-id"><option value="">— Seleccionar —</option></select>
+              </div>
+              <div class="field"><label>Fecha *</label><input type="date" id="npl-fecha"/></div>
+              <div class="field"><label>Forma de Pago *</label>
+                <select id="npl-forma">
+                  <option value="">— Seleccionar —</option>
+                  <option value="transferencia">Transferencia</option>
+                  <option value="cheque">Cheque</option>
+                  <option value="efectivo">Efectivo</option>
+                  <option value="tarjeta">Tarjeta</option>
+                </select>
+              </div>
+              <div class="field"><label>Moneda *</label>
+                <select id="npl-moneda" onchange="onNplMonedaChange()">
+                  <option value="GTQ">GTQ</option>
+                  <option value="USD">USD</option>
+                </select>
+              </div>
+              <div class="field"><label>Cuenta de Origen *</label>
+                <select id="npl-cuenta"><option value="">— Seleccionar cuenta —</option></select>
+              </div>
+              <div class="field"><label>Monto *</label><input type="number" id="npl-monto" step="0.01" min="0"/></div>
+              <div class="field"><label>Referencia</label><input type="text" id="npl-referencia"/></div>
+              <div class="field field-full"><label>Notas</label><input type="text" id="npl-notas"/></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal('modal-nuevo-pago-libre')">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarPagoLibre()">Guardar</button>
           </div>
         </div>
       </div>
@@ -3143,6 +3194,13 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <div><span style="color:var(--text3);font-size:11px">Pagado:</span> <strong id="pago-fact-pagado" style="font-family:'DM Mono',monospace;color:var(--green)"></strong></div>
           <div><span style="color:var(--text3);font-size:11px">Pendiente:</span> <strong id="pago-fact-pendiente" style="font-family:'DM Mono',monospace;color:var(--accent)"></strong></div>
         </div>
+      </div>
+
+      <!-- Pagos sin aplicar del proveedor — visibilidad + poder usarlos aquí
+           mismo en vez de tener que ir al módulo Pagos. -->
+      <div id="pago-sinaplicar-wrap" style="margin-bottom:16px;display:none">
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">💰 Pagos sin aplicar de este proveedor</div>
+        <div id="pago-sinaplicar-list"></div>
       </div>
 
       <!-- Historial de pagos anteriores -->
@@ -7535,6 +7593,102 @@ async function confirmarAplicarPago() {
   renderPagos();
 }
 
+// ── Nuevo Pago sin factura (punto 3: registrar dinero recibido/entregado
+// directo contra el proveedor/cliente, sin necesidad de generarlo desde una
+// OC/factura primero) ──
+function abrirNuevoPagoLibre() {
+  document.getElementById('npl-tipo').value = pagosPageActiveTab === 'ov' ? 'ov' : 'oc';
+  document.getElementById('npl-fecha').value = today();
+  document.getElementById('npl-forma').value = '';
+  document.getElementById('npl-moneda').value = 'GTQ';
+  document.getElementById('npl-monto').value = '';
+  document.getElementById('npl-referencia').value = '';
+  document.getElementById('npl-notas').value = '';
+  onNplTipoChange();
+  openModal('modal-nuevo-pago-libre');
+}
+
+function onNplTipoChange() {
+  const tipo = document.getElementById('npl-tipo').value;
+  const sel = document.getElementById('npl-entidad-id');
+  document.getElementById('npl-entidad-label').textContent = tipo === 'oc' ? 'Proveedor *' : 'Cliente *';
+  const opciones = tipo === 'oc'
+    ? (state.proveedores||[]).map(p=>`<option value="${p.id}">${p.name}</option>`).join('')
+    : (state.clientes||[]).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  sel.innerHTML = '<option value="">— Seleccionar —</option>' + opciones;
+  onNplMonedaChange();
+}
+
+function onNplMonedaChange() {
+  const moneda = document.getElementById('npl-moneda').value;
+  const sel = document.getElementById('npl-cuenta');
+  sel.innerHTML = '<option value="">— Seleccionar cuenta —</option>' +
+    (state.cuentas||[]).filter(c=>c.activa!==false && (c.moneda||'GTQ')===moneda)
+      .map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+}
+
+async function guardarPagoLibre() {
+  const tipo      = document.getElementById('npl-tipo').value;
+  const entidadId = document.getElementById('npl-entidad-id').value;
+  const fecha     = document.getElementById('npl-fecha').value;
+  const forma     = document.getElementById('npl-forma').value;
+  const moneda    = document.getElementById('npl-moneda').value;
+  const cuenta_id = document.getElementById('npl-cuenta').value;
+  const monto     = parseFloat(document.getElementById('npl-monto').value);
+  const referencia = document.getElementById('npl-referencia').value.trim();
+  const notas       = document.getElementById('npl-notas').value.trim();
+  if (!entidadId || !fecha || !forma || !cuenta_id || isNaN(monto) || monto<=0) {
+    toast('Completa todos los campos requeridos','error'); return;
+  }
+
+  const ctaSinAplicar = sinAplicarNomenclatura(moneda, tipo==='oc'?'pago':'cobro');
+  const cuentaBancaria = (state.cuentas||[]).find(c=>c.id===cuenta_id);
+
+  if (tipo === 'oc') {
+    const prov = (state.proveedores||[]).find(p=>p.id===entidadId);
+    const num_pago = nextNumPago();
+    const { data: pagoRow, error } = await sb.from('erp_pagos_oc').insert({
+      proveedor_id: entidadId, factura_id: null,
+      fecha, forma, cuenta_id, monto, referencia, num_pago, notas, moneda,
+    }).select().single();
+    if (error) { toast('Error: '+error.message,'error'); return; }
+
+    const ctaTransitoria = transitoriaNomenclatura(moneda, 'pago');
+    await crearAsiento({
+      diario: 'BANCOS', fecha,
+      descripcion: `Pago sin aplicar ${num_pago} — ${prov?.name||''}`,
+      referencia: referencia||`PAGO-${num_pago}`, referencia_id: pagoRow?.id||null, moneda,
+      lineas: [
+        { cuenta_id: ctaSinAplicar?.id||null, cuenta_codigo: ctaSinAplicar?.codigo||'PAGOS-SIN-APLICAR', cuenta_nombre: ctaSinAplicar?.nombre||'Pagos Sin Aplicar a Proveedor', debe: monto, haber: 0, descripcion: `Pago ${num_pago} — ${prov?.name||''}` },
+        { cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: 0, haber: monto, descripcion: `Pendiente de confirmar — ${cuentaBancaria?.name||''}` },
+      ],
+    });
+  } else {
+    const cli = (state.clientes||[]).find(c=>c.id===entidadId);
+    const { data: pagoRow, error } = await sb.from('erp_pagos').insert({
+      cliente_id: entidadId, factura_id: null,
+      fecha, forma, cuenta_id, monto, referencia, notas,
+    }).select().single();
+    if (error) { toast('Error: '+error.message,'error'); return; }
+
+    const ctaTransitoria = transitoriaNomenclatura(moneda, 'cobro');
+    await crearAsiento({
+      diario: 'COBROS', fecha,
+      descripcion: `Cobro sin aplicar — ${cli?.name||''}`,
+      referencia: referencia||`COBRO-${pagoRow?.id||''}`, referencia_id: pagoRow?.id||null, moneda,
+      lineas: [
+        { cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'COBROS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Cobros Pendientes', debe: monto, haber: 0, descripcion: `Pendiente de confirmar — ${cuentaBancaria?.name||''}` },
+        { cuenta_id: ctaSinAplicar?.id||null, cuenta_codigo: ctaSinAplicar?.codigo||'COBROS-SIN-APLICAR', cuenta_nombre: ctaSinAplicar?.nombre||'Cobros Sin Aplicar de Cliente', debe: 0, haber: monto, descripcion: `Cobro — ${cli?.name||''}` },
+      ],
+    });
+  }
+
+  toast('✓ Pago registrado — disponible para aplicar a una factura');
+  closeModal('modal-nuevo-pago-libre');
+  await loadAll();
+  renderPagos();
+}
+
 async function hardDeleteFactura(id) {
   if (!confirm('¿Eliminar permanentemente esta factura? Esta acción no se puede deshacer.')) return;
   const f = state.facturas.find(x => x.id === id);
@@ -7887,6 +8041,31 @@ function _pagoToggleInfoProveedor(show) {
   if (wrapCta)   wrapCta.style.display   = show ? '' : 'none';
 }
 
+// Pagos sin aplicar del proveedor de esta factura — visibilidad directa
+// dentro del modal de "Registrar Pago", para poder usar un pago ya
+// existente (ej. de una factura que se canceló y se desasignó) en vez de
+// crear uno nuevo. "Usar este pago" cierra el modal de registrar pago y
+// aplica directo vía asignarPagoOC() — mismo mecanismo que el módulo Pagos.
+function _pagoSinAplicarProveedor(proveedorId, facturaId) {
+  const wrap = document.getElementById('pago-sinaplicar-wrap');
+  const list = document.getElementById('pago-sinaplicar-list');
+  if (!wrap || !list) return;
+  const disponibles = (state.pagosOC||[]).filter(p => !p.factura_id && p.proveedor_id === proveedorId);
+  if (!disponibles.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  list.innerHTML = disponibles.map(p => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:7px;background:#FFFBEB;border:1px solid #FDE68A;margin-bottom:6px;font-size:12px">
+      <div>
+        ${p.num_pago?`<span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);margin-right:8px">${p.num_pago}</span>`:''}
+        <span style="font-weight:500">${fmtDate(p.fecha)}</span>
+        <span style="color:var(--text2);margin:0 8px">·</span>
+        <span>${p.forma||'—'}</span>
+        <strong style="font-family:'DM Mono',monospace;color:var(--green);margin-left:10px">${fmtMoney(p.monto, p.moneda||'GTQ')}</strong>
+      </div>
+      <button class="btn btn-sm btn-primary" onclick="closeModal('modal-pago');asignarPagoOC('${p.id}','${facturaId}')">Usar este pago</button>
+    </div>`).join('');
+}
+
 function _pagoHistorial(facturaId) {
   const pagos = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
   const wrap  = document.getElementById('pago-historial-wrap');
@@ -7946,6 +8125,7 @@ function openPagoOC(facturaId) {
   document.getElementById('pago-cuenta').innerHTML = _pagoCtaOptsProveedor(prov?.id);
   _pagoToggleInfoProveedor(true);
   document.getElementById('pago-distribucion-wrap').style.display = 'none';
+  _pagoSinAplicarProveedor(prov?.id, facturaId);
   _pagoHistorial(facturaId);
   pagoTab('info');
   openModal('modal-pago');
@@ -7987,6 +8167,9 @@ function openPagoProveedor(ocId) {
   document.getElementById('pago-proveedor-id').value = prov?.id||'';
   document.getElementById('modal-pago-title').textContent = 'Registrar Pago — Múltiples Facturas';
   document.getElementById('pago-fact-info').textContent   = prov?.name||'';
+  // El widget de "pagos sin aplicar" solo aplica a UNA factura a la vez
+  // (single-mode) — en multi-factura se oculta para no confundir.
+  document.getElementById('pago-sinaplicar-wrap').style.display = 'none';
   const totalPend = facturasPendientes.reduce((s,f) => {
     const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===f.id).reduce((ss,p)=>ss+Number(p.monto||0),0);
     return s + Math.max(0, Number(f.total||0)-pagado);
@@ -8336,9 +8519,29 @@ function openPago(facturaId) {
       </div>`;
     }).join('');
   } else { histWrap.style.display = 'none'; }
+  _pagoSinAplicarCliente(f.customer_id, facturaId);
   document.getElementById('modal-pago-title').textContent = 'Registrar Pago';
   pagoTab('info');
   openModal('modal-pago');
+}
+
+function _pagoSinAplicarCliente(clienteId, facturaId) {
+  const wrap = document.getElementById('pago-sinaplicar-wrap');
+  const list = document.getElementById('pago-sinaplicar-list');
+  if (!wrap || !list) return;
+  const disponibles = (state.pagos||[]).filter(p => !p.factura_id && p.cliente_id === clienteId);
+  if (!disponibles.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  list.innerHTML = disponibles.map(p => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:7px;background:#FFFBEB;border:1px solid #FDE68A;margin-bottom:6px;font-size:12px">
+      <div>
+        <span style="font-weight:500">${fmtDate(p.fecha)}</span>
+        <span style="color:var(--text2);margin:0 8px">·</span>
+        <span>${p.forma||'—'}</span>
+        <strong style="font-family:'DM Mono',monospace;color:var(--green);margin-left:10px">${fmtMoney(p.monto,'GTQ')}</strong>
+      </div>
+      <button class="btn btn-sm btn-primary" onclick="closeModal('modal-pago');asignarPagoVenta('${p.id}','${facturaId}')">Usar este pago</button>
+    </div>`).join('');
 }
 
 // ═══ CONCILIACIÓN BANCARIA ═══
@@ -13749,8 +13952,23 @@ function buildLineasFacturaCompra({ oc_id, tipo, total, neto=null, iva=null }) {
   if (esIVA) {
     // Con neto/iva reales (respetando el checkbox por línea) si vinieron;
     // si no, se parte el total 12% como antes (fallback sin ese dato).
-    const netoLinea = tieneNetoIva ? parseFloat(Number(neto).toFixed(4)) : parseFloat((totalOrig / 1.12).toFixed(4));
-    const ivaLinea  = tieneNetoIva ? parseFloat(Number(iva).toFixed(4))  : parseFloat((totalOrig - netoLinea).toFixed(4));
+    let netoLinea = tieneNetoIva ? parseFloat(Number(neto).toFixed(4)) : parseFloat((totalOrig / 1.12).toFixed(4));
+    let ivaLinea  = tieneNetoIva ? parseFloat(Number(iva).toFixed(4))  : parseFloat((totalOrig - netoLinea).toFixed(4));
+    // Blindaje: neto+iva DEBE sumar exactamente el total facturado (que es
+    // lo que se acredita a Cuentas x Pagar más abajo) — si no coinciden
+    // (ej. neto/iva vinieron de un cálculo por línea desincronizado del
+    // total real, ver saveFacturaOC()), se reescala proporcionalmente para
+    // que el asiento SIEMPRE cuadre. saveFacturaOC() ya bloquea este caso
+    // antes de guardar, así que esto es una segunda red de seguridad para
+    // cualquier otro llamador (ej. asientoFacturaCompra() reconstruyendo
+    // desde erp_compras) que use datos ya desincronizados.
+    const sumaCheck = netoLinea + ivaLinea;
+    if (Math.abs(sumaCheck - totalOrig) > 0.01 && sumaCheck > 0) {
+      console.warn(`buildLineasFacturaCompra: neto+iva (${sumaCheck}) no coincide con total (${totalOrig}) — reescalando proporcionalmente.`);
+      const factor = totalOrig / sumaCheck;
+      netoLinea = parseFloat((netoLinea * factor).toFixed(4));
+      ivaLinea  = parseFloat((totalOrig - netoLinea).toFixed(4));
+    }
     lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: netoLinea, haber: 0 });
     lineas.push({ cuenta_id: ctaIVACred?.id||null, cuenta_codigo: ctaIVACred?.codigo||'IVA-CRED', cuenta_nombre: ctaIVACred?.nombre||'IVA Crédito Fiscal', debe: ivaLinea, haber: 0 });
   } else {
@@ -15799,6 +16017,26 @@ function renderOC() {
   const tbody = document.getElementById('tbl-oc');
   if (!tbody) return;
   tbody.innerHTML = data.length ? data.map(o=>{
+    // Estado de PAGO — independiente del estado de flujo (o.status), que
+    // nunca representa si ya se pagó. Se calcula dinámicamente desde sus
+    // facturas + pagosOC (igual que la pestaña Facturas del panel de la
+    // OC), así que refleja de inmediato cualquier asignación/desasignación
+    // hecha desde el módulo Pagos, sin depender de un campo propio en
+    // erp_oc que haya que mantener sincronizado aparte.
+    const facturasOC = (state.ocFacturas||[]).filter(f=>f.oc_id===o.id && f.status!=='cancelada');
+    let pagoBadge = '';
+    if (facturasOC.length) {
+      const totalFact = facturasOC.reduce((s,f)=>s+Number(f.total||0),0);
+      const totalPag  = facturasOC.reduce((s,f)=>{
+        const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===f.id).reduce((ss,p)=>ss+Number(p.monto||0),0);
+        return s + pagado;
+      },0);
+      const esPagada  = totalPag >= totalFact - 0.01;
+      const esParcial = totalPag > 0 && !esPagada;
+      pagoBadge = `<span class="badge ${esPagada?'badge-green':esParcial?'badge-yellow':'badge-blue'}">${esPagada?'Pagada':esParcial?'Pago Parcial':'Pendiente'}</span>`;
+    } else {
+      pagoBadge = `<span style="color:var(--text3);font-size:12px">Sin facturar</span>`;
+    }
     return `<tr>
       <td class="td-mono" style="font-weight:600;cursor:pointer;color:var(--accent);text-decoration:underline" onclick="showOCPanel('${o.id}')">${o.numero||'—'}</td>
       <td style="white-space:nowrap">${fmtDate(o.fecha)}</td>
@@ -15806,11 +16044,12 @@ function renderOC() {
       <td class="hide-mobile" style="font-size:12px;color:var(--text2)">${o.representante||'—'}</td>
       <td class="hide-mobile" style="white-space:nowrap">${o.entrega?fmtDate(o.entrega):'—'}</td>
       <td><span class="badge ${OC_STATUS_COLOR[o.status]||'badge-gray'}">${OC_STATUS_LABEL[o.status]||o.status}</span></td>
+      <td>${pagoBadge}</td>
       <td><div class="td-actions">
         <button class="btn btn-sm btn-ghost" onclick="editOC('${o.id}')">Editar</button>
       </div></td>
     </tr>`;
-  }).join('') : '<tr><td colspan="6"><div class="empty-state"><p>Sin órdenes de compra</p></div></td></tr>';
+  }).join('') : '<tr><td colspan="7"><div class="empty-state"><p>Sin órdenes de compra</p></div></td></tr>';
   if (currentOCId) renderOCPanel(currentOCId);
 }
 
@@ -19278,12 +19517,21 @@ function focTab(tab) {
 // columna foc-iva-val-N queda en "—" y no aporta nada a sumIva. Se usa tanto
 // para guardar en erp_compras como para generar el asiento contable — así
 // nunca puede quedar un asiento con IVA que el usuario desmarcó en pantalla.
+// BUG CORREGIDO: antes hacía .replace(/[^0-9.,]/g,'').replace(',','.') sobre
+// el texto YA FORMATEADO para mostrar (ej. "Q8,928.57"), lo que convertía
+// la coma de miles en un punto decimal ("8.928.57") — parseFloat corta ahí
+// y devuelve 8.928 en vez de 8928.57. Con montos de 4+ dígitos (donde
+// fmtMoney sí usa separador de miles), esto posteaba un asiento
+// desbalanceado 1000 veces menor al correcto. Ahora solo se eliminan los
+// separadores de miles (sin convertirlos en punto), igual que ya se hacía
+// correctamente en calcFocItemIva() unas líneas arriba — nunca debieron
+// ser dos formas distintas de leer el mismo número.
 function focNetoIvaFromDOM() {
   let neto = 0, iva = 0;
   document.querySelectorAll('[id^="foc-neto-"]').forEach((el, idx) => {
-    neto += parseFloat(el.textContent.replace(/[^0-9.,]/g,'').replace(',','.'))||0;
+    neto += parseFloat(el.textContent.replace(/[^0-9.]/g,''))||0;
     const ivaEl = document.getElementById(`foc-iva-val-${idx}`);
-    iva += ivaEl?.textContent==='—' ? 0 : parseFloat((ivaEl?.textContent||'').replace(/[^0-9.,]/g,'').replace(',','.'))||0;
+    iva += ivaEl?.textContent==='—' ? 0 : parseFloat((ivaEl?.textContent||'').replace(/[^0-9.]/g,''))||0;
   });
   return { neto: parseFloat(neto.toFixed(2)), iva: parseFloat(iva.toFixed(2)) };
 }
@@ -19600,6 +19848,21 @@ async function saveFacturaOC() {
     const d = new Date(fecha); d.setDate(d.getDate()+Number(diasCredito));
     return d.toISOString().split('T')[0];
   })();
+
+  // Blindaje: el neto/IVA por línea (focNetoIvaFromDOM, calculado a partir
+  // de cantidad × precio de cada renglón de la OC) es una fuente de datos
+  // completamente independiente del campo "Total factura" que el usuario
+  // escribe a mano — nada los obligaba a coincidir. Si no cuadran (ej.
+  // porque un producto quedó mal catalogado como NO-servicio y su cantidad
+  // se tomó de lo "recibido" en bodega en vez de la cantidad facturada),
+  // el asiento se posteaba desbalanceado (Debe ≠ Haber) sin ningún aviso.
+  // Ahora se bloquea el guardado hasta que el usuario corrija la cantidad/
+  // precio de la línea que no cuadra, o ajuste el total.
+  const { neto: netoCheck, iva: ivaCheck } = focNetoIvaFromDOM();
+  if (Math.abs((netoCheck + ivaCheck) - total) > 0.01) {
+    toast(`Las líneas no cuadran con el total de la factura: líneas suman ${fmtMoney(netoCheck+ivaCheck, monedaOC)}, pero el total es ${fmtMoney(total, monedaOC)}. Revisa la cantidad/precio de cada línea antes de generar la factura.`,'error');
+    return;
+  }
 
   if (focBtn) { focBtn.disabled = true; focBtn.textContent = 'Generando…'; }
 
