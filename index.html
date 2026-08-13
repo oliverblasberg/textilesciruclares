@@ -12615,10 +12615,18 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
   const numero = nextOPNum();
   const tc     = tcHoy() || 7.75;
   const lineas = (state.recetaLineas||[]).filter(l => l.receta_id === receta.id);
+  // BUGFIX (debugging en vivo, 13/Ago/2026): esta función referenciaba una
+  // variable global `stock` que nunca se declaró en ningún lugar del archivo
+  // — ReferenceError en cuanto el motor llegaba a una ruta de tejido interno
+  // (confirmado vía consola: "stock is not defined" en planificarFabricacion,
+  // disparado desde planificarAbastecimientoOV → planificarAbastecimiento).
+  // El resto del código (registrarMovimientosOP, saveOP, explodeBOM) ya usa
+  // el patrón correcto: calcStock() → stockMap. Se homologa aquí.
+  const stockMap = calcStock();
   let costoMP = 0;
   lineas.forEach(l => {
     const cant = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad;
-    const st   = stock[l.insumo_id];
+    const st   = stockMap[l.insumo_id];
     const cu   = st && st.saldo>0 ? st.valoracion/st.saldo : (state.productos.find(p=>p.id===l.insumo_id)?.precio_compra||0);
     costoMP   += cant * cu;
   });
