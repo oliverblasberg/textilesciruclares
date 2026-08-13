@@ -11366,6 +11366,18 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockM
   // ── Helper: get cuenta from nomenclatura by codigo ──
   const getCta = (codigo) => state.nomenclatura.find(n => n.codigo === codigo);
 
+  // BUGFIX (debugging en vivo, 13/Ago/2026): esta función determinaba la
+  // cuenta de origen/destino de los asientos con una regla binaria
+  // hardcodeada (esTej ? hilo : terminado) que asumía que el único insumo
+  // posible en una ruta no-tejido era "producto terminado" — comentario
+  // original: "la tela cruda era PT", de cuando no existía la categoría
+  // Tela Cruda separada. Ahora que sí existe (confirmado: GF-028 está en
+  // categoría "Tela Cruda" → cuenta 11301002, no 11301003), esa regla
+  // producía asientos incorrectos en cualquier operación después de tejido
+  // (teñido, acabado). Se reemplaza por lookup real de la categoría de
+  // CADA producto vía getCtaValoracionProducto() (helper global, mismo
+  // mecanismo que ya usa Compras vía snapshotCategoriaAccounts()).
+
   const ctaHilo      = getCta(CTA_INV_HILO);
   const ctaProceso   = getCta(CTA_INV_PROCESO);
   const ctaTerminado = getCta(CTA_INV_TERMINADO);
@@ -11474,9 +11486,28 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockM
 
   // ── PASO 3: Asientos contables de manufactura ──
 
-  // Cuenta origen: hilo (tejido) o producto terminado (teñido, la tela cruda era PT)
-  const ctaOrigen = esTej ? ctaHilo : ctaTerminado;
-  const ctaOrigenCodigo = esTej ? CTA_INV_HILO : CTA_INV_TERMINADO;
+  // Cuenta(s) origen: se agrupa por la CATEGORÍA REAL de cada insumo
+  // consumido, en vez de asumir "hilo si es tejido, terminado si no". Esto
+  // soporta correctamente cualquier receta, incluyendo multi-insumo con
+  // categorías distintas (ej. hilo + elastano), y corrige el caso real
+  // encontrado: un insumo GF-028 en una operación de teñido pertenece a la
+  // categoría "Tela Cruda" (11301002), no "Terminado" (11301003).
+  const origenPorCategoria = new Map(); // cuenta_id -> { cuenta, monto }
+  consumoData.forEach(d => {
+    const cta = getCtaValoracionProducto(d.insumo_id) || (esTej ? ctaHilo : ctaTerminado); // fallback defensivo si el producto no tiene categoría asignada
+    const key = cta?.id || 'sin-cuenta';
+    const prev = origenPorCategoria.get(key) || { cuenta: cta, monto: 0, detalle: [] };
+    prev.monto += d.costoLinea;
+    prev.detalle.push(`${fmtNum(d.cantConMerma)} kg`);
+    origenPorCategoria.set(key, prev);
+  });
+  const lineasOrigen = Array.from(origenPorCategoria.values()).map(o => ({
+    cuenta_id:     o.cuenta?.id || null,
+    cuenta_codigo: o.cuenta?.codigo || '',
+    cuenta_nombre: o.cuenta?.nombre || 'Inventario MP',
+    debe: 0, haber: o.monto,
+    descripcion: `Salida MP — ${o.detalle.join(', ')}`,
+  }));
 
   // ASIENTO 1: Consumo de MP → WIP
   await crearAsiento({
@@ -11493,13 +11524,7 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockM
         debe: costoMPConMerma, haber: 0,
         descripcion: `MP a WIP — ${cantidad_prog} kg (incl. ${esInter?'merma absorbida':'merma + subcontrato'})`,
       },
-      {
-        cuenta_id:    ctaOrigen?.id||null,
-        cuenta_codigo: ctaOrigenCodigo,
-        cuenta_nombre: ctaOrigen?.nombre||(esTej?'Inventario Hilo':'Inventario PT'),
-        debe: 0, haber: costoMPConMerma,
-        descripcion: `Salida MP — ${consumoData.map(d=>`${fmtNum(d.cantConMerma)} kg`).join(', ')}`,
-      },
+      ...lineasOrigen,
     ],
   });
 
@@ -11544,18 +11569,30 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockM
     });
   }
 
-  // ASIENTO 3: Terminación — WIP → Producto Terminado
+  // Cuenta destino: la categoría REAL del producto que esta OP produce —
+  // antes se asumía siempre CTA_INV_TERMINADO (11301003), lo cual movía
+  // incorrectamente a "Producto Terminado" cualquier resultado intermedio
+  // (ej. GF-028, categoría real "Tela Cruda" = 11301002). Mismo patrón que
+  // usa Odoo: la cuenta de valoración siempre sale de la categoría propia
+  // del producto fabricado, nunca de una cuenta "terminado" universal. Si
+  // esa cuenta coincide con la de Proceso (como pasa con Tela Cruda, que
+  // en este catálogo también es 11301002), el asiento queda con efecto
+  // neto cero — correcto: el valor ya estaba en la cuenta correcta desde
+  // el Asiento 1, no hay nada más que mover hasta el siguiente nivel.
+  const ctaDestino = getCtaValoracionProducto(receta?.producto_id) || ctaTerminado;
+
+  // ASIENTO 3: Terminación — WIP → cuenta real del producto fabricado
   await crearAsiento({
     diario: DIARIO_MANUFACTURA,
     fecha: opRow.fecha_inicio || today(),
-    descripcion: `OP ${opRow.numero} — Terminación: WIP → PT | Lote ${lote}`,
+    descripcion: `OP ${opRow.numero} — Terminación: WIP → ${ctaDestino?.nombre||'PT'} | Lote ${lote}`,
     referencia: opRow.numero, referencia_id: opId,
     moneda: 'GTQ', tipo_cambio: 1,
     lineas: [
       {
-        cuenta_id:    ctaTerminado?.id||null,
-        cuenta_codigo: CTA_INV_TERMINADO,
-        cuenta_nombre: ctaTerminado?.nombre||'Inventario Producto Terminado',
+        cuenta_id:    ctaDestino?.id||null,
+        cuenta_codigo: ctaDestino?.codigo||CTA_INV_TERMINADO,
+        cuenta_nombre: ctaDestino?.nombre||'Inventario Producto Terminado',
         debe: costoTotalFabricacion, haber: 0,
         descripcion: `${cantidad_prog} kg × Q${costoUnitFabricado.toFixed(4)}/kg = Q${costoTotalFabricacion.toFixed(2)} | Lote ${lote}`,
       },
@@ -11771,7 +11808,12 @@ async function confirmarCompletarOP() {
   const diff = cantReal - Number(op.cantidad_prog||0);
   if (Math.abs(diff) >= 0.001) {
     const ctaProceso   = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
-    const ctaTerminado = state.nomenclatura.find(n => n.codigo === CTA_INV_TERMINADO);
+    // BUGFIX (debugging en vivo, 13/Ago/2026): usaba CTA_INV_TERMINADO
+    // hardcodeado — ver comentario extenso en registrarMovimientosOP.
+    // Ahora usa la cuenta real de la categoría del producto que esta OP
+    // produce (op.producto_id), consistente con el Asiento 3.
+    const ctaTerminado = getCtaValoracionProducto(op.producto_id)
+      || state.nomenclatura.find(n => n.codigo === CTA_INV_TERMINADO);
     const costoUnit    = op.cantidad_prog > 0 ? Number(op.costo_total||0) / Number(op.cantidad_prog) : 0;
     const montoDiff    = Math.abs(diff) * costoUnit;
     const esExceso     = diff > 0; // produjo más de lo esperado
@@ -11827,6 +11869,7 @@ async function confirmarCompletarOP() {
   const consumosOP = (state.opConsumos||[]).filter(c => c.op_id === id);
   let totalDiffValorMP = 0;
   const detalleAjusteMP = [];
+  const diffPorCategoria = new Map(); // cuenta_id -> { cuenta, monto }
   for (const c of consumosOP) {
     const inputEl = document.getElementById(`completar-consumo-real-${c.id}`);
     if (!inputEl) continue;
@@ -11843,8 +11886,17 @@ async function confirmarCompletarOP() {
     const diffCant = nuevoReal - Number(c.cantidad_prog||0); // vs. estándar (ya incluye merma de receta)
     if (Math.abs(diffCant) >= 0.001) {
       const prod = state.productos.find(p=>p.id===c.insumo_id);
-      totalDiffValorMP += diffCant * cu;
+      const diffValor = diffCant * cu;
+      totalDiffValorMP += diffValor;
       detalleAjusteMP.push(`${prod?.description||'—'} ${diffCant>0?'+':''}${diffCant.toFixed(3)} kg`);
+      // BUGFIX (debugging en vivo, 13/Ago/2026): trackear por categoría
+      // real del insumo (ver comentario en registrarMovimientosOP) en vez
+      // de un solo "ctaOrigen" calculado con esTejido(op.tipo).
+      const cta = getCtaValoracionProducto(c.insumo_id);
+      const key = cta?.id || 'sin-cuenta';
+      const prev = diffPorCategoria.get(key) || { cuenta: cta, monto: 0 };
+      prev.monto += diffValor;
+      diffPorCategoria.set(key, prev);
       await crearMovimiento({
         tipo: diffCant > 0 ? 'ajuste_negativo' : 'ajuste_positivo', // consumió más MP de la que se había registrado como salida, o menos
         producto_id: c.insumo_id,
@@ -11858,26 +11910,31 @@ async function confirmarCompletarOP() {
   }
 
   if (Math.abs(totalDiffValorMP) >= 0.01) {
-    const ctaProceso   = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
-    const ctaOrigenCod = esTejido(op.tipo) ? CTA_INV_HILO : CTA_INV_TERMINADO;
-    const ctaOrigen    = state.nomenclatura.find(n => n.codigo === ctaOrigenCod);
-    const consumioMas  = totalDiffValorMP > 0;
+    const ctaProceso = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
+    const consumioMas = totalDiffValorMP > 0;
+    // Una línea de contrapartida por cada categoría real de insumo afectada
+    // (antes: una sola cuenta calculada con esTejido(op.tipo), incorrecta
+    // para insumos que no son hilo — ver comentario en registrarMovimientosOP).
+    const lineasOrigenAjuste = Array.from(diffPorCategoria.values()).map(o => ({
+      cuenta_id: o.cuenta?.id||null,
+      cuenta_codigo: o.cuenta?.codigo||'',
+      cuenta_nombre: o.cuenta?.nombre||'Inventario MP',
+      debe: consumioMas ? 0 : Math.abs(o.monto),
+      haber: consumioMas ? Math.abs(o.monto) : 0,
+      descripcion: detalleAjusteMP.join(', '),
+    }));
     await crearAsiento({
       diario: DIARIO_MANUFACTURA,
       fecha: today(),
       descripcion: `OP ${op.numero} — Ajuste consumo real de MP vs. estándar (${detalleAjusteMP.join(', ')})`,
       referencia: op.numero, referencia_id: id,
       moneda: 'GTQ', tipo_cambio: 1,
-      lineas: consumioMas ? [
+      lineas: [
         { cuenta_id: ctaProceso?.id||null, cuenta_codigo: CTA_INV_PROCESO, cuenta_nombre: ctaProceso?.nombre||'En Proceso',
-          debe: Math.abs(totalDiffValorMP), haber: 0, descripcion: 'Consumo real de MP > estándar' },
-        { cuenta_id: ctaOrigen?.id||null, cuenta_codigo: ctaOrigenCod, cuenta_nombre: ctaOrigen?.nombre||'Inventario MP',
-          debe: 0, haber: Math.abs(totalDiffValorMP), descripcion: detalleAjusteMP.join(', ') },
-      ] : [
-        { cuenta_id: ctaOrigen?.id||null, cuenta_codigo: ctaOrigenCod, cuenta_nombre: ctaOrigen?.nombre||'Inventario MP',
-          debe: Math.abs(totalDiffValorMP), haber: 0, descripcion: detalleAjusteMP.join(', ') },
-        { cuenta_id: ctaProceso?.id||null, cuenta_codigo: CTA_INV_PROCESO, cuenta_nombre: ctaProceso?.nombre||'En Proceso',
-          debe: 0, haber: Math.abs(totalDiffValorMP), descripcion: 'Consumo real de MP < estándar' },
+          debe: consumioMas ? Math.abs(totalDiffValorMP) : 0,
+          haber: consumioMas ? 0 : Math.abs(totalDiffValorMP),
+          descripcion: consumioMas ? 'Consumo real de MP > estándar' : 'Consumo real de MP < estándar' },
+        ...lineasOrigenAjuste,
       ],
     });
     mensajes.push(`ajuste de MP Q${Math.abs(totalDiffValorMP).toFixed(2)}`);
@@ -13770,6 +13827,16 @@ const CTA_INV_HILO      = '11301001'; // Inventario de Hilo
 const CTA_INV_PROCESO   = '11301002'; // Inventario Producto en Proceso (WIP)
 const CTA_INV_TERMINADO = '11301003'; // Inventario Producto Terminado
 const DIARIO_MANUFACTURA = 'MANUFACTURA';
+
+// Cuenta de valoración REAL de un producto, según la categoría a la que
+// está asignado (misma fuente de verdad que ya usa Compras vía
+// snapshotCategoriaAccounts() — helper global para que cualquier asiento
+// de manufactura la use en vez de asumir cuentas fijas por tipo de OP).
+function getCtaValoracionProducto(productoId) {
+  const prod = state.productos.find(p => p.id === productoId);
+  const cat  = prod ? (state.categorias||[]).find(c => c.id === prod.categoria) : null;
+  return cat ? state.nomenclatura.find(n => n.id === cat.cta_valoracion) : null;
+}
 
 /**
  * Obtiene la cuenta de ganancia o pérdida cambiaria de la nomenclatura
