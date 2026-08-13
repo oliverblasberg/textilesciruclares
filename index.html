@@ -12660,10 +12660,18 @@ async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, o
   const prov   = state.proveedores.find(p => p.id === provId);
   const numero = nextOCNum ? nextOCNum() : `OC-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
 
+  // BUGFIX (debugging en vivo, 13/Ago/2026): esta función usaba nombres de
+  // columna que no existen en el esquema real de Supabase — confirmado
+  // reproduciendo el insert directo en consola: erp_oc.status (no "estado"),
+  // erp_oc_items.total_orig/total_contable (no "total"). El insert fallaba
+  // en silencio porque el código nunca revisaba `error` antes de seguir.
+  // También prod.precio_compra no existe — el precio real vive en el array
+  // prod.proveedores_compra, por proveedor.
+  const tc = tcHoy() || 7.75;
   const { data: ocData, error } = await sb.from('erp_oc').insert({
     numero, proveedor_id: provId||null,
     fecha, entrega: fecha,
-    estado: 'borrador', tipo_oc: 'compra',
+    status: 'borrador', tipo_oc: 'compra',
     ov_id: ovId,
     notas: `Generado automáticamente desde ${origen_tipo} ${origen_id}`,
   }).select().single();
@@ -12671,12 +12679,19 @@ async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, o
   if (error) { console.error('Error creando OC:', error); return null; }
 
   // Add line item
-  await sb.from('erp_oc_items').insert({
+  const precioInfo   = (prod.proveedores_compra||[]).find(pc => pc.proveedor_id === provId) || (prod.proveedores_compra||[])[0];
+  const precioUnit    = precioInfo?.precio || 0;
+  const monedaCompra  = precioInfo?.moneda || 'GTQ';
+  const precioUnitCta = monedaCompra === 'USD' ? precioUnit * tc : precioUnit;
+  const { error: eLinea } = await sb.from('erp_oc_items').insert({
     oc_id: ocData.id, producto_id: prod.id,
     cantidad, unidad: prod.unidad||'kg',
-    precio_unit: prod.precio_compra||0,
-    total: cantidad * (prod.precio_compra||0),
+    precio_unit: precioUnit, moneda: monedaCompra, tc,
+    precio_unit_contable: precioUnitCta,
+    total_orig: cantidad * precioUnit,
+    total_contable: cantidad * precioUnitCta,
   });
+  if (eLinea) console.error('Error creando línea de OC:', eLinea);
 
   toast(`OC ${numero} generada para ${prod.code} — ${prov?.name||'sin proveedor'}`);
   await loadAll();
@@ -12704,22 +12719,30 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
     return s + (c.tipo==='por_kg' ? mGTQ : c.tipo==='fijo' ? mGTQ/cantidad : 0);
   }, 0);
 
+  // BUGFIX (debugging en vivo, 13/Ago/2026): mismo problema de nombres de
+  // columna que planificarCompra — ver comentario ahí. Se agrega además el
+  // console.error que faltaba: antes, si el insert de la OC de servicio
+  // fallaba, el código seguía de largo sin generar nada y sin loguear nada.
   const { data: ocServ, error: e1 } = await sb.from('erp_oc').insert({
     numero: numeroSrv, proveedor_id: provSubId||null,
-    fecha, entrega: fecha, estado: 'borrador',
+    fecha, entrega: fecha, status: 'borrador',
     tipo_oc: 'subcontrato', ov_id: ovId,
     notas: `Servicio ${OP_TIPO_LABEL[receta.tipo]||receta.tipo} — ${prod.code} ${cantidad} kg | desde ${origen_tipo} ${origen_id}`,
   }).select().single();
 
+  if (e1) console.error('Error creando OC servicio de subcontrato:', e1);
+
   if (!e1) {
     // Línea: producto fabricado como servicio
-    await sb.from('erp_oc_items').insert({
+    const { error: eLineaServ } = await sb.from('erp_oc_items').insert({
       oc_id: ocServ.id, producto_id: prod.id,
       cantidad, unidad: prod.unidad||'kg',
-      precio_unit: costoServPorKg,
-      total: costoServPorKg * cantidad,
-      moneda: 'GTQ',
+      precio_unit: costoServPorKg, moneda: 'GTQ', tc: 1,
+      precio_unit_contable: costoServPorKg,
+      total_orig: costoServPorKg * cantidad,
+      total_contable: costoServPorKg * cantidad,
     });
+    if (eLineaServ) console.error('Error creando línea de OC servicio:', eLineaServ);
     toast(`OC Servicio ${numeroSrv} → ${provSub?.name||'subcontratista'} | ${cantidad} kg`);
   }
 
