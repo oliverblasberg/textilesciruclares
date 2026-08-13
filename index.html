@@ -1694,7 +1694,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div class="card">
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Código</th><th>Tipo</th><th>Descripción</th><th class="hide-mobile">Unidad</th><th class="hide-mobile">Precio Compra</th><th class="hide-mobile">Precio Venta</th><th>Estado</th><th></th></tr></thead>
+              <thead><tr><th>Código</th><th>Descripción</th><th>Tipo</th><th class="hide-mobile">Unidad</th><th class="hide-mobile">Precio Compra</th><th class="hide-mobile">Precio Venta</th><th>Estado</th><th></th></tr></thead>
               <tbody id="tbl-productos"></tbody>
             </table>
           </div>
@@ -4610,11 +4610,14 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div class="form-section-title" style="grid-column:1/-1;margin-bottom:12px">Insumos (Materiales)</div>
       <div class="line-items" style="margin-bottom:8px">
         <table>
-          <thead><tr><th>Insumo</th><th>Cantidad base / 1 kg</th><th>% Merma</th><th>Cant. real / 1 kg</th><th>Unidad</th><th></th></tr></thead>
+          <thead><tr><th>Insumo</th><th>Cantidad base / 1 kg</th><th>% Merma</th><th>Cant. real / 1 kg</th><th>Unidad</th><th title="Solo aplica a recetas subcontratadas">Reabastecer MP</th><th></th></tr></thead>
           <tbody id="rec-insumos"></tbody>
         </table>
       </div>
       <button class="btn-add-line" onclick="addRecInsumo()">+ Agregar insumo</button>
+      <div style="font-size:12px;color:var(--text3);margin:6px 0 4px">
+        "Reabastecer MP" solo tiene efecto en recetas subcontratadas: desmárcalo si el subcontratista ya tiene ese insumo en su propio stock y no debe dispararse compra/planificación automática de esa materia prima.
+      </div>
 
         <div class="field field-full" id="rec-prov-sub-field" style="display:none">
           <label>Proveedor Subcontratista (predeterminado para OC)</label>
@@ -6353,6 +6356,31 @@ function verPedido(id) {
     </tr>`;
   }).join('') : `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:12px">Sin listas de empaque</td></tr>`;
 
+  // Facturas de esta OV, con estado de pago — mismo patrón que la pestaña
+  // "Facturas" del panel de la OC (showOCPanel/renderOCPanel): visibilidad
+  // completa de facturación y cobro sin tener que salir a Libro de Ventas.
+  const facturasOV = state.facturas.filter(f => f.order_id === id);
+  const facturasHtml = facturasOV.length ? facturasOV.map(f => {
+    const pagosF    = (state.pagos||[]).filter(pg => pg.factura_id === f.id);
+    const pagado    = pagosF.reduce((s,pg) => s + Number(pg.monto||0), 0);
+    const totalF    = Number(f.total||0);
+    const saldo     = Math.max(0, totalF - pagado);
+    const esCancelada = f.status === 'cancelada';
+    const esPagada  = !esCancelada && saldo <= 0.01;
+    const esParcial = !esCancelada && pagado > 0 && !esPagada;
+    const estLabel  = esCancelada ? 'Cancelada' : esPagada ? 'Pagada' : esParcial ? 'Parcial' : 'Generada';
+    const estColor  = esCancelada ? 'badge-gray' : esPagada ? 'badge-green' : esParcial ? 'badge-yellow' : 'badge-blue';
+    return `<tr>
+      <td class="td-mono" style="color:var(--accent);cursor:pointer;text-decoration:underline" onclick="verFactura('${f.id}')">${f.invoice_number||'—'}</td>
+      <td>${fmtDate(f.date)}</td>
+      <td class="td-mono">${fmtMoney(totalF)}</td>
+      <td class="td-mono" style="color:var(--green)">${pagado>0?fmtMoney(pagado):'—'}</td>
+      <td class="td-mono" style="color:${esPagada?'var(--text3)':'var(--accent)'};font-weight:${esPagada?'400':'700'}">${esPagada?'—':fmtMoney(saldo)}</td>
+      <td><span class="badge ${estColor}">${estLabel}</span></td>
+      <td>${!esCancelada && !esPagada ? `<button class="btn btn-sm btn-primary" onclick="closeModal('modal-ver-pedido');openPago('${f.id}')">💳 Cobrar</button>` : ''}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:12px">Sin facturas generadas</td></tr>`;
+
   document.getElementById('vped-body').innerHTML = `
     <div style="text-align:center;margin-bottom:16px">${statusBadge(p.status)}</div>
 
@@ -6405,15 +6433,101 @@ function verPedido(id) {
         <tbody>${plsHtml}</tbody>
       </table>
     </div>
+
+    <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin:20px 0 8px">Facturas</div>
+    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--surface2)">
+          <th style="padding:7px 12px;text-align:left;font-size:11px">No. Factura</th>
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Fecha</th>
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Total</th>
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Pagado</th>
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Saldo</th>
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Estado</th>
+          <th style="padding:7px 12px"></th>
+        </tr></thead>
+        <tbody>${facturasHtml}</tbody>
+      </table>
+    </div>
     ${p.notes ? `<div style="margin-top:16px;font-size:12px;color:var(--text2)"><strong>Notas:</strong> ${p.notes}</div>` : ''}
   `;
 
+  const yaPlanificado = (state.op||[]).some(o => o.ov_id === id) || (state.oc||[]).some(o => o.ov_id === id);
+  const btnPlanificar = yaPlanificado
+    ? `<button class="btn btn-ghost btn-sm" onclick="planificarAbastecimientoOV('${id}')" title="Esta OV ya tiene OP/OC generadas — revisa antes de repetir para no duplicar">🔄 Re-planificar Abastecimiento</button>`
+    : `<button class="btn btn-primary btn-sm" onclick="planificarAbastecimientoOV('${id}')">🔄 Planificar Abastecimiento</button>`;
+
   document.getElementById('vped-footer-actions').innerHTML = `
     <button class="btn btn-ghost btn-sm" onclick="closeModal('modal-ver-pedido');editPedido('${id}')">✎ Editar</button>
+    ${btnPlanificar}
     <button class="btn btn-primary btn-sm" onclick="abrirGenerarDespacho('${id}')">📦 Generar Despacho</button>
   `;
 
   openModal('modal-ver-pedido');
+}
+
+// ──────────────────────────────────────────────────
+// PLANIFICAR ABASTECIMIENTO DESDE OV — primer disparo real del motor
+// (planificarAbastecimiento/planificarFabricacion/planificarCompra/
+// planificarSubcontrato) desde el flujo de Ventas. El motor ya existía y
+// ya recibía ov_id, pero nunca se llamaba desde ningún punto real — se
+// limitaba a llamarse a sí mismo en cascada una vez que algo más arriba ya
+// lo había disparado.
+//
+// erp_ov_items.fabric_id referencia erp_fabrics, no erp_productos
+// directamente — pero saveProducto() mantiene ambas tablas sincronizadas
+// con el MISMO id (mismo patrón que ya usa itemsHtml en verPedido para
+// mostrar la descripción del producto), así que fabric_id funciona como
+// producto_id para cualquier producto vendible creado/editado desde el
+// formulario de Producto actual. Líneas que apunten a un id que solo
+// existe en erp_fabrics (legado, nunca migrado) se omiten y se listan
+// aparte — mismo comportamiento defensivo que planificarAbastecimiento ya
+// tiene hoy (retorna null si no encuentra el producto).
+//
+// El motor NO revisa inventario existente ni evita duplicados: genera
+// órdenes nuevas siempre que el producto tenga ruta_obtener_bajo_pedido.
+// Por eso, si la OV ya tiene al menos una OP/OC generada, se pide
+// confirmación explícita antes de continuar.
+async function planificarAbastecimientoOV(ovId) {
+  const p = state.pedidos.find(x => x.id === ovId);
+  if (!p) return;
+
+  const yaPlanificado =
+    (state.op||[]).some(o => o.ov_id === ovId) ||
+    (state.oc||[]).some(o => o.ov_id === ovId);
+
+  if (yaPlanificado) {
+    const ok = confirm(
+      'Esta OV ya tiene órdenes de producción/compra generadas.\n\n' +
+      'El motor no revisa lo ya planificado — volver a correrlo puede duplicar OPs/OCs para las mismas líneas.\n\n' +
+      '¿Continuar de todas formas?'
+    );
+    if (!ok) return;
+  }
+
+  const items = state.pedItems.filter(i => i.order_id === ovId);
+  if (!items.length) { toast('Esta OV no tiene líneas', 'error'); return; }
+
+  const fecha = p.fecha_entrega || p.date;
+  let generadas = 0, sinRuta = 0;
+  const sinProducto = [];
+
+  for (const item of items) {
+    const prod = state.productos.find(x => x.id === item.fabric_id);
+    if (!prod) { sinProducto.push(item.fabric_id); continue; }
+    const cantidad = Number(item.qty_kg||0);
+    if (!cantidad) continue;
+    const res = await planificarAbastecimiento(prod.id, cantidad, fecha, 'OV', ovId, ovId);
+    if (res) generadas++; else sinRuta++;
+  }
+
+  if (sinProducto.length) {
+    toast(`${sinProducto.length} línea(s) sin producto vinculado en erp_productos — no se planificaron. Revisa el catálogo.`, 'error');
+  }
+  toast(`Planificación completada: ${generadas} orden(es) generada(s)` + (sinRuta ? `, ${sinRuta} línea(s) sin ruta de abastecimiento (se asumen de stock existente).` : '.'));
+
+  await loadAll();
+  verPedido(ovId);
 }
 
 // ──────────────────────────────────────────────────
@@ -10614,7 +10728,7 @@ function onRecTipoChange() {
 
 let recInsumoCount = 0, recCostoCount = 0;
 
-function addRecInsumo(insumo_id='', cantidad_base=1, merma_pct=0, unidad='kg') {
+function addRecInsumo(insumo_id='', cantidad_base=1, merma_pct=0, unidad='kg', requiere_reabastecimiento=true) {
   recInsumoCount++;
   const id = 'ri_'+recInsumoCount;
   const opts = state.productos.filter(p=>p.puede_comprado!==false).map(p=>
@@ -10630,6 +10744,7 @@ function addRecInsumo(insumo_id='', cantidad_base=1, merma_pct=0, unidad='kg') {
     <td><select style="width:80px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px">
       <option value="kg">kg</option><option value="yds">yds</option><option value="mts">mts</option>
     </select></td>
+    <td style="text-align:center"><input type="checkbox" class="ri-reabastecer" ${requiere_reabastecimiento!==false?'checked':''} style="width:15px;height:15px" title="Reabastecer MP automáticamente al subcontratista para este insumo"/></td>
     <td><button class="btn btn-sm btn-danger" onclick="document.getElementById('${id}').remove()">✕</button></td>`;
   document.getElementById('rec-insumos').appendChild(tr);
   if (insumo_id) tr.querySelector('select').value = insumo_id;
@@ -10715,7 +10830,7 @@ function editReceta(id) {
   document.getElementById('rec-costos').innerHTML  = '';
   recInsumoCount = 0; recCostoCount = 0;
   (state.recetaLineas||[]).filter(l=>l.receta_id===id).forEach(l=>
-    addRecInsumo(l.insumo_id, l.cantidad_base, l.merma_pct, l.unidad||'kg')
+    addRecInsumo(l.insumo_id, l.cantidad_base, l.merma_pct, l.unidad||'kg', l.requiere_reabastecimiento)
   );
   (state.recetaCostos||[]).filter(c=>c.receta_id===id).forEach(c=>
     addRecCosto(c.descripcion, c.tipo, c.monto, c.moneda, c.proveedor_id)
@@ -10764,6 +10879,7 @@ async function saveReceta() {
     const sel    = tr.querySelector('select');
     const inputs = tr.querySelectorAll('input[type=number]');
     const uSel   = tr.querySelector('select:last-of-type');
+    const chkReab = tr.querySelector('.ri-reabastecer');
     if (!sel?.value) return;
     insumos.push({
       receta_id: recetaId,
@@ -10771,6 +10887,7 @@ async function saveReceta() {
       cantidad_base: parseFloat(inputs[0]?.value)||1,
       merma_pct:     parseFloat(inputs[1]?.value)||0,
       unidad:        uSel?.value||'kg',
+      requiere_reabastecimiento: chkReab ? chkReab.checked : true,
     });
   });
   if (insumos.length) await sb.from('erp_receta_lineas').insert(insumos);
@@ -13321,11 +13438,11 @@ function renderProductos() {
     const flags = [p.puede_vendido && '🟢 Venta', p.puede_comprado && '🔵 Compra'].filter(Boolean).join(' · ');
     return `<tr>
       <td class="td-mono" style="font-size:12px">${p.codigo_interno||p.code||'—'}</td>
-      <td><span class="badge ${PROD_TIPO_COLOR[p.tipo]||'badge-gray'}">${PROD_TIPO_LABEL[p.tipo]||p.tipo||'—'}</span></td>
       <td>
         <div style="font-weight:500;cursor:pointer;color:var(--accent);text-decoration:underline" onclick="editProducto('${p.id}')">${p.description||'—'}</div>
         ${flags ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${flags}</div>` : ''}
       </td>
+      <td><span class="badge ${PROD_TIPO_COLOR[p.tipo]||'badge-gray'}">${PROD_TIPO_LABEL[p.tipo]||p.tipo||'—'}</span></td>
       <td class="hide-mobile">${p.unidad||'—'}</td>
       <td class="hide-mobile td-mono">${p.precio_compra ? fmtMoney(p.precio_compra) : '—'}</td>
       <td class="hide-mobile td-mono">${p.precio_venta  ? fmtMoney(p.precio_venta)  : '—'}</td>
