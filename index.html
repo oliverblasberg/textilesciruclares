@@ -10543,11 +10543,16 @@ state.opConsumos    = [];
 state.opCostos      = [];
 
 // ── Correlativos ──
-function nextOPNum() {
+// BUGFIX (debugging en vivo, 13/Ago/2026): antes leía state.op (cacheado en
+// memoria), que se queda desactualizado cuando la cascada de planificación
+// automática genera varias OP/OC en la misma corrida sin refrescar el
+// estado entre medio — confirmado en producción: "duplicate key value
+// violates unique constraint erp_oc_numero_key" en nextOCNum (mismo
+// patrón). Ahora consulta Supabase directamente en el momento.
+async function nextOPNum() {
   const y = new Date().getFullYear();
-  const nums = (state.op||[])
-    .filter(o => (o.numero||'').startsWith(`OP-${y}`))
-    .map(o => parseInt((o.numero||'').slice(-4))||0);
+  const { data } = await sb.from('erp_op').select('numero').ilike('numero', `OP-${y}-%`);
+  const nums = (data||[]).map(o => parseInt((o.numero||'').slice(-4))||0);
   return `OP-${y}-${String((nums.length ? Math.max(...nums) : 0)+1).padStart(4,'0')}`;
 }
 function nextRecNum() {
@@ -11205,7 +11210,7 @@ function calcOPConsumosEstimados() {
     `${fmtMoney(total)} | Q${costoUnitFabricado.toFixed(4)}/kg`;
 }
 
-function openNewOP() {
+async function openNewOP() {
   document.getElementById('op-id').value            = '';
   document.getElementById('op-cantidad-prog').value  = '';
   document.getElementById('op-lote').value           = '';
@@ -11213,7 +11218,7 @@ function openNewOP() {
   document.getElementById('op-fecha-fin').value      = '';
   document.getElementById('op-notas').value          = '';
   document.getElementById('op-tipo').value           = 'tejido';
-  document.getElementById('op-numero-preview').textContent = nextOPNum();
+  document.getElementById('op-numero-preview').textContent = await nextOPNum();
   document.getElementById('op-consumos-estimados-section').style.display = 'none';
   document.getElementById('op-producto-display').textContent = '— Selecciona una receta —';
 
@@ -11271,7 +11276,7 @@ async function saveOP(estado = 'borrador') {
   }
 
   const row = {
-    numero:         nextOPNum(),
+    numero:         await nextOPNum(),
     tipo:           document.getElementById('op-tipo').value,
     receta_id,
     producto_id:    receta?.producto_id||null,
@@ -12612,7 +12617,7 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
   }
 
   // Crear OP
-  const numero = nextOPNum();
+  const numero = await nextOPNum();
   const tc     = tcHoy() || 7.75;
   const lineas = (state.recetaLineas||[]).filter(l => l.receta_id === receta.id);
   // BUGFIX (debugging en vivo, 13/Ago/2026): esta función referenciaba una
@@ -12658,7 +12663,7 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
 async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId) {
   const provId = prod.proveedor_default;
   const prov   = state.proveedores.find(p => p.id === provId);
-  const numero = nextOCNum ? nextOCNum() : `OC-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+  const numero = nextOCNum ? await nextOCNum() : `OC-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
 
   // BUGFIX (debugging en vivo, 13/Ago/2026): esta función usaba nombres de
   // columna que no existen en el esquema real de Supabase — confirmado
@@ -12712,7 +12717,7 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
   const tc        = tcHoy() || 7.75;
 
   // 1. OC del SERVICIO al subcontratista
-  const numeroSrv = nextOCNum ? nextOCNum() : `OC-${Date.now()}`;
+  const numeroSrv = nextOCNum ? await nextOCNum() : `OC-${Date.now()}`;
   const costosConv = (state.recetaCostos||[]).filter(c => c.receta_id === receta.id);
   const costoServPorKg = costosConv.reduce((s,c) => {
     const mGTQ = c.moneda==='USD' ? c.monto*tc : c.monto;
@@ -12760,11 +12765,12 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
 }
 
 // ── Helper: nextOCNum ───────────────────────────────────────────
-function nextOCNum() {
+// BUGFIX (debugging en vivo, 13/Ago/2026): ver comentario en nextOPNum —
+// mismo problema, mismo fix.
+async function nextOCNum() {
   const y = new Date().getFullYear();
-  const nums = (state.oc||[])
-    .filter(o => (o.numero||'').startsWith(`OC-${y}`))
-    .map(o => parseInt((o.numero||'').slice(-4))||0);
+  const { data } = await sb.from('erp_oc').select('numero').ilike('numero', `OC-${y}-%`);
+  const nums = (data||[]).map(o => parseInt((o.numero||'').slice(-4))||0);
   return `OC-${y}-${String((nums.length ? Math.max(...nums) : 0)+1).padStart(4,'0')}`;
 }
 
