@@ -11237,6 +11237,12 @@ async function openNewOP() {
 
 async function saveOP(estado = 'borrador') {
   const id           = document.getElementById('op-id').value;
+  // BUGFIX (debugging en vivo, 13/Ago/2026): esta función llamaba
+  // nextOPNum() incondicionalmente, incluso al EDITAR una OP ya existente
+  // (id presente) — confirmado en producción: editar OP-2026-0001 la
+  // renumeró en silencio a OP-2026-0002. Ahora solo genera número nuevo al
+  // crear; al editar, conserva el número que la OP ya tenía.
+  const numeroPreservado = id ? (state.op||[]).find(o=>o.id===id)?.numero : null;
   const receta_id    = document.getElementById('op-receta').value;
   const cantidad_prog = parseFloat(document.getElementById('op-cantidad-prog').value);
   const lote         = document.getElementById('op-lote').value.trim().toUpperCase();
@@ -11276,7 +11282,7 @@ async function saveOP(estado = 'borrador') {
   }
 
   const row = {
-    numero:         await nextOPNum(),
+    numero:         numeroPreservado || await nextOPNum(),
     tipo:           document.getElementById('op-tipo').value,
     receta_id,
     producto_id:    receta?.producto_id||null,
