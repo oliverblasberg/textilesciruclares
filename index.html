@@ -1609,8 +1609,6 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
                 <th class="hide-mobile">Contacto Facturación</th>
                 <th class="hide-mobile">Teléfono</th>
                 <th class="hide-mobile">Email</th>
-                <th class="hide-mobile">Moneda</th>
-                <th class="hide-mobile">Integraciones</th>
                 <th></th>
               </tr></thead>
               <tbody id="tbl-proveedores"></tbody>
@@ -2117,6 +2115,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="MANUFACTURA">Manufactura</option>
           </select>
           <input type="month" id="filter-dg-mes" class="filter-select" onchange="renderDiarioGeneral()" style="max-width:160px"/>
+          <button class="btn btn-ghost" onclick="imprimirDiarioGeneral()">🖨️ Imprimir</button>
           <button class="btn btn-primary" onclick="openNuevoAsiento()">+ Asiento Manual</button>
         </div>
         <div class="card">
@@ -2420,7 +2419,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div class="card">
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Nombre</th><th class="hide-mobile">Método de Coste</th><th class="hide-mobile">Valoración</th><th class="hide-mobile">Cta. Valoración Stock</th><th></th></tr></thead>
+              <thead><tr><th>Nombre</th><th class="hide-mobile">Método de Coste</th><th class="hide-mobile">Valoración</th><th></th></tr></thead>
               <tbody id="tbl-categorias"></tbody>
             </table>
           </div>
@@ -10131,16 +10130,11 @@ function renderProveedores() {
     </td>
     <td class="hide-mobile" style="font-size:12px">${p.phone||p.fact_tel||'—'}</td>
     <td class="hide-mobile" style="font-size:12px;color:var(--text2)">${p.email||'—'}</td>
-    <td class="hide-mobile">${monedaBadge(p.moneda, p.moneda2)}</td>
-    <td class="hide-mobile" style="white-space:nowrap">
-      ${p.pl_configurado      ? '<span title="PL configurado"      style="display:inline-block;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:700;background:#DCFCE7;color:#16A34A;margin-right:4px">📦 PL</span>'      : '<span style="display:inline-block;padding:2px 7px;border-radius:99px;font-size:10px;background:var(--surface2);color:var(--text3);margin-right:4px">📦 —</span>'}
-      ${p.factura_configurada ? '<span title="Factura configurada" style="display:inline-block;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:700;background:#DCFCE7;color:#16A34A">🧾 Factura</span>' : '<span style="display:inline-block;padding:2px 7px;border-radius:99px;font-size:10px;background:var(--surface2);color:var(--text3)">🧾 —</span>'}
-    </td>
     <td><div class="td-actions">
       <button class="btn btn-sm btn-danger" onclick="deleteProveedor('${p.id}')">Eliminar</button>
     </div></td>
   </tr>`).join('') :
-  '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">◎</div><p>Sin proveedores registrados</p></div></td></tr>';
+  '<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">◎</div><p>Sin proveedores registrados</p></div></td></tr>';
 }
 
 function provTab(tab) {
@@ -13329,7 +13323,7 @@ function renderProductos() {
       <td class="td-mono" style="font-size:12px">${p.codigo_interno||p.code||'—'}</td>
       <td><span class="badge ${PROD_TIPO_COLOR[p.tipo]||'badge-gray'}">${PROD_TIPO_LABEL[p.tipo]||p.tipo||'—'}</span></td>
       <td>
-        <div style="font-weight:500">${p.description||'—'}</div>
+        <div style="font-weight:500;cursor:pointer;color:var(--accent);text-decoration:underline" onclick="editProducto('${p.id}')">${p.description||'—'}</div>
         ${flags ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${flags}</div>` : ''}
       </td>
       <td class="hide-mobile">${p.unidad||'—'}</td>
@@ -13337,7 +13331,6 @@ function renderProductos() {
       <td class="hide-mobile td-mono">${p.precio_venta  ? fmtMoney(p.precio_venta)  : '—'}</td>
       <td>${statusBadge(p.estado||'activo')}</td>
       <td><div class="td-actions">
-        <button class="btn btn-sm btn-ghost" onclick="editProducto('${p.id}')">Editar</button>
         <button class="btn btn-sm btn-danger" onclick="deleteProducto('${p.id}')">Eliminar</button>
       </div></td>
     </tr>`;
@@ -14260,6 +14253,119 @@ function renderDiarioGeneral() {
 // Diario Mayor General now shows one row per line directly
 function showAsientoDetail() {}
 function closeAsientoDetail() {}
+
+// Imprime exactamente lo que está filtrado/visible en pantalla — reusa
+// los mismos 3 filtros (búsqueda, diario, mes) que renderDiarioGeneral(),
+// para que el reporte impreso siempre coincida con lo que el usuario ve.
+function imprimirDiarioGeneral() {
+  const q   = (document.getElementById('search-dg')?.value||'').toLowerCase();
+  const dj  = document.getElementById('filter-dg-diario')?.value||'';
+  const mes = document.getElementById('filter-dg-mes')?.value||'';
+
+  let asientos = [...state.asientos].sort((a,b) => {
+    const dc = (a.fecha||'').localeCompare(b.fecha||'');
+    return dc !== 0 ? dc : (a.numero||'').localeCompare(b.numero||'');
+  });
+  asientos = asientos.filter(a =>
+    (!dj  || a.diario === dj) &&
+    (!mes || (a.fecha||'').startsWith(mes))
+  );
+
+  let rows = [];
+  asientos.forEach(a => {
+    const lineas = (state.asientoLineas||[]).filter(l => l.asiento_id === a.id);
+    lineas.forEach(l => {
+      if (q && !(
+        (a.numero||'').toLowerCase().includes(q) ||
+        (a.descripcion||'').toLowerCase().includes(q) ||
+        (a.referencia||'').toLowerCase().includes(q) ||
+        (l.cuenta_codigo||'').toLowerCase().includes(q) ||
+        (l.cuenta_nombre||'').toLowerCase().includes(q) ||
+        (l.descripcion||'').toLowerCase().includes(q)
+      )) return;
+      rows.push({ a, l });
+    });
+  });
+
+  if (!rows.length) { toast('No hay movimientos para imprimir con los filtros actuales','error'); return; }
+
+  let sumDebe = 0, sumHaber = 0;
+  let lastAsientoId = null;
+  const bodyRows = rows.map(({ a, l }) => {
+    const debeGTQ    = Number(l.debe_gtq||l.debe||0);
+    const haberGTQ   = Number(l.haber_gtq||l.haber||0);
+    const montoOrig  = Number(l.monto_orig||0);
+    const monedaOrig = l.moneda_orig || a.moneda || 'GTQ';
+    sumDebe  += debeGTQ;
+    sumHaber += haberGTQ;
+    const nuevoAsiento = a.id !== lastAsientoId;
+    lastAsientoId = a.id;
+    return `<tr style="${nuevoAsiento?'border-top:1.5px solid #E2E4E9':''}">
+      <td class="mono">${nuevoAsiento?(a.numero||'—'):''}</td>
+      <td>${nuevoAsiento?fmtDate(a.fecha):''}</td>
+      <td>${nuevoAsiento?(DIARIO_LABEL[a.diario]||a.diario):''}</td>
+      <td>${nuevoAsiento?(a.descripcion||'—'):''}</td>
+      <td class="mono">${l.cuenta_codigo||'—'}</td>
+      <td>${l.cuenta_nombre||'—'}${l.descripcion?`<div class="sub">${l.descripcion}</div>`:''}</td>
+      <td class="mono">${montoOrig>0?fmtMoney(montoOrig,monedaOrig):'—'}</td>
+      <td class="num">${debeGTQ>0?fmtGTQ(debeGTQ):''}</td>
+      <td class="num">${haberGTQ>0?fmtGTQ(haberGTQ):''}</td>
+    </tr>`;
+  }).join('');
+
+  const filtrosTxt = [
+    dj ? `Diario: ${DIARIO_LABEL[dj]||dj}` : null,
+    mes ? `Mes: ${mes}` : null,
+    q ? `Búsqueda: "${q}"` : null,
+  ].filter(Boolean).join(' · ') || 'Todos los movimientos';
+
+  const win = window.open('','_blank','width=1100,height=750');
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8"/>
+    <title>Diario Mayor General</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Inter',sans-serif;font-size:11px;color:#1A1C21;padding:28px;background:#fff}
+      .doc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;padding-bottom:16px;border-bottom:2px solid #101820}
+      .brand{font-size:11px;color:#5E6470;margin-top:4px}
+      .doc-fecha{font-size:11px;color:#5E6470;text-align:right;margin-top:4px}
+      .filtros{font-size:11px;color:#5E6470;margin:12px 0 16px}
+      table{width:100%;border-collapse:collapse;margin-bottom:12px}
+      thead th{background:#F4F5F7;padding:6px 8px;text-align:left;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5E6470;border-bottom:1px solid #E2E4E9}
+      tbody td{padding:5px 8px;border-bottom:1px solid #F0F1F3;font-size:10.5px;vertical-align:top}
+      .mono{font-family:monospace}
+      .num{text-align:right;font-family:monospace}
+      .sub{font-size:9px;color:#9EA4B0}
+      tfoot td{padding:8px;font-size:11px;font-weight:700;border-top:2px solid #101820}
+      @media print{body{padding:14px} @page{margin:10mm;size:landscape}}
+    </style>
+  </head><body>
+    <div class="doc-header">
+      <div>
+        <h1 style="font-size:18px;font-weight:700">Diario Mayor General</h1>
+        <div class="brand">TEXTILES CIRCULARES, S.A.</div>
+      </div>
+      <div class="doc-fecha">Generado: ${fmtDate(today())}</div>
+    </div>
+    <div class="filtros">${filtrosTxt}</div>
+    <table>
+      <thead><tr>
+        <th>No. Asiento</th><th>Fecha</th><th>Diario</th><th>Descripción</th>
+        <th>Cuenta</th><th>Descripción Cuenta</th><th>Monto Orig.</th>
+        <th style="text-align:right">Debe (GTQ)</th><th style="text-align:right">Haber (GTQ)</th>
+      </tr></thead>
+      <tbody>${bodyRows}</tbody>
+      <tfoot><tr>
+        <td colspan="7">TOTALES — ${rows.length} línea${rows.length!==1?'s':''} (${asientos.length} asiento${asientos.length!==1?'s':''})</td>
+        <td class="num">${fmtGTQ(sumDebe)}</td>
+        <td class="num">${fmtGTQ(sumHaber)}</td>
+      </tr></tfoot>
+    </table>
+    <scr` + `ipt>window.onload=()=>window.print();</scr` + `ipt>
+  </body></html>`);
+  win.document.close();
+}
 
 // ──────────────────────────────────────────────────
 // ASIENTO MANUAL — CRUD
@@ -17426,14 +17532,38 @@ function getSCLines() {
 
 // ── OC LINES ──
 let ocLineCount=0;
+// Solo productos que el proveedor tiene asignados en su lista de compra
+// (prod.proveedores_compra) — antes se mostraban TODOS los productos del
+// catálogo sin importar el proveedor seleccionado en la OC.
+function ocProductoOptsForProveedor(provId, selectedId='') {
+  const productos = state.productos.filter(p => {
+    if (p.puede_comprado === false) return false;
+    if (!provId) return true; // sin proveedor elegido aún: no filtrar
+    return (p.proveedores_compra||[]).some(l => l.proveedor_id === provId);
+  });
+  const opts = productos.map(p =>
+    `<option value="${p.id}" data-unidad="${p.unidad||''}" data-precio="${p.precio_compra||0}" data-moneda="${p.moneda_compra||''}">${p.codigo_interno||p.code||'?'} — ${p.description}</option>`
+  ).join('');
+  return `<option value="">— Seleccionar —</option>${opts}`;
+}
+
 function addOCLine(prod_id='',cantidad=0,precio=0,unidad='') {
   ocLineCount++;
   const id='ocl_'+ocLineCount;
-  const opts=state.productos.filter(p=>p.puede_comprado!==false).map(p=>`<option value="${p.id}" data-unidad="${p.unidad||''}" data-precio="${p.precio_compra||0}" data-moneda="${p.moneda_compra||''}">${p.code||'?'} — ${p.description}</option>`).join('');
+  const provId = document.getElementById('oc-proveedor')?.value || '';
   const tr=document.createElement('tr'); tr.id=id;
+  let opts = ocProductoOptsForProveedor(provId);
+  // Si se está cargando una línea ya guardada (editar OC) y su producto no
+  // está en la lista de compra del proveedor actual (ej. se desasignó
+  // después de crear la OC), se agrega igual — para no ocultar silenciosamente
+  // un producto ya comprado, solo se filtra al AGREGAR líneas nuevas.
+  if (prod_id && !opts.includes(`value="${prod_id}"`)) {
+    const p = state.productos.find(x => x.id === prod_id);
+    if (p) opts += `<option value="${p.id}" data-unidad="${p.unidad||''}" data-precio="${p.precio_compra||0}" data-moneda="${p.moneda_compra||''}">⚠ ${p.codigo_interno||p.code||'?'} — ${p.description} (no asignado a este proveedor)</option>`;
+  }
   tr.innerHTML=`
     <td><select onchange="ocLineProdChange(this,'${id}')" style="width:100%;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:13px">
-      <option value="">— Seleccionar —</option>${opts}</select></td>
+      ${opts}</select></td>
     <td><input type="number" step="0.001" min="0" placeholder="0" value="${cantidad||''}" oninput="calcOCTotal()" style="width:80px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:13px"/></td>
     <td><input type="text" id="${id}_unidad" value="${unidad||''}" style="width:70px;padding:5px 8px;background:var(--surface2);border:1.5px solid var(--border);border-radius:6px;font-size:12px" readonly/></td>
     <td><input type="number" step="0.01" min="0" placeholder="0.00" value="${precio||''}" oninput="calcOCTotal()" style="width:90px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:13px"/></td>
@@ -18479,6 +18609,28 @@ function onOCProveedorChange() {
       document.getElementById('oc-terminos').value = prov.terminos_pago;
     }
   }
+
+  // Las líneas ya agregadas deben refiltrarse al nuevo proveedor — si el
+  // producto elegido no está en su lista de compra, se limpia esa línea
+  // (unidad/precio/moneda) en vez de dejar un producto ajeno al proveedor.
+  document.querySelectorAll('#oc-lines tr').forEach(tr => {
+    const sel = tr.querySelector('select');
+    if (!sel) return;
+    const seleccionActual = sel.value;
+    sel.innerHTML = ocProductoOptsForProveedor(provId);
+    const sigueValido = seleccionActual && [...sel.options].some(o => o.value === seleccionActual);
+    if (sigueValido) {
+      sel.value = seleccionActual;
+    } else if (seleccionActual) {
+      const rowId = tr.id;
+      const unidadInput = document.getElementById(rowId+'_unidad');
+      if (unidadInput) unidadInput.value = '';
+      const montoTd = document.getElementById(rowId+'_moneda');
+      if (montoTd) montoTd.innerHTML = '';
+      tr.dataset.moneda = '';
+    }
+  });
+  calcOCTotal();
 }
 
 // ── DEVOLUCIONES ────────────────────────────────────────────────
@@ -20637,7 +20789,7 @@ function renderBodegas() {
   const q = (document.getElementById('search-bodegas')?.value||'').toLowerCase();
   const data = (state.bodegas||[]).filter(b =>
     (b.nombre||'').toLowerCase().includes(q)||(b.codigo||'').toLowerCase().includes(q)
-  );
+  ).sort((a,b) => (a.codigo||'').localeCompare(b.codigo||'', undefined, {numeric:true, sensitivity:'base'}));
   const tbody = document.getElementById('tbl-bodegas');
   if (!tbody) return;
   tbody.innerHTML = data.length ? data.map(b => {
@@ -21218,13 +21370,12 @@ function renderCategorias() {
     <td style="font-weight:500">${c.nombre||'—'}</td>
     <td class="hide-mobile">${METODO_LABEL[c.metodo_coste]||c.metodo_coste||'—'}</td>
     <td class="hide-mobile">${VALORACION_LABEL[c.valoracion]||c.valoracion||'—'}</td>
-    <td class="hide-mobile td-mono" style="font-size:12px">${c.cta_valoracion||'—'}</td>
     <td><div class="td-actions">
       <button class="btn btn-sm btn-ghost" onclick="editCategoria('${c.id}')">Editar</button>
       <button class="btn btn-sm btn-danger" onclick="deleteCategoria('${c.id}')">Eliminar</button>
     </div></td>
   </tr>`).join('') :
-  '<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">◈</div><p>Sin categorías registradas</p></div></td></tr>';
+  '<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">◈</div><p>Sin categorías registradas</p></div></td></tr>';
 }
 
 function onCatValoracionChange() {
