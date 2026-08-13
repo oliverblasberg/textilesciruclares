@@ -10576,11 +10576,12 @@ const esTejido       = tipo => tipo === 'tejido_interno' || tipo === 'tejido_sub
 const esSubcontrato  = tipo => tipo === 'tejido_subcontrato' || tipo === 'tenido_subcontrato' || tipo === 'acabado_subcontrato';
 
 // ── Fase 2: envío/recepción de material a subcontratistas ──
-function nextEnvioNum() {
+// BUGFIX (debugging en vivo, 13/Ago/2026): mismo problema — ver
+// nextAsientoNum/nextOCNum/nextOPNum/nextMovId.
+async function nextEnvioNum() {
   const y = new Date().getFullYear();
-  const nums = (state.enviosTerceros||[])
-    .filter(e => (e.numero||'').startsWith(`EOT-${y}`))
-    .map(e => parseInt((e.numero||'').slice(-4))||0);
+  const { data } = await sb.from('erp_envios_terceros').select('numero').ilike('numero', `EOT-${y}-%`);
+  const nums = (data||[]).map(e => parseInt((e.numero||'').slice(-4))||0);
   return `EOT-${y}-${String((nums.length ? Math.max(...nums) : 0)+1).padStart(4,'0')}`;
 }
 
@@ -11657,7 +11658,7 @@ async function confirmarEnvioOP() {
   const tipoProceso = op.tipo === 'tejido_subcontrato' ? 'tejido'
     : op.tipo === 'acabado_subcontrato' ? 'post_proceso' : 'tintura';
   const { data: envio, error } = await sb.from('erp_envios_terceros').insert({
-    numero: nextEnvioNum(), subcontratista_id: provSubId, tipo_proceso: tipoProceso,
+    numero: await nextEnvioNum(), subcontratista_id: provSubId, tipo_proceso: tipoProceso,
     fecha_envio: fecha, receta_id: op.receta_id, op_id: op.id, estado: 'enviado', notas,
   }).select().single();
   if (error) { toast('Error: '+error.message,'error'); return; }
@@ -13779,11 +13780,16 @@ const DIARIO_COLOR = {
 };
 
 // ── Correlativo de asientos ──
-function nextAsientoNum() {
+// BUGFIX (debugging en vivo, 13/Ago/2026): mismo problema que
+// nextOCNum/nextOPNum — leía state.asientos cacheado, que se desactualiza
+// cuando una sola cascada genera varios asientos seguidos sin refrescar
+// el estado entre medio. Confirmado en producción: "duplicate key value
+// violates unique constraint erp_asientos_numero_key" al completar una OP
+// de teñido subcontratado (genera 2+ asientos en la misma corrida).
+async function nextAsientoNum() {
   const year = new Date().getFullYear();
-  const nums = state.asientos
-    .filter(a => (a.numero||'').startsWith(`AS-${year}`))
-    .map(a => parseInt((a.numero||'').slice(-5))||0);
+  const { data } = await sb.from('erp_asientos').select('numero').ilike('numero', `AS-${year}-%`);
+  const nums = (data||[]).map(a => parseInt((a.numero||'').slice(-5))||0);
   return `AS-${year}-${String((nums.length ? Math.max(...nums) : 0)+1).padStart(5,'0')}`;
 }
 
@@ -13949,7 +13955,7 @@ async function crearAsiento({ diario, fecha, descripcion, referencia, referencia
   moneda='GTQ', tipo_cambio=null, lineas, auto=true }) {
 
   const fechaStr   = fecha || today();
-  const numero     = nextAsientoNum();
+  const numero     = await nextAsientoNum();
 
   // TC a usar: buscar el del día de la transacción
   const tcUsar       = getTCFecha(fechaStr) || 1;
@@ -14653,9 +14659,9 @@ function getAsiLines() {
   return lines;
 }
 
-function openNuevoAsiento() {
+async function openNuevoAsiento() {
   document.getElementById('asi-id').value        = '';
-  document.getElementById('asi-numero').value    = nextAsientoNum();
+  document.getElementById('asi-numero').value    = await nextAsientoNum();
   document.getElementById('asi-fecha').value     = today();
   document.getElementById('asi-diario').value    = 'GENERAL';
   document.getElementById('asi-moneda').value    = 'GTQ';
@@ -21146,11 +21152,13 @@ const MOV_TIPO_COLOR = {
   consignacion:     'badge-blue',
 };
 
-function nextMovId() {
+// BUGFIX (debugging en vivo, 13/Ago/2026): mismo problema — ver
+// nextAsientoNum/nextOCNum/nextOPNum.
+async function nextMovId() {
   // Generate next MV-YYYYNNNN correlative
   const year  = new Date().getFullYear();
-  const movs  = state.movimientos.filter(m => (m.mov_id||'').startsWith('MV-'+year));
-  const nums  = movs.map(m => parseInt((m.mov_id||'').slice(-4))||0);
+  const { data } = await sb.from('erp_movimientos_inv').select('mov_id').ilike('mov_id', `MV-${year}-%`);
+  const nums  = (data||[]).map(m => parseInt((m.mov_id||'').slice(-4))||0);
   const next  = (nums.length ? Math.max(...nums) : 0) + 1;
   return `MV-${year}-${String(next).padStart(4,'0')}`;
 }
@@ -21185,7 +21193,7 @@ async function crearMovimiento({ tipo, producto_id, cantidad, costo_unitario,
   const catId      = prod?.categoria || null;
   const snap       = snapshotCategoriaAccounts(catId);
   const costo_total = (parseFloat(cantidad)||0) * (parseFloat(costo_unitario)||0);
-  const mov_id     = nextMovId();
+  const mov_id     = await nextMovId();
 
   // GTQ conversion — use best available TC for the transaction date
   const tc = getTCFecha(fecha || today()) || tcHoy() || 1;
@@ -21509,7 +21517,7 @@ async function openNewAjuste() {
     (state.proveedores||[]).map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
   document.getElementById('ajuste-proveedor-lote').innerHTML = pvOpts;
 
-  document.getElementById('ajuste-mov-id-preview').textContent = nextMovId();
+  document.getElementById('ajuste-mov-id-preview').textContent = await nextMovId();
   openModal('modal-ajuste');
 }
 
