@@ -4744,6 +4744,14 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <span style="font-family:'DM Mono',monospace;font-weight:700;color:var(--accent);font-size:16px" id="op-numero-preview">OP-AUTO</span>
           </div>
         </div>
+        <div class="field field-full"><label>Producto a Fabricar</label>
+          <div id="op-producto-display" style="padding:9px 12px;background:var(--surface2);border-radius:7px;font-size:13px;color:var(--text2)">— Selecciona una receta —</div>
+        </div>
+        <div class="field field-full"><label>Receta *</label>
+          <select id="op-receta" onchange="onOPRecetaChange()">
+            <option value="">— Seleccionar receta —</option>
+          </select>
+        </div>
         <div class="field"><label>Tipo *</label>
           <select id="op-tipo" onchange="onOPTipoChange()">
             <option value="tejido_interno">Tejido Interno</option>
@@ -4752,21 +4760,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="acabado_subcontrato">Acabado Subcontratado</option>
           </select>
         </div>
-        <div class="field"><label>Receta *</label>
-          <select id="op-receta" onchange="onOPRecetaChange()">
-            <option value="">— Seleccionar receta —</option>
-          </select>
-        </div>
-        <div class="field"><label>Producto a Fabricar</label>
-          <div id="op-producto-display" style="padding:9px 12px;background:var(--surface2);border-radius:7px;font-size:13px;color:var(--text2)">— Selecciona una receta —</div>
-        </div>
-        <div class="field"><label>Cantidad a Producir (kg) *</label>
-          <input type="number" id="op-cantidad-prog" step="0.001" min="0" placeholder="0.000" oninput="calcOPConsumosEstimados()"/>
-        </div>
-        <div class="field"><label>Lote de Producción *</label>
-          <input type="text" id="op-lote" placeholder="Ej. LOTE-2026-001" style="text-transform:uppercase"/>
-        </div>
-        <div class="field field-full"><label>Orden de Venta</label>
+        <div class="field"><label>Referencia</label>
           <select id="op-ov"><option value="">— Sin vincular (producción para stock) —</option></select>
         </div>
         <div class="field"><label>Fecha Inicio</label><input type="date" id="op-fecha-inicio"/></div>
@@ -4782,10 +4776,25 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
       <!-- Consumos estimados -->
       <div id="op-consumos-estimados-section" style="display:none">
+        <div class="form-section-title" style="margin-bottom:12px">Línea de Producción</div>
+        <!-- Cantidad a Producir y Lote (14/Ago/2026, a pedido explícito):
+             viven acá, junto a la línea de consumo real, en vez de sueltos
+             arriba en la cabecera — son el único lugar donde se captura
+             cantidad. Pendiente de rediseño más a fondo hacia una tabla de
+             líneas real (a definir más adelante). -->
+        <div class="form-grid form-grid-2" style="margin-bottom:16px">
+          <div class="field"><label>Cantidad a Producir (kg) *</label>
+            <input type="number" id="op-cantidad-prog" step="0.001" min="0" placeholder="0.000" oninput="calcOPConsumosEstimados()"/>
+          </div>
+          <div class="field"><label>Lote de Producción *</label>
+            <input type="text" id="op-lote" placeholder="Ej. LOTE-2026-001" style="text-transform:uppercase"/>
+          </div>
+        </div>
+
         <div class="form-section-title" style="margin-bottom:12px">Consumos Estimados según Receta</div>
         <div class="line-items" style="margin-bottom:16px">
           <table>
-            <thead><tr><th>Insumo</th><th>Cant. Base</th><th>% Merma</th><th style="text-align:right">Cant. Total a Consumir</th><th>Unidad</th><th style="text-align:right">Stock Disp.</th></tr></thead>
+            <thead><tr><th>Insumo</th><th>% Merma</th><th style="text-align:right">Cant. Total a Consumir</th><th>Unidad</th><th style="text-align:right">Stock Disp.</th></tr></thead>
             <tbody id="tbl-op-consumos-est"></tbody>
           </table>
         </div>
@@ -5137,6 +5146,23 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <select id="cat-cta-transito"><option value="">— Nomenclatura contable —</option></select>
         </div>
 
+        <!-- BODEGAS DE PRODUCCIÓN (14/Ago/2026, a pedido explícito): al
+             elegir una receta en una Orden de Producción, la Bodega Entrada
+             (MP) y Bodega Salida (PT/WIP) se autocompletan desde acá según
+             la categoría del insumo y del producto fabricado — siempre
+             quedan editables, esto solo evita tener que elegirlas a mano
+             cada vez. Ej. categoría "Tela Cruda": entrada = Bodega Hilo,
+             salida = Bodega Tela Cruda. -->
+        <div class="form-section-title">Bodegas de Producción (opcional)</div>
+        <div class="field">
+          <label>Bodega Entrada por Defecto (MP)</label>
+          <select id="cat-bodega-entrada"><option value="">— Sin definir —</option></select>
+        </div>
+        <div class="field">
+          <label>Bodega Salida por Defecto (PT/WIP)</label>
+          <select id="cat-bodega-salida"><option value="">— Sin definir —</option></select>
+        </div>
+
         <div class="field field-full">
           <label>Notas</label>
           <textarea id="cat-notas" rows="2"></textarea>
@@ -5469,6 +5495,13 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <button class="modal-close" onclick="closeModal('modal-op-detail')">✕</button>
     </div>
     <div class="modal-body" id="op-detail-body" style="padding:20px"></div>
+    <div class="modal-footer">
+      <!-- Editar — poblado por showOPDetail() solo cuando la OP sigue en
+           borrador (14/Ago/2026, a pedido explícito: antes vivía como botón
+           suelto en la fila del listado; ahora vive aquí adentro). -->
+      <div id="op-detail-footer-actions" style="display:flex;gap:8px"></div>
+      <button class="btn btn-ghost" onclick="closeModal('modal-op-detail')">Cerrar</button>
+    </div>
   </div>
 </div>
 
@@ -6398,8 +6431,13 @@ function verPedido(id) {
     </tr>`;
   }).join('') : `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:12px">Sin facturas generadas</td></tr>`;
 
+  const ovStatusLabel = { borrador:'Borrador', en_proceso:'En Proceso', terminada:'Terminada', facturada:'Facturada', pagada:'Pagada', cancelado:'Cancelado' };
+  const ovStatusColor = { borrador:'#9CA3AF', en_proceso:'#2563EB', terminada:'#16A34A', facturada:'#2563EB', pagada:'#16A34A', cancelado:'#9CA3AF' }; // gris / azul / verde / azul / verde / gris
+
   document.getElementById('vped-body').innerHTML = `
-    <div style="text-align:center;margin-bottom:16px">${statusBadge(p.status)}</div>
+    <!-- Ribbon de estado — entre el título y la primera tabla de información,
+         mismo patrón que el modal de Factura -->
+    <div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;letter-spacing:0.03em;margin-bottom:16px;background:${ovStatusColor[p.status]||'#9CA3AF'};color:#fff">${ovStatusLabel[p.status]||p.status}</div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
       ${infoCell('Cliente', clt?.name)}
@@ -6534,7 +6572,7 @@ async function planificarAbastecimientoOV(ovId) {
     if (!prod) { sinProducto.push(item.fabric_id); continue; }
     const cantidad = Number(item.qty_kg||0);
     if (!cantidad) continue;
-    const res = await planificarAbastecimiento(prod.id, cantidad, fecha, 'OV', ovId, ovId);
+    const res = await planificarAbastecimiento(prod.id, cantidad, fecha, 'OV', ovLabel(p), ovId);
     if (res) generadas++; else sinRuta++;
   }
 
@@ -11135,7 +11173,6 @@ function renderOP() {
         ${o.estado==='enviado_terceros'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirRecepcionOP('${o.id}')">📥 Recibir de Terceros</button>`:''}
         ${o.estado==='en_proceso'&&!esSubcontrato(o.tipo)?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirCompletarOP('${o.id}')">✓ Completar</button>`:''}
         ${o.estado==='recibido_terceros'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirCompletarOP('${o.id}')">✓ Completar</button>`:''}
-        ${o.estado==='borrador'?`<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();editOP('${o.id}')">Editar</button>`:''}
         ${o.estado==='borrador'||o.estado==='en_proceso'?`
           <button class="btn btn-sm btn-ghost" style="color:var(--red);border-color:var(--red)" onclick="event.stopPropagation();cancelarOP('${o.id}')">✕ Cancelar</button>`:''}
       </div></td>
@@ -11160,17 +11197,42 @@ function onOPRecetaChange() {
   const prod     = state.productos.find(p=>p.id===receta?.producto_id);
   document.getElementById('op-producto-display').textContent =
     prod ? `${prod.codigo_interno||prod.code} — ${prod.description}` : '—';
+
+  // Bodega Entrada/Salida automáticas según categoría (14/Ago/2026, a
+  // pedido explícito): Bodega Entrada (MP) toma el default configurado en
+  // la categoría del INSUMO principal de la receta; Bodega Salida
+  // (PT/WIP) toma el default de la categoría del PRODUCTO A FABRICAR. Ej.
+  // receta de GF-028 (insumo=Hilo, producto=Tela Cruda): entrada=Bodega
+  // Hilo, salida=Bodega Tela Cruda — ambas quedan siempre editables después,
+  // esto solo propone el valor, no lo bloquea. Los <select> deben ya tener
+  // sus <option> pobladas para que la asignación de .value tenga efecto —
+  // ver orden en openNewOP()/editOP().
+  if (recetaId) {
+    const primeraLinea = (state.recetaLineas||[]).find(l=>l.receta_id===recetaId);
+    const insumo    = primeraLinea ? state.productos.find(p=>p.id===primeraLinea.insumo_id) : null;
+    const catInsumo = insumo ? (state.categorias||[]).find(c=>c.id===insumo.categoria) : null;
+    const catProd   = prod   ? (state.categorias||[]).find(c=>c.id===prod.categoria)   : null;
+    const selEnt = document.getElementById('op-bodega-entrada');
+    const selSal = document.getElementById('op-bodega-salida');
+    if (selEnt && catInsumo?.bodega_entrada_default) selEnt.value = catInsumo.bodega_entrada_default;
+    if (selSal && catProd?.bodega_salida_default)    selSal.value = catProd.bodega_salida_default;
+  }
+
+  document.getElementById('op-consumos-estimados-section').style.display = recetaId ? 'block' : 'none';
   calcOPConsumosEstimados();
 }
 
 function calcOPConsumosEstimados() {
   const recetaId = document.getElementById('op-receta').value;
   const cantProg = parseFloat(document.getElementById('op-cantidad-prog').value)||0;
-  if (!recetaId || !cantProg) {
-    document.getElementById('op-consumos-estimados-section').style.display = 'none';
+  if (!recetaId) return;
+  const tbody = document.getElementById('tbl-op-consumos-est');
+  if (!cantProg) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:12px">Ingresa la cantidad a producir para calcular consumos</td></tr>`;
+    document.getElementById('op-costos-est').innerHTML = '';
+    document.getElementById('op-costo-total-est').textContent = 'Q 0.00';
     return;
   }
-  document.getElementById('op-consumos-estimados-section').style.display = 'block';
 
   const lineas = (state.recetaLineas||[]).filter(l=>l.receta_id===recetaId);
   const costos = (state.recetaCostos||[]).filter(c=>c.receta_id===recetaId);
@@ -11178,9 +11240,13 @@ function calcOPConsumosEstimados() {
 
   let costoMPConMerma = 0;
 
-  const tbody = document.getElementById('tbl-op-consumos-est');
   tbody.innerHTML = lineas.map(l => {
     const p            = state.productos.find(x=>x.id===l.insumo_id);
+    // BUGFIX (14/Ago/2026): l.unidad (de erp_receta_lineas) trae datos
+    // corruptos en algunas líneas (el UUID del insumo en vez de "kg") —
+    // se usa la unidad real del producto insumo en su lugar, misma fuente
+    // confiable que ya usa el resto del sistema.
+    const unidad        = p?.unidad || 'kg';
     const cantSinMerma = Number(l.cantidad_base||0) * cantProg;
     const cantConMerma = cantSinMerma * (1 + Number(l.merma_pct||0)/100);
     const st           = stockMap[l.insumo_id];
@@ -11194,12 +11260,11 @@ function calcOPConsumosEstimados() {
         <div style="font-weight:500;font-size:13px">${p?.description||'—'}</div>
         <div style="font-size:11px;color:var(--text3)">${p?.codigo_interno||p?.code||''}</div>
       </td>
-      <td class="td-mono">${cantSinMerma.toFixed(4)}</td>
       <td class="td-mono">${Number(l.merma_pct||0).toFixed(2)}%</td>
-      <td class="td-mono" style="text-align:right;font-weight:700;color:var(--accent3)">${cantConMerma.toFixed(4)} ${l.unidad||'kg'}</td>
-      <td style="font-size:12px;color:var(--text2)">${l.unidad||'kg'}</td>
+      <td class="td-mono" style="text-align:right;font-weight:700;color:var(--accent3)">${cantConMerma.toFixed(4)} ${unidad}</td>
+      <td style="font-size:12px;color:var(--text2)">${unidad}</td>
       <td class="td-mono" style="text-align:right;color:${stockOk?'var(--green)':'var(--red)'}">
-        ${fmtNum(stockDisp)} ${l.unidad||'kg'}
+        ${fmtNum(stockDisp)} ${unidad}
         ${!stockOk?'<div style="font-size:10px;color:var(--red)">⚠ Insuficiente</div>':''}
       </td>
     </tr>`;
@@ -11284,21 +11349,27 @@ async function editOP(id) {
   document.getElementById('op-notas').value         = op.notas||'';
   document.getElementById('op-numero-preview').textContent = op.numero||'';
 
-  document.getElementById('op-receta').value = op.receta_id||'';
-  onOPRecetaChange(); // puebla "Producto a Fabricar" + tabla de consumos estimados
-
+  // Bodegas: se pueblan las opciones ANTES de disparar onOPRecetaChange()
+  // (que intenta auto-seleccionar un default por categoría — ver punto 7)
+  // para que esa asignación tenga efecto; los valores REALES ya guardados
+  // en la OP se asignan después, así que siempre ganan sobre el default
+  // automático de la categoría.
   refreshBodegaDropdowns();
   const bodOpts = '<option value="">— Seleccionar —</option>' +
     (state.bodegas||[]).filter(b=>b.activa!==false).map(b=>`<option value="${b.id}">${b.codigo} — ${b.nombre}</option>`).join('');
   document.getElementById('op-bodega-entrada').innerHTML = bodOpts;
   document.getElementById('op-bodega-salida').innerHTML  = bodOpts;
+
+  document.getElementById('op-receta').value = op.receta_id||'';
+  onOPRecetaChange(); // puebla "Producto a Fabricar" + consumos + propone bodegas por categoría
+
   document.getElementById('op-bodega-entrada').value = op.bodega_entrada||'';
   document.getElementById('op-bodega-salida').value  = op.bodega_salida||'';
 
   populateOVSelect('op-ov');
   document.getElementById('op-ov').value = op.ov_id||'';
 
-  document.getElementById('modal-op-title').textContent = `Editar ${op.numero||'Orden de Producción'}`;
+  document.getElementById('modal-op-title').textContent = op.numero || 'Orden de Producción';
   openModal('modal-op');
 }
 
@@ -12228,6 +12299,9 @@ function showOPDetail(id) {
             }).join('')}</tbody>
           </table>
         </div>` : ''}`;
+  document.getElementById('op-detail-footer-actions').innerHTML = op?.estado==='borrador'
+    ? `<button class="btn btn-ghost btn-sm" onclick="closeModal('modal-op-detail');editOP('${id}')">✎ Editar</button>`
+    : '';
   openModal('modal-op-detail');
 }
 
@@ -21738,6 +21812,8 @@ function openNewCategoria() {
   document.getElementById('cat-cta-entrada').value     = '';
   document.getElementById('cat-cta-salida').value      = '';
   document.getElementById('cat-cta-transito').value    = '';
+  populateBodegaSelect('cat-bodega-entrada');
+  populateBodegaSelect('cat-bodega-salida');
   document.getElementById('cat-notas').value           = '';
   document.getElementById('modal-categoria-title').textContent = 'Nueva Categoría';
   populateNomDropdowns();
@@ -21765,6 +21841,8 @@ function editCategoria(id) {
     document.getElementById('cat-cta-entrada').value    = c.cta_entrada||'';
     document.getElementById('cat-cta-salida').value     = c.cta_salida||'';
     document.getElementById('cat-cta-transito').value   = c.cta_transito||'';
+    populateBodegaSelect('cat-bodega-entrada', c.bodega_entrada_default||'');
+    populateBodegaSelect('cat-bodega-salida', c.bodega_salida_default||'');
   }, 30);
   openModal('modal-categoria');
 }
@@ -21794,6 +21872,8 @@ async function saveCategoria() {
     diario_stock:   document.getElementById('cat-diario-stock').value || null,
     cta_entrada:    document.getElementById('cat-cta-entrada').value,
     cta_salida:     document.getElementById('cat-cta-salida').value,
+    bodega_entrada_default: document.getElementById('cat-bodega-entrada')?.value || null,
+    bodega_salida_default:  document.getElementById('cat-bodega-salida')?.value || null,
     notas:               document.getElementById('cat-notas').value.trim(),
   };
   let err;
