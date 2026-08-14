@@ -2832,6 +2832,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div class="field"><label>No. Orden de Compra del Cliente</label><input type="text" id="ped-po" placeholder="Ej. PO-2026-001"/></div>
         <div class="field"><label>Estado</label>
           <select id="ped-status">
+            <option value="borrador">Borrador</option>
             <option value="en_proceso">En Proceso</option>
             <option value="terminada">Terminada</option>
             <option value="facturada">Facturada</option>
@@ -3998,7 +3999,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     <div class="modal-body">
       <input type="hidden" id="oc-id"/>
       <div class="form-grid form-grid-2" style="margin-bottom:20px">
-        <div class="field"><label>No. OC (auto)</label><input type="text" id="oc-num" readonly style="background:var(--surface2);color:var(--text2)"/></div>
+        <div class="field"><label>No. OC (auto)</label><input type="text" id="oc-num" readonly placeholder="Se asigna al confirmar" style="background:var(--surface2);color:var(--text2)"/></div>
         <div class="field"><label>Proveedor *</label><select id="oc-proveedor" onchange="onOCProveedorChange()"><option value="">— Seleccionar —</option></select></div>
         <div class="field"><label>Fecha *</label><input type="date" id="oc-fecha"/></div>
         <div class="field"><label>Entrega Estimada</label><input type="date" id="oc-entrega"/></div>
@@ -5892,14 +5893,14 @@ function renderDashboard() {
   const recent = state.pedidos.slice(0,8);
   tbody.innerHTML = recent.length ? recent.map(p => `
     <tr>
-      <td class="td-mono">${p.order_number}</td>
+      <td class="td-mono">${ovLabel(p)}</td>
       <td>${clientName(p.customer_id)}</td>
       <td>${fmtDate(p.date)}</td>
       <td>${statusBadge(p.status)}</td>
     </tr>`).join('') : '<tr><td colspan="4"><div class="empty-state"><p>Sin órdenes de venta</p></div></td></tr>';
 
   const activity = document.getElementById('dash-activity');
-  const items = [...state.pedidos.slice(0,6).map(p=>({type:'OV',num:'OV-'+String(p.order_number).padStart(4,'0'),date:p.created_at})),
+  const items = [...state.pedidos.slice(0,6).map(p=>({type:'OV',num:ovLabel(p),date:p.created_at})),
                  ...state.facturas.slice(0,3).map(f=>({type:'Factura',num:f.invoice_number||'—',date:f.created_at}))]
     .sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,6);
   activity.innerHTML = items.length ? items.map(i=>`
@@ -6228,7 +6229,7 @@ function renderPedidos() {
   const st = document.getElementById('filter-ped-status').value;
   const data = state.pedidos.filter(p =>
     (!st || p.status === st) &&
-    (clientName(p.customer_id).toLowerCase().includes(q) || String(p.order_number).includes(q))
+    (clientName(p.customer_id).toLowerCase().includes(q) || ovLabel(p).toLowerCase().includes(q) || String(p.order_number||'').includes(q))
   );
   const tbody = document.getElementById('tbl-ped');
   tbody.innerHTML = data.length ? data.map(p => {
@@ -6250,7 +6251,7 @@ function renderPedidos() {
     return `<tr>
       <td>
         <div class="td-mono" style="cursor:pointer;color:var(--accent);text-decoration:underline;text-underline-offset:2px;font-weight:600" onclick="verPedido('${p.id}')" title="Ver detalle de la orden">
-          OV-${String(p.order_number).padStart(4,'0')}
+          ${ovLabel(p)}
         </div>
       </td>
       <td>
@@ -6311,7 +6312,7 @@ function verPedido(id) {
   const terminosLabel = { inmediato:'Pago Inmediato', '15':'15 días', '30':'30 días', '45':'45 días', '60':'60 días' };
   const terminosText  = terminosLabel[p.terminos_pago] || p.terminos_pago || '—';
 
-  document.getElementById('vped-title').textContent = `OV-${String(p.order_number).padStart(4,'0')}`;
+  document.getElementById('vped-title').textContent = ovLabel(p);
 
   const infoCell = (label, val, mono=false) => `
     <div style="padding:12px 16px">
@@ -6561,7 +6562,7 @@ function abrirGenerarDespacho(ovId) {
   if (!p.bodega_id) { toast('Esta OV no tiene una Bodega de Despacho configurada — edítala primero.', 'error'); return; }
   currentDespachoOVId = ovId;
 
-  document.getElementById('desp-ov-display').textContent = `OV-${String(p.order_number).padStart(4,'0')} — ${clientName(p.customer_id)}`;
+  document.getElementById('desp-ov-display').textContent = `${ovLabel(p)} — ${clientName(p.customer_id)}`;
   document.getElementById('desp-fecha').value = today();
   document.getElementById('desp-destino').value = '';
   document.getElementById('desp-transportista').value = '';
@@ -6605,7 +6606,7 @@ async function confirmarGenerarDespacho() {
   const placa           = document.getElementById('desp-placa').value.trim();
 
   const rollosSel = checks.map(c => (state.rollos||[]).find(r => r.id === c.dataset.id)).filter(Boolean);
-  const ovLabel   = `OV-${String(p.order_number).padStart(4,'0')}`;
+  const ovLabelStr = ovLabel(p);
 
   // Cada Lista de Empaque (erp_packing_lists) solo admite un producto —
   // agrupamos los rollos seleccionados por producto y generamos una lista
@@ -6647,8 +6648,8 @@ async function confirmarGenerarDespacho() {
           producto_id: r.producto_id,
           cantidad: Number(r.peso_kg||0),
           costo_unitario: costoUnit,
-          referencia_tipo: 'DESPACHO', referencia_id: ovLabel,
-          notas: `Despacho ${ovLabel} — rollo ${r.numero_rollo}`,
+          referencia_tipo: 'DESPACHO', referencia_id: ovLabelStr,
+          notas: `Despacho ${ovLabelStr} — rollo ${r.numero_rollo}`,
           fecha,
           bodega_id: p.bodega_id,
           lote: r.lote||null,
@@ -6821,7 +6822,7 @@ function imprimirOV(pedidoId) {
 
   const win = window.open('','_blank','width=900,height=700');
   win.document.write(`<!DOCTYPE html><html><head>
-    <meta charset="UTF-8"/><title>OV ${p.order_number||pedidoId}</title>
+    <meta charset="UTF-8"/><title>${ovLabel(p)}</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
     <style>
       *{box-sizing:border-box;margin:0;padding:0}
@@ -6856,7 +6857,7 @@ function imprimirOV(pedidoId) {
         <div style="font-size:11px;color:#5E6470;margin-top:4px">TEXTILES CIRCULARES, S.A.</div>
       </div>
       <div style="text-align:right">
-        <div class="ov-num">${p.order_number||pedidoId}</div>
+        <div class="ov-num">${ovLabel(p)}</div>
         <div class="ov-fecha">Fecha de Emisión: ${fechaFmt}</div>
         ${p.po_number?`<div style="font-size:11px;color:#5E6470;margin-top:4px">PO Cliente: ${p.po_number}</div>`:''}
       </div>
@@ -6963,7 +6964,7 @@ function openNewPedido() {
   document.getElementById('modal-ped-title').textContent = 'Nueva Orden de Venta';
   document.getElementById('ped-date').value = today();
   document.getElementById('ped-fecha-entrega').value = '';
-  document.getElementById('ped-status').value = 'en_proceso';
+  document.getElementById('ped-status').value = 'borrador';
   document.getElementById('ped-notes').value = '';
   document.getElementById('ped-po').value = '';
   // Responsable: por default, quien está generando la OV. Se puede reasignar.
@@ -7022,19 +7023,29 @@ async function savePedido() {
     lines.push({ fabric_id, qty_yardas, qty_kg: qty, unit_price: price, total: qty*price });
   });
   if (!valid || !lines.length) { toast('Agregue al menos una tela válida','error'); return; }
+
+  const estadoElegido = document.getElementById('ped-status').value;
+  // CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): el order_number
+  // real solo se asigna la primera vez que la OV deja de ser 'borrador' —
+  // requiere que la columna ya no tenga autoincremento por DEFAULT (ver
+  // migración SQL entregada aparte). Mientras sigue en borrador, se guarda
+  // sin número — igual que ahora funciona erp_oc.
+  const existente = id ? (state.pedidos||[]).find(x=>x.id===id) : null;
+  const numeroActual = existente?.order_number || null;
   const row = {
     customer_id, date,
     moneda:        getMonedaOV(customer_id),
     fecha_entrega: document.getElementById('ped-fecha-entrega')?.value || null,
     responsable:   document.getElementById('ped-responsable')?.value.trim() || null,
     po_number:     document.getElementById('ped-po').value.trim(),
-    status:        document.getElementById('ped-status').value,
+    status:        estadoElegido,
     notes:         document.getElementById('ped-notes').value.trim(),
     terminos_pago: document.getElementById('ped-terminos')?.value||null,
     dias_credito:  (() => { const sel=document.getElementById('ped-terminos'); return sel?.value?(parseInt(sel.options[sel.selectedIndex]?.getAttribute('data-dias'))||0):null; })(),
     incoterms:     document.getElementById('ped-incoterms')?.value||null,
     bodega_id:     document.getElementById('ped-bodega')?.value||null,
   };
+  if (!numeroActual && estadoElegido !== 'borrador') row.order_number = await nextOVNum();
   let orderId = id;
   if (id) {
     const {error} = await sb.from('erp_ov').update(row).eq('id',id);
@@ -7047,7 +7058,7 @@ async function savePedido() {
   }
   const {error:ie} = await sb.from('erp_ov_items').insert(lines.map(l=>({...l, order_id: orderId})));
   if (ie) { toast('Error guardando líneas: '+ie.message,'error'); return; }
-  toast('Orden de Venta guardada');
+  toast(row.order_number ? `Orden de Venta OV-${String(row.order_number).padStart(4,'0')} guardada` : 'Borrador de Orden de Venta guardado');
   closeModal('modal-ped');
   await loadAll();
 }
@@ -7109,7 +7120,7 @@ function renderFacturas() {
       <td style="font-size:13px">
         <div>${clientName(f.customer_id)}</div>
       </td>
-      <td class="td-mono hide-mobile" style="font-size:11px">${f.order_id?(()=>{const ov=state.pedidos?.find(o=>o.id===f.order_id);return ov?`<span class="badge badge-gray">${ov.order_number||ov.id.slice(0,8)}</span>`:'—'})():'—'}</td>
+      <td class="td-mono hide-mobile" style="font-size:11px">${f.order_id?(()=>{const ov=state.pedidos?.find(o=>o.id===f.order_id);return ov?`<span class="badge badge-gray">${ovLabel(ov)}</span>`:'—'})():'—'}</td>
       <td class="td-mono hide-mobile" style="text-align:right">${fmtMoney(neto)}</td>
       <td class="td-mono hide-mobile" style="text-align:right">${fmtMoney(iva)}</td>
       <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(f.total)}</td>
@@ -7293,7 +7304,7 @@ function openNewFactura() {
   document.getElementById('fact-total-display').textContent = '$0.00';
   document.getElementById('fact-total-detail').textContent = '—';
   document.getElementById('fact-packing-list').innerHTML = '<div style="padding:12px 14px;color:var(--text3);font-size:13px">— Primero selecciona una OV —</div>';
-  const opts = state.pedidos.map(p=>`<option value="${p.id}" data-cid="${p.customer_id}">OV-${String(p.order_number).padStart(4,'0')} — ${clientName(p.customer_id)}</option>`).join('');
+  const opts = state.pedidos.filter(p=>p.order_number).map(p=>`<option value="${p.id}" data-cid="${p.customer_id}">${ovLabel(p)} — ${clientName(p.customer_id)}</option>`).join('');
   document.getElementById('fact-order').innerHTML = '<option value="">— Seleccionar OV —</option>' + opts;
   resetFactDocUI(null, null);
   openModal('modal-fact');
@@ -7311,7 +7322,7 @@ function editFactura(id) {
   toggleFactTipoOtro();
   document.getElementById('fact-tipo-otro').value = f.tipo_otro||'';
   document.getElementById('fact-notes').value = f.notes||'';
-  const opts = state.pedidos.map(p=>`<option value="${p.id}" data-cid="${p.customer_id}">OV-${String(p.order_number).padStart(4,'0')} — ${clientName(p.customer_id)}</option>`).join('');
+  const opts = state.pedidos.filter(p=>p.order_number).map(p=>`<option value="${p.id}" data-cid="${p.customer_id}">${ovLabel(p)} — ${clientName(p.customer_id)}</option>`).join('');
   document.getElementById('fact-order').innerHTML = '<option value="">— Seleccionar OV —</option>' + opts;
   document.getElementById('fact-order').value = f.order_id;
   onFactOrderChange();
@@ -8598,7 +8609,7 @@ function openPago(facturaId) {
   document.getElementById('pago-factura-id').dataset.tipo = 'OV';
   document.getElementById('pago-modo').value = 'single';
   document.getElementById('pago-fact-info').textContent =
-    `${f.invoice_number} — ${clientName(f.customer_id)}${order ? ' · OV-'+String(order.order_number).padStart(4,'0') : ''}`;
+    `${f.invoice_number} — ${clientName(f.customer_id)}${order ? ' · '+ovLabel(order) : ''}`;
   document.getElementById('pago-fact-total').textContent   = fmtMoney(f.total);
   document.getElementById('pago-fact-pagado').textContent  = fmtMoney(pagado);
   document.getElementById('pago-fact-pendiente').textContent = fmtMoney(pend);
@@ -9443,7 +9454,7 @@ function showPLPanel(orderId) {
   currentPLOrderId = orderId;
   const order = state.pedidos.find(p => p.id === orderId);
   document.getElementById('pl-panel').style.display = 'block';
-  document.getElementById('pl-panel-title').textContent = 'Listas de Empaque — OV-' + String(order.order_number).padStart(4,'0');
+  document.getElementById('pl-panel-title').textContent = 'Listas de Empaque — ' + ovLabel(order);
   document.getElementById('pl-panel-sub').textContent = clientName(order.customer_id);
   renderPLPanel(orderId);
   document.getElementById('pl-panel').scrollIntoView({behavior:'smooth', block:'start'});
@@ -9500,7 +9511,7 @@ function renderAllPL() {
     const totNeto = bultos.reduce((s,b) => s + Number(b.peso_neto||0), 0);
     return `<tr>
       <td class="td-mono">LE-${String(pl.pl_number).padStart(4,'0')}</td>
-      <td class="td-mono">${order ? 'OV-'+String(order.order_number).padStart(4,'0') : '—'}</td>
+      <td class="td-mono">${order ? ovLabel(order) : '—'}</td>
       <td>${order ? clientName(order.customer_id) : '—'}</td>
       <td class="hide-mobile">${fmtDate(pl.date)}</td>
       <td>${fabricName(pl.fabric_id)}</td>
@@ -9565,7 +9576,7 @@ function openNewPL() {
   const order = state.pedidos.find(p => p.id === orderId);
   document.getElementById('pl-id').value = '';
   document.getElementById('pl-order-id').value = orderId;
-  document.getElementById('pl-order-display').value = 'OV-' + String(order.order_number).padStart(4,'0') + ' — ' + clientName(order.customer_id);
+  document.getElementById('pl-order-display').value = ovLabel(order) + ' — ' + clientName(order.customer_id);
   document.getElementById('pl-date').value = today();
   document.getElementById('pl-destination').value = '';
   document.getElementById('pl-carrier').value = '';
@@ -9582,8 +9593,8 @@ function openNewPL() {
 
 function openNewPLStandalone() {
   // From the packing lists page — need to pick an order first
-  const order_opts = state.pedidos.filter(p=>p.status!=='cancelado').map(p=>
-    `<option value="${p.id}">OV-${String(p.order_number).padStart(4,'0')} — ${clientName(p.customer_id)}</option>`
+  const order_opts = state.pedidos.filter(p=>p.status!=='cancelado' && p.order_number).map(p=>
+    `<option value="${p.id}">${ovLabel(p)} — ${clientName(p.customer_id)}</option>`
   ).join('');
   // Re-use modal but make order field a select
   document.getElementById('pl-id').value = '';
@@ -9620,7 +9631,7 @@ async function editPL(id) {
   if (orderField.tagName === 'SELECT') {
     orderField.outerHTML = `<input type="text" id="pl-order-display" readonly style="background:var(--surface2);color:var(--text2);width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-family:inherit;font-size:13.5px"/>`;
   }
-  document.getElementById('pl-order-display').value = 'OV-' + String(order.order_number).padStart(4,'0') + ' — ' + clientName(order.customer_id);
+  document.getElementById('pl-order-display').value = ovLabel(order) + ' — ' + clientName(order.customer_id);
   document.getElementById('pl-date').value = fmtDate(pl.date);
   document.getElementById('pl-destination').value = pl.destination||'';
   document.getElementById('pl-carrier').value = pl.carrier||'';
@@ -9760,7 +9771,7 @@ function printPL(id) {
 </div>
 
 <div class="meta">
-  <div class="meta-cell"><label>Orden de Venta</label><div class="val mono">OV-${String(order?.order_number||0).padStart(4,'0')}</div></div>
+  <div class="meta-cell"><label>Orden de Venta</label><div class="val mono">${ovLabel(order)}</div></div>
   <div class="meta-cell"><label>Cliente</label><div class="val">${client?.name||'—'}${client?.code ? '<span style="font-size:11px;color:#9e9c97;margin-left:8px">NIT: '+client.code+'</span>' : ''}</div></div>
   <div class="meta-cell"><label>Destino</label><div class="val">${pl.destination||'—'}</div></div>
   <div class="meta-cell"><label>Transportista / Placa</label><div class="val">${pl.carrier||'—'}${pl.plate?' · '+pl.plate:''}</div></div>
@@ -9854,7 +9865,7 @@ function verFactura(facturaId) {
       </div>
       <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
         <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Orden de Venta</div>
-        <div style="font-size:14px;font-weight:500;font-family:'DM Mono',monospace">${order ? 'OV-'+String(order.order_number).padStart(4,'0') : '—'}</div>
+        <div style="font-size:14px;font-weight:500;font-family:'DM Mono',monospace">${order ? ovLabel(order) : '—'}</div>
       </div>
       <div style="padding:12px 16px;border-right:1px solid var(--border)">
         <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Tipo</div>
@@ -10061,7 +10072,7 @@ function printFacturaConPL() {
 
 <div class="fact-meta">
   <div class="fact-cell"><label>Cliente</label><div class="val">${client?.name||'—'}${client?.code ? '<span style="font-size:11px;color:#9e9c97;margin-left:8px">NIT: '+client.code+'</span>' : ''}</div></div>
-  <div class="fact-cell"><label>Orden de Venta</label><div class="val mono">OV-${String(order?.order_number||0).padStart(4,'0')}</div></div>
+  <div class="fact-cell"><label>Orden de Venta</label><div class="val mono">${ovLabel(order)}</div></div>
   <div class="fact-cell"><label>Tiempo de Crédito</label><div class="val">${creditoMap[f.credito]||f.credito||'—'}</div></div>
   <div class="fact-cell"><label>Estado</label><div class="val">${statusLabel[f.status]||f.status||'—'}</div></div>
 </div>
@@ -12727,18 +12738,16 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
 async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId) {
   const provId = prod.proveedor_default;
   const prov   = state.proveedores.find(p => p.id === provId);
-  const numero = nextOCNum ? await nextOCNum() : `OC-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
 
-  // BUGFIX (debugging en vivo, 13/Ago/2026): esta función usaba nombres de
-  // columna que no existen en el esquema real de Supabase — confirmado
-  // reproduciendo el insert directo en consola: erp_oc.status (no "estado"),
-  // erp_oc_items.total_orig/total_contable (no "total"). El insert fallaba
-  // en silencio porque el código nunca revisaba `error` antes de seguir.
-  // También prod.precio_compra no existe — el precio real vive en el array
-  // prod.proveedores_compra, por proveedor.
+  // CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): las OC generadas
+  // por el motor de planificación automática nacen en 'borrador' SIN
+  // número — igual que las que crea un usuario a mano. El operador las
+  // revisa y confirma una por una (confirmarOC), y solo ahí se asigna el
+  // correlativo real, para que quede un checkpoint humano visible sobre
+  // qué se está comprando, no una asignación 100% automática.
   const tc = tcHoy() || 7.75;
   const { data: ocData, error } = await sb.from('erp_oc').insert({
-    numero, proveedor_id: provId||null,
+    numero: null, proveedor_id: provId||null,
     fecha, entrega: fecha,
     status: 'borrador', tipo_oc: 'compra',
     ov_id: ovId,
@@ -12762,9 +12771,9 @@ async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, o
   });
   if (eLinea) console.error('Error creando línea de OC:', eLinea);
 
-  toast(`OC ${numero} generada para ${prod.code} — ${prov?.name||'sin proveedor'}`);
+  toast(`Borrador de OC generado para ${prod.code} — ${prov?.name||'sin proveedor'} (pendiente de confirmar)`);
   await loadAll();
-  return { tipo: 'OC', referencia: numero, id: ocData.id };
+  return { tipo: 'OC', referencia: ocData.id, id: ocData.id };
 }
 
 // ── Ruta: SUBCONTRATAR → OC servicio + OC reabastecimiento MP ──
@@ -12781,25 +12790,27 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
   const tc        = tcHoy() || 7.75;
 
   // 1. OC del SERVICIO al subcontratista
-  const numeroSrv = nextOCNum ? await nextOCNum() : `OC-${Date.now()}`;
+  // CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): mismo criterio que
+  // planificarCompra — nace en 'borrador' sin número; el operador la
+  // confirma manualmente y ahí se asigna el correlativo real.
   const costosConv = (state.recetaCostos||[]).filter(c => c.receta_id === receta.id);
   const costoServPorKg = costosConv.reduce((s,c) => {
     const mGTQ = c.moneda==='USD' ? c.monto*tc : c.monto;
     return s + (c.tipo==='por_kg' ? mGTQ : c.tipo==='fijo' ? mGTQ/cantidad : 0);
   }, 0);
 
-  // BUGFIX (debugging en vivo, 13/Ago/2026): mismo problema de nombres de
-  // columna que planificarCompra — ver comentario ahí. Se agrega además el
-  // console.error que faltaba: antes, si el insert de la OC de servicio
-  // fallaba, el código seguía de largo sin generar nada y sin loguear nada.
   const { data: ocServ, error: e1 } = await sb.from('erp_oc').insert({
-    numero: numeroSrv, proveedor_id: provSubId||null,
+    numero: null, proveedor_id: provSubId||null,
     fecha, entrega: fecha, status: 'borrador',
     tipo_oc: 'subcontrato', ov_id: ovId,
     notas: `Servicio ${OP_TIPO_LABEL[receta.tipo]||receta.tipo} — ${prod.code} ${cantidad} kg | desde ${origen_tipo} ${origen_id}`,
   }).select().single();
 
   if (e1) console.error('Error creando OC servicio de subcontrato:', e1);
+
+  // Referencia rastreable para las notas de la cascada de insumos de abajo
+  // — como todavía no tiene número (sigue en borrador), usamos el id corto.
+  const refServ = ocServ ? `OC-borrador-${ocServ.id.slice(0,8)}` : 'OC-borrador';
 
   if (!e1) {
     // Línea: producto fabricado como servicio
@@ -12812,7 +12823,7 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
       total_contable: costoServPorKg * cantidad,
     });
     if (eLineaServ) console.error('Error creando línea de OC servicio:', eLineaServ);
-    toast(`OC Servicio ${numeroSrv} → ${provSub?.name||'subcontratista'} | ${cantidad} kg`);
+    toast(`Borrador de OC Servicio → ${provSub?.name||'subcontratista'} | ${cantidad} kg (pendiente de confirmar)`);
   }
 
   // 2. OC de REABASTECIMIENTO de MP al subcontratista
@@ -12821,11 +12832,11 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
     const cantMP    = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad;
     const insumo    = state.productos.find(p => p.id === l.insumo_id);
     // Siempre genera reabastecimiento de MP independiente del stock
-    await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', numeroSrv, ovId);
+    await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', refServ, ovId);
   }
 
   await loadAll();
-  return { tipo: 'OC-SUB', referencia: numeroSrv, id: ocServ?.id };
+  return { tipo: 'OC-SUB', referencia: refServ, id: ocServ?.id };
 }
 
 // ── Helper: nextOCNum ───────────────────────────────────────────
@@ -12836,6 +12847,26 @@ async function nextOCNum() {
   const { data } = await sb.from('erp_oc').select('numero').ilike('numero', `OC-${y}-%`);
   const nums = (data||[]).map(o => parseInt((o.numero||'').slice(-4))||0);
   return `OC-${y}-${String((nums.length ? Math.max(...nums) : 0)+1).padStart(4,'0')}`;
+}
+
+// CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): igual que nextOCNum,
+// pero para erp_ov.order_number — que hasta ahora era un entero con
+// autoincremento real de Postgres (columna con DEFAULT nextval(...)),
+// asignado en cada INSERT sin importar el estado. Se requiere la
+// migración que quita ese DEFAULT (ver SQL entregado aparte) para que el
+// número deje de asignarse solo al guardar un borrador, y se calcule acá
+// — recién cuando la OV deja de ser 'borrador' — igual que el resto de
+// los correlativos del sistema.
+async function nextOVNum() {
+  const { data } = await sb.from('erp_ov').select('order_number').not('order_number', 'is', null).order('order_number', {ascending:false}).limit(1);
+  return (data && data[0] ? Number(data[0].order_number) : 0) + 1;
+}
+
+// Formatea el número de una OV para mostrar en UI, manejando el caso de
+// borrador (order_number null, aún no confirmada) de forma consistente en
+// todo el sistema en vez de repetir el fallback en cada punto de display.
+function ovLabel(p) {
+  return (p && p.order_number) ? `OV-${String(p.order_number).padStart(4,'0')}` : 'Borrador';
 }
 
 // ═══ LIBRO DE COMPRAS ═══
@@ -12872,7 +12903,7 @@ function populateCompraOCSelect(ocId='') {
   if (!sel) return;
   sel.innerHTML = '<option value="">— Sin OC relacionada —</option>' +
     (state.oc||[])
-      .filter(o => o.status !== 'cancelada')
+      .filter(o => o.status !== 'cancelada' && o.numero) // las OC en borrador (sin número aún) no aplican para facturar
       .sort((a,b) => (b.numero||'').localeCompare(a.numero||''))
       .map(o => {
         const prov = state.proveedores.find(p=>p.id===o.proveedor_id);
@@ -13215,7 +13246,7 @@ function renderCompras() {
       <td class="td-mono">${c.numero||'—'}</td>
       <td class="td-mono" style="font-size:12px">${prov?.nit||'—'}</td>
       <td style="font-size:13px">${prov?.name||'—'}</td>
-      <td class="td-mono hide-mobile" style="font-size:11px">${oc?`<span class="badge badge-gray">${oc.numero}</span>`:'—'}</td>
+      <td class="td-mono hide-mobile" style="font-size:11px">${oc?`<span class="badge badge-gray">${oc.numero||'Borrador'}</span>`:'—'}</td>
       <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(total, c.moneda||'GTQ')}</td>
       <td class="td-mono" style="text-align:right;color:${esPagado?'var(--text3)':'var(--accent)'};font-weight:${esPagado?'400':'700'}">
         ${esPagado?'✓':fmtMoney(saldo, c.moneda||'GTQ')}
@@ -16377,7 +16408,7 @@ function renderOC() {
       pagoBadge = `<span style="color:var(--text3);font-size:12px">Sin facturar</span>`;
     }
     return `<tr>
-      <td class="td-mono" style="font-weight:600;cursor:pointer;color:var(--accent);text-decoration:underline" onclick="showOCPanel('${o.id}')">${o.numero||'—'}</td>
+      <td class="td-mono" style="font-weight:600;cursor:pointer;color:var(--accent);text-decoration:underline" onclick="showOCPanel('${o.id}')">${o.numero||'<span style="font-style:italic;opacity:.7">Borrador</span>'}</td>
       <td style="white-space:nowrap">${fmtDate(o.fecha)}</td>
       <td>${provName(o.proveedor_id)}</td>
       <td class="hide-mobile" style="font-size:12px;color:var(--text2)">${o.representante||'—'}</td>
@@ -16436,7 +16467,7 @@ function onGlobalSearch(q) {
   (state.pedidos||[]).forEach(o => {
     const cli = (state.clientes||[]).find(c=>c.id===o.cliente_id);
     if ((o.numero||String(o.order_number||'')).toLowerCase().includes(q) || (cli?.name||'').toLowerCase().includes(q))
-      results.push({ tipo:'OV', icono:'📋', titulo:`OV-${o.order_number||o.numero||''}`, sub:cli?.name||'', action:`showPage('ventas',null)`, color:'#DB2777' });
+      results.push({ tipo:'OV', icono:'📋', titulo:ovLabel(o), sub:cli?.name||'', action:`showPage('ventas',null)`, color:'#DB2777' });
   });
 
   // Facturas OC
@@ -16498,7 +16529,7 @@ function showOCPanel(ocId) {
   const hasRecepciones = state.ocRecepciones.some(r=>r.oc_id===ocId);
   document.getElementById('oc-detail-panel') && (document.getElementById('oc-detail-panel').style.display='none');
   openModal('modal-oc-panel');
-  document.getElementById('oc-panel-title').textContent = `${oc.numero} — ${provName(oc.proveedor_id)}`;
+  document.getElementById('oc-panel-title').textContent = `${oc.numero||'Borrador'} — ${provName(oc.proveedor_id)}`;
   const bodegaNombre  = oc.bodega_id ? (state.bodegas||[]).find(b=>b.id===oc.bodega_id)?.nombre : null;
   const terminosLabel = { inmediato:'Pago Inmediato', '15':'15 días', '30':'30 días', '45':'45 días', '60':'60 días' };
   const terminosText  = oc.terminos_pago ? terminosLabel[oc.terminos_pago]||oc.terminos_pago : null;
@@ -16560,14 +16591,21 @@ async function confirmarOC() {
   const ocItems  = state.ocItems.filter(i => i.oc_id === currentOCId);
   const esServicio = ocItems.every(i => state.productos.find(p=>p.id===i.producto_id)?.tipo === 'servicio');
 
+  const label = oc.numero || 'esta OC (aún sin número)';
   const msg = esServicio
-    ? `¿Confirmar la OC ${oc.numero}?\n\nAl ser una OC de servicio, podrás ingresar la factura directamente.`
-    : `¿Confirmar la OC ${oc.numero}?\n\nEsto habilitará la recepción de productos.`;
+    ? `¿Confirmar ${oc.numero?`la OC ${label}`:label}?\n\nAl ser una OC de servicio, podrás ingresar la factura directamente.`
+    : `¿Confirmar ${oc.numero?`la OC ${label}`:label}?\n\nEsto habilitará la recepción de productos.`;
   if (!confirm(msg)) return;
 
   const newStatus = esServicio ? 'completada' : 'confirmada';
-  await sb.from('erp_oc').update({ status: newStatus }).eq('id', currentOCId);
-  toast(`OC ${oc.numero} confirmada`);
+  // Las OC nacen en 'borrador' sin numero asignado — tanto si las crea el
+  // usuario a mano como si las genera el motor de planificación
+  // automática. El correlativo real solo se asigna aquí, al confirmar,
+  // para que un borrador descartado nunca "queme" un número.
+  const update = { status: newStatus };
+  if (!oc.numero) update.numero = await nextOCNum();
+  await sb.from('erp_oc').update(update).eq('id', currentOCId);
+  toast(`OC ${update.numero||oc.numero} confirmada`);
   await loadAll();
   showOCPanel(currentOCId);
 }
@@ -16577,13 +16615,14 @@ async function cancelarOC() {
   if (!oc) return;
   const hasRec = state.ocRecepciones.some(r=>r.oc_id===currentOCId);
   if (hasRec) { toast('No se puede cancelar — ya tiene recepciones registradas','error'); return; }
-  const motivo = prompt(`¿Motivo de cancelación de la OC ${oc.numero}? (opcional)`);
+  const label = oc.numero || 'esta OC (aún sin número)';
+  const motivo = prompt(`¿Motivo de cancelación de ${oc.numero?`la OC ${label}`:label}? (opcional)`);
   if (motivo === null) return; // user pressed Cancel
   await sb.from('erp_oc').update({
     status: 'cancelada',
     notas: [oc.notas, motivo ? `Cancelada: ${motivo}` : 'Cancelada'].filter(Boolean).join(' | ')
   }).eq('id', currentOCId);
-  toast(`OC ${oc.numero} cancelada`);
+  toast(`${oc.numero?`OC ${oc.numero}`:'OC'} cancelada`);
   await loadAll();
   showOCPanel(currentOCId);
 }
@@ -16810,7 +16849,7 @@ function imprimirOC() {
   const win = window.open('','_blank','width=900,height=700');
   win.document.write(`<!DOCTYPE html><html><head>
     <meta charset="UTF-8"/>
-    <title>OC ${oc.numero}</title>
+    <title>OC ${oc.numero||'Borrador'}</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
     <style>
       *{box-sizing:border-box;margin:0;padding:0}
@@ -16854,7 +16893,7 @@ function imprimirOC() {
         <div class="brand">TEXTILES CIRCULARES, S.A.</div>
       </div>
       <div style="text-align:right">
-        <div class="oc-num">${oc.numero}</div>
+        <div class="oc-num">${oc.numero||'BORRADOR'}</div>
         <div class="oc-fecha">Fecha de Emisión: ${fechaFmt}</div>
         <div style="margin-top:6px"><span class="badge status-${oc.status||'borrador'}">${OC_STATUS_LABEL[oc.status]||oc.status}</span></div>
       </div>
@@ -18052,7 +18091,11 @@ async function deleteSC(id) {
 // ── OC CRUD ──
 async function openNewOC() {
   document.getElementById('oc-id').value='';
-  document.getElementById('oc-num').value=nextCorrelativo('OC',state.oc,'numero');
+  // BUGFIX/CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): antes se
+  // asignaba un número real (nextCorrelativo) apenas se abría el modal —
+  // así, un borrador abandonado sin guardar igual "quemaba" un número. El
+  // número real ahora se asigna recién en confirmarOC(), nunca antes.
+  document.getElementById('oc-num').value='';
   document.getElementById('oc-fecha').value=today();
   document.getElementById('oc-entrega').value='';
   document.getElementById('oc-status').value='borrador';
@@ -18112,7 +18155,7 @@ function populateOVSelect(elId, selectedId='') {
   const opts = (state.pedidos||[])
     .filter(p => p.status !== 'cancelado')
     .sort((a,b) => (b.order_number||0) - (a.order_number||0))
-    .map(p => `<option value="${p.id}"${p.id===selectedId?' selected':''}>OV-${String(p.order_number).padStart(4,'0')} — ${clientName(p.customer_id)}</option>`)
+    .map(p => `<option value="${p.id}"${p.id===selectedId?' selected':''}>${ovLabel(p)} — ${clientName(p.customer_id)}</option>`)
     .join('');
   el.innerHTML = '<option value="">— Sin vincular (producción para stock) —</option>' + opts;
 }
@@ -18983,15 +19026,24 @@ async function saveOC() {
   const lines = getOCLines();
   if (!lines.length) { toast('Agrega al menos un producto','error'); return; }
 
+  const estadoElegido = document.getElementById('oc-status').value;
+  // CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): el número real solo
+  // se asigna la primera vez que la OC deja de ser 'borrador' — ya sea vía
+  // el botón dedicado Confirmar (confirmarOC) o cambiando el estado
+  // directamente aquí en el formulario de edición. Un borrador guardado o
+  // descartado nunca "quema" un número.
+  const numeroActual = document.getElementById('oc-num').value.trim();
+  const numero = (!numeroActual && estadoElegido !== 'borrador') ? await nextOCNum() : (numeroActual || null);
+
   const row = {
-    numero:       document.getElementById('oc-num').value,
+    numero,
     proveedor_id, fecha,
     entrega:        document.getElementById('oc-entrega').value||null,
     bodega_id:      document.getElementById('oc-bodega')?.value||null,
     terminos_pago:  document.getElementById('oc-terminos')?.value||null,
     dias_credito:   (() => { const sel = document.getElementById('oc-terminos'); return sel?.value ? (parseInt(sel.options[sel.selectedIndex]?.getAttribute('data-dias'))||0) : null; })(),
     incoterms:      document.getElementById('oc-incoterms')?.value||null,
-    status:         document.getElementById('oc-status').value,
+    status:         estadoElegido,
     notas:          document.getElementById('oc-notas').value.trim(),
     representante:  document.getElementById('oc-representante').value.trim()||null,
   };
@@ -19006,7 +19058,7 @@ async function saveOC() {
   }
   if (err) { toast('Error: '+err.message,'error'); return; }
   await sb.from('erp_oc_items').insert(lines.map(l=>({...l, oc_id:ocId})));
-  toast('OC generada correctamente');
+  toast(numero ? `OC ${numero} guardada` : 'Borrador de OC guardado');
   closeModal('modal-oc');
   await loadAll();
 }
