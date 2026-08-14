@@ -1143,8 +1143,12 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             </table>
           </div>
         </div>
-        <!-- OP Detail Panel -->
-        <div id="op-detail-panel" style="display:none;margin-top:18px"></div>
+        <!-- OP Detail Panel eliminado (14/Ago/2026, a pedido explícito): era
+             un div inline que crecía sin límite dentro del flujo normal de
+             la página — como el sidebar tiene altura fija (100vh) y este
+             contenido no, al desplegarse con muchas líneas terminaba
+             "debajo" del menú visualmente. Reemplazado por un modal-overlay
+             real (modal-op-detail, 90vw/90vh) — ver showOPDetail(). -->
       </div>
 
       <!-- RECETAS -->
@@ -3787,13 +3791,12 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             </div>
           </div>
 
-          <!-- Proveedor default -->
-          <div class="field" id="prod-proveedor-default-field" style="display:none">
-            <label>Proveedor Predeterminado</label>
-            <select id="prod-proveedor-default">
-              <option value="">— Seleccionar proveedor —</option>
-            </select>
-          </div>
+          <!-- Proveedor default ELIMINADO (14/Ago/2026, a pedido explícito): el
+               sistema ahora toma siempre el primer proveedor configurado en la
+               pestaña Compra/Proveedores del producto (proveedores_compra[0]),
+               sin necesitar un campo separado que quedaba vacío en la práctica
+               y rompía la asignación automática de proveedor en OC generadas
+               por el motor de planificación. -->
 
           <!-- Recetas por prioridad -->
           <div class="field field-full" id="prod-recetas-prioridad-field" style="display:none">
@@ -5401,7 +5404,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 <!-- VER ORDEN DE VENTA (OV) MODAL -->
 <div class="modal-overlay" id="modal-ver-pedido">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg" style="max-width:90vw;width:90vw;max-height:90vh">
     <div class="modal-header">
       <div class="modal-title" id="vped-title">Orden de Venta</div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -5453,6 +5456,19 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <button class="btn btn-ghost" onclick="closeModal('modal-despacho')">Cancelar</button>
       <button class="btn btn-primary" id="btn-confirmar-despacho" onclick="confirmarGenerarDespacho()">📦 Generar Despacho</button>
     </div>
+  </div>
+</div>
+
+<!-- DETALLE DE ORDEN DE PRODUCCIÓN — modal (14/Ago/2026, a pedido explícito;
+     reemplaza el panel inline op-detail-panel, ver comentario en el HTML de
+     Órdenes de Producción). Mismo patrón de tamaño que modal-ver-pedido. -->
+<div class="modal-overlay" id="modal-op-detail">
+  <div class="modal modal-lg" style="max-width:90vw;width:90vw;max-height:90vh">
+    <div class="modal-header">
+      <div class="modal-title" id="op-detail-title">Orden de Producción</div>
+      <button class="modal-close" onclick="closeModal('modal-op-detail')">✕</button>
+    </div>
+    <div class="modal-body" id="op-detail-body" style="padding:20px"></div>
   </div>
 </div>
 
@@ -11247,6 +11263,45 @@ async function openNewOP() {
   openModal('modal-op');
 }
 
+// BUGFIX (14/Ago/2026, a pedido explícito): el botón "Editar" de las OP en
+// borrador llamaba a editOP(id), función que NUNCA se definió en ningún
+// lugar del código — confirmado por grep: cero declaraciones, solo esa
+// única referencia en el HTML del botón. El botón estuvo roto desde
+// siempre. Replica el mismo poblado que openNewOP(), pero con los datos
+// reales de la OP existente, en vez de dejarlos en blanco.
+async function editOP(id) {
+  const op = (state.op||[]).find(x=>x.id===id);
+  if (!op) { toast('Orden de Producción no encontrada','error'); return; }
+
+  document.getElementById('op-id').value            = op.id;
+  document.getElementById('op-tipo').value          = op.tipo||'tejido';
+  onOPTipoChange(); // puebla el dropdown de recetas según el tipo
+
+  document.getElementById('op-cantidad-prog').value = op.cantidad_prog||'';
+  document.getElementById('op-lote').value          = op.lote_produccion||'';
+  document.getElementById('op-fecha-inicio').value  = op.fecha_inicio||today();
+  document.getElementById('op-fecha-fin').value     = op.fecha_fin||'';
+  document.getElementById('op-notas').value         = op.notas||'';
+  document.getElementById('op-numero-preview').textContent = op.numero||'';
+
+  document.getElementById('op-receta').value = op.receta_id||'';
+  onOPRecetaChange(); // puebla "Producto a Fabricar" + tabla de consumos estimados
+
+  refreshBodegaDropdowns();
+  const bodOpts = '<option value="">— Seleccionar —</option>' +
+    (state.bodegas||[]).filter(b=>b.activa!==false).map(b=>`<option value="${b.id}">${b.codigo} — ${b.nombre}</option>`).join('');
+  document.getElementById('op-bodega-entrada').innerHTML = bodOpts;
+  document.getElementById('op-bodega-salida').innerHTML  = bodOpts;
+  document.getElementById('op-bodega-entrada').value = op.bodega_entrada||'';
+  document.getElementById('op-bodega-salida').value  = op.bodega_salida||'';
+
+  populateOVSelect('op-ov');
+  document.getElementById('op-ov').value = op.ov_id||'';
+
+  document.getElementById('modal-op-title').textContent = `Editar ${op.numero||'Orden de Producción'}`;
+  openModal('modal-op');
+}
+
 async function saveOP(estado = 'borrador') {
   const id           = document.getElementById('op-id').value;
   // BUGFIX (debugging en vivo, 13/Ago/2026): esta función llamaba
@@ -11629,7 +11684,7 @@ function abrirEnvioOP(opId) {
   const receta = (state.recetas||[]).find(r=>r.id===op.receta_id);
   const prod   = state.productos.find(p=>p.id===op.producto_id);
   if (!receta) { toast('OP sin receta asociada','error'); return; }
-  const provSubId = receta.proveedor_subcontrato || prod?.proveedor_default;
+  const provSubId = receta.proveedor_subcontrato || proveedorPredeterminado(prod);
   const provSub   = state.proveedores.find(p=>p.id===provSubId);
   if (!provSubId) { toast('La receta de esta OP no tiene subcontratista asignado — configúralo en Recetas antes de enviar.','error'); return; }
 
@@ -11657,7 +11712,7 @@ async function confirmarEnvioOP() {
   if (!op) return;
   const receta = (state.recetas||[]).find(r=>r.id===op.receta_id);
   const prod   = state.productos.find(p=>p.id===op.producto_id);
-  const provSubId = receta?.proveedor_subcontrato || prod?.proveedor_default;
+  const provSubId = receta?.proveedor_subcontrato || proveedorPredeterminado(prod);
   const peso   = parseFloat(document.getElementById('envio-peso').value);
   const fecha  = document.getElementById('envio-fecha').value || today();
   const notas  = document.getElementById('envio-notas').value.trim();
@@ -12105,15 +12160,8 @@ function showOPDetail(id) {
   const envioItems = envio ? (state.enviosTercerosItems||[]).filter(i=>i.envio_id===envio.id) : [];
   const pesoEnviadoDetail = envioItems.reduce((s,i)=>s+Number(i.peso_kg||0),0);
 
-  const panel = document.getElementById('op-detail-panel');
-  panel.style.display = 'block';
-  panel.innerHTML = `
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">🏭 ${op?.numero} — ${prod?.description||'—'}</div>
-        <button class="btn btn-sm btn-ghost" onclick="document.getElementById('op-detail-panel').style.display='none'">✕ Cerrar</button>
-      </div>
-      <div class="card-body">
+  document.getElementById('op-detail-title').textContent = `🏭 ${op?.numero} — ${prod?.description||'—'}`;
+  document.getElementById('op-detail-body').innerHTML = `
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px">
           <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Tipo</div>
             <span class="badge badge-blue">${OP_TIPO_LABEL[op?.tipo]||op?.tipo}</span></div>
@@ -12179,10 +12227,8 @@ function showOPDetail(id) {
               </tr>`;
             }).join('')}</tbody>
           </table>
-        </div>` : ''}
-      </div>
-    </div>`;
-  panel.scrollIntoView({behavior:'smooth'});
+        </div>` : ''}`;
+  openModal('modal-op-detail');
 }
 
 // ═══════════════════════════════════════════════════
@@ -12548,9 +12594,7 @@ function onRutaChange() {
   const subcontratar = document.getElementById('prod-ruta-subcontrata')?.checked;
   const prodId      = document.getElementById('prod-id')?.value;
 
-  // Show proveedor default if Comprar or Subcontratar
-  const pvField = document.getElementById('prod-proveedor-default-field');
-  if (pvField) pvField.style.display = (comprar || subcontratar) ? 'block' : 'none';
+  // Campo "Proveedor default" eliminado (14/Ago/2026) — ver comentario en el HTML.
 
   // Show recetas priority if Fabricar or Subcontratar
   const recField = document.getElementById('prod-recetas-prioridad-field');
@@ -12626,13 +12670,8 @@ async function moverRecetaPrioridad(recetaId, dir, prodIdParam) {
 }
 
 // ── Populate proveedor default in product form ──────────────────
-function populateProdProveedorDefault(provId = '') {
-  const sel = document.getElementById('prod-proveedor-default');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">— Seleccionar proveedor —</option>' +
-    (state.proveedores||[]).map(p => `<option value="${p.id}">${p.name}</option>`).join('');
-  if (provId) sel.value = provId;
-}
+// función populateProdProveedorDefault() eliminada (14/Ago/2026) — ver
+// comentario en el HTML del campo que reemplazó.
 
 // ════════════════════════════════════════════════════
 // MOTOR DE PLANIFICACIÓN EN CASCADA
@@ -12736,7 +12775,7 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
 
 // ── Ruta: COMPRAR → genera OC ──────────────────────────────────
 async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId) {
-  const provId = prod.proveedor_default;
+  const provId = proveedorPredeterminado(prod);
   const prov   = state.proveedores.find(p => p.id === provId);
 
   // CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): las OC generadas
@@ -12785,7 +12824,7 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
 
   if (!receta) return null;
 
-  const provSubId = receta.proveedor_subcontrato || prod.proveedor_default;
+  const provSubId = receta.proveedor_subcontrato || proveedorPredeterminado(prod);
   const provSub   = state.proveedores.find(p => p.id === provSubId);
   const tc        = tcHoy() || 7.75;
 
@@ -13462,7 +13501,7 @@ function onProdTipoChange() {
     }
     ['prod-ruta-pedido','prod-ruta-comprar','prod-ruta-fabricar','prod-ruta-subcontrata']
       .forEach(id => { const el = document.getElementById(id); if(el) el.checked = false; });
-    ['prod-proveedor-default','prod-seguimiento']
+    ['prod-seguimiento']
       .forEach(id => { const el = document.getElementById(id); if(el) el.value = el.tagName==='SELECT'?(el.options[0]?.value||''):''; });
     const pesoinv = document.getElementById('prod-peso-inv');
     if (pesoinv) pesoinv.value = '';
@@ -13663,7 +13702,6 @@ function editProducto(id) {
     const el = document.getElementById('prod-'+r);
     if (el) el.checked = !!p[key];
   });
-  populateProdProveedorDefault(p.proveedor_default||'');
   onRutaChange();
   renderRecetasPrioridad(id);
   document.getElementById('modal-producto-title').textContent = 'Editar Producto';
@@ -13742,7 +13780,6 @@ async function saveProducto() {
       ruta_comprar:    tipo === 'servicio' ? false : document.getElementById('prod-ruta-comprar')?.checked || false,
       ruta_fabricar:   tipo === 'servicio' ? false : document.getElementById('prod-ruta-fabricar')?.checked || false,
       ruta_subcontratar: tipo === 'servicio' ? false : document.getElementById('prod-ruta-subcontrata')?.checked || false,
-      proveedor_default: tipo === 'servicio' ? null : document.getElementById('prod-proveedor-default')?.value || null,
       proveedores_compra: tipo === 'servicio' ? [] : provLines,
     };
 
@@ -13864,6 +13901,16 @@ const CTA_INV_HILO      = '11301001'; // Inventario de Hilo
 const CTA_INV_PROCESO   = '11301002'; // Inventario Producto en Proceso (WIP)
 const CTA_INV_TERMINADO = '11301003'; // Inventario Producto Terminado
 const DIARIO_MANUFACTURA = 'MANUFACTURA';
+
+// Proveedor predeterminado de un producto (14/Ago/2026, a pedido explícito):
+// el campo separado "Proveedor Predeterminado" se eliminó del producto y de
+// la base de datos — generaba confusión porque quedaba vacío en la práctica
+// aunque el producto ya tuviera proveedores configurados en Compra. Ahora
+// siempre se toma el primero de la lista real (prod.proveedores_compra),
+// que es la única fuente de verdad de qué proveedores vende ese producto.
+function proveedorPredeterminado(prod) {
+  return (prod?.proveedores_compra||[])[0]?.proveedor_id || null;
+}
 
 // Cuenta de valoración REAL de un producto, según la categoría a la que
 // está asignado (misma fuente de verdad que ya usa Compras vía
