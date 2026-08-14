@@ -4629,6 +4629,27 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="">— Seleccionar proveedor —</option>
           </select>
         </div>
+
+        <!-- BODEGAS DE PRODUCCIÓN (14/Ago/2026, a pedido explícito — movido
+             desde la categoría del producto): la categoría era demasiado
+             general para esto — un mismo producto (ej. C-xxx terminado)
+             puede tener varias recetas que consumen de niveles distintos
+             (una viene de DF/teñido en proceso, otra viene directo de
+             GF/tela cruda), y cada ruta de tejido (interno vs. subcontrato)
+             también puede diferir en bodega. La receta ya sabe exactamente
+             qué ruta es, así que es el lugar correcto para default. Se
+             autocompletan al elegir la receta en una OP, siempre editables
+             después. -->
+        <div class="form-section-title" style="margin-top:20px;margin-bottom:4px">Bodegas de Producción (opcional)</div>
+        <div class="form-grid form-grid-2" style="margin-bottom:8px">
+          <div class="field"><label>Bodega Entrada por Defecto (MP)</label>
+            <select id="rec-bodega-entrada"><option value="">— Sin definir —</option></select>
+          </div>
+          <div class="field"><label>Bodega Salida por Defecto (PT/WIP)</label>
+            <select id="rec-bodega-salida"><option value="">— Sin definir —</option></select>
+          </div>
+        </div>
+
         <div class="form-section-title" style="margin-top:20px;margin-bottom:4px">
           Costos de Conversión (Subcontrato)
         </div>
@@ -5146,22 +5167,12 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <select id="cat-cta-transito"><option value="">— Nomenclatura contable —</option></select>
         </div>
 
-        <!-- BODEGAS DE PRODUCCIÓN (14/Ago/2026, a pedido explícito): al
-             elegir una receta en una Orden de Producción, la Bodega Entrada
-             (MP) y Bodega Salida (PT/WIP) se autocompletan desde acá según
-             la categoría del insumo y del producto fabricado — siempre
-             quedan editables, esto solo evita tener que elegirlas a mano
-             cada vez. Ej. categoría "Tela Cruda": entrada = Bodega Hilo,
-             salida = Bodega Tela Cruda. -->
-        <div class="form-section-title">Bodegas de Producción (opcional)</div>
-        <div class="field">
-          <label>Bodega Entrada por Defecto (MP)</label>
-          <select id="cat-bodega-entrada"><option value="">— Sin definir —</option></select>
-        </div>
-        <div class="field">
-          <label>Bodega Salida por Defecto (PT/WIP)</label>
-          <select id="cat-bodega-salida"><option value="">— Sin definir —</option></select>
-        </div>
+        <!-- Bodegas de Producción ELIMINADO de acá (14/Ago/2026, a pedido
+             explícito): la categoría es demasiado general — un mismo
+             producto puede tener varias recetas que consumen de niveles
+             distintos (ej. C-xxx desde DF o directo desde GF según la
+             ruta), y cada una necesita su propia bodega default. Se movió
+             al nivel de Receta — ver modal-receta. -->
 
         <div class="field field-full">
           <label>Notas</label>
@@ -10877,6 +10888,8 @@ function openNewReceta() {
       `<option value="${p.id}">${p.codigo_interno||p.code||'?'} — ${p.description}</option>`
     ).join('');
   document.getElementById('rec-producto').innerHTML = prodOpts;
+  populateBodegaSelect('rec-bodega-entrada');
+  populateBodegaSelect('rec-bodega-salida');
   addRecInsumo(); addRecCosto();
   document.getElementById('modal-receta-title').textContent = 'Nueva Receta';
   document.getElementById('btn-rec-ver-estructura').style.display = 'none';
@@ -10897,6 +10910,8 @@ function editReceta(id) {
     state.productos.map(p=>`<option value="${p.id}">${p.codigo_interno||p.code||'?'} — ${p.description}</option>`).join('');
   document.getElementById('rec-producto').innerHTML = prodOpts;
   document.getElementById('rec-producto').value = r.producto_id||'';
+  populateBodegaSelect('rec-bodega-entrada', r.bodega_entrada_default||'');
+  populateBodegaSelect('rec-bodega-salida', r.bodega_salida_default||'');
   document.getElementById('rec-insumos').innerHTML = '';
   document.getElementById('rec-costos').innerHTML  = '';
   recInsumoCount = 0; recCostoCount = 0;
@@ -10917,7 +10932,12 @@ async function saveReceta() {
   const producto_id = document.getElementById('rec-producto').value;
   if (!codigo||!producto_id) { toast('Selecciona el producto a fabricar','error'); return; }
   const prodRec = state.productos.find(p => p.id === producto_id);
-  const nombre  = prodRec ? `${prodRec.code} — ${prodRec.description}` : codigo;
+  // BUGFIX (14/Ago/2026): usaba prodRec.code (código corto, ej. "0007")
+  // en vez de codigo_interno (ej. "GF-028") — el dropdown de receta en OP
+  // ahora reconstruye el texto dinámicamente y ya no depende de este
+  // campo, pero se corrige acá también para que quede consistente en
+  // cualquier otro lugar que sí lo use directo.
+  const nombre  = prodRec ? `${prodRec.codigo_interno||prodRec.code} — ${prodRec.description}` : codigo;
 
   const row = {
     codigo, nombre,
@@ -10927,6 +10947,8 @@ async function saveReceta() {
     activa:     document.getElementById('rec-activa').value==='true',
     notas:      document.getElementById('rec-notas').value.trim(),
     proveedor_subcontrato: document.getElementById('rec-prov-sub')?.value || null,
+    bodega_entrada_default: document.getElementById('rec-bodega-entrada')?.value || null,
+    bodega_salida_default:  document.getElementById('rec-bodega-salida')?.value || null,
     prioridad:  1, // default, user reorders via priority list in product
   };
 
@@ -11183,9 +11205,19 @@ function renderOP() {
 
 function onOPTipoChange() {
   const tipo = document.getElementById('op-tipo').value;
+  // CAMBIO (14/Ago/2026, a pedido explícito): antes usaba r.nombre, un
+  // texto guardado "congelado" en la receta al crearla con
+  // producto.code (código corto, ej. "0007") en vez de
+  // producto.codigo_interno (ej. "GF-028"). Se reconstruye acá desde el
+  // producto real, así arregla también las recetas ya existentes sin
+  // necesitar volver a guardarlas.
   const recOpts = '<option value="">— Seleccionar receta —</option>' +
     (state.recetas||[]).filter(r => r.tipo === tipo && r.activa !== false)
-      .map(r=>`<option value="${r.id}">${r.codigo} — ${r.nombre}</option>`).join('');
+      .map(r => {
+        const prod = state.productos.find(p => p.id === r.producto_id);
+        const label = prod ? `${prod.codigo_interno||prod.code||''} — ${prod.description}` : r.nombre;
+        return `<option value="${r.id}">${r.codigo} — ${label}</option>`;
+      }).join('');
   document.getElementById('op-receta').innerHTML = recOpts;
   document.getElementById('op-producto-display').textContent = '— Selecciona una receta —';
   document.getElementById('op-consumos-estimados-section').style.display = 'none';
@@ -11198,24 +11230,23 @@ function onOPRecetaChange() {
   document.getElementById('op-producto-display').textContent =
     prod ? `${prod.codigo_interno||prod.code} — ${prod.description}` : '—';
 
-  // Bodega Entrada/Salida automáticas según categoría (14/Ago/2026, a
-  // pedido explícito): Bodega Entrada (MP) toma el default configurado en
-  // la categoría del INSUMO principal de la receta; Bodega Salida
-  // (PT/WIP) toma el default de la categoría del PRODUCTO A FABRICAR. Ej.
-  // receta de GF-028 (insumo=Hilo, producto=Tela Cruda): entrada=Bodega
-  // Hilo, salida=Bodega Tela Cruda — ambas quedan siempre editables después,
-  // esto solo propone el valor, no lo bloquea. Los <select> deben ya tener
-  // sus <option> pobladas para que la asignación de .value tenga efecto —
-  // ver orden en openNewOP()/editOP().
+  // Bodega Entrada/Salida automáticas según la RECETA (14/Ago/2026, a
+  // pedido explícito — corregido desde categoría del producto): la
+  // categoría era demasiado general — un mismo producto puede tener varias
+  // recetas que consumen de niveles distintos (ej. un C-xxx terminado
+  // puede tener una receta que consume de DF/teñido en proceso y otra que
+  // consume directo de GF/tela cruda), y cada ruta de tejido (interno vs.
+  // subcontrato) también puede diferir en bodega. La receta ya sabe
+  // exactamente qué ruta es, así que sus propios bodega_entrada_default /
+  // bodega_salida_default son la fuente correcta — siempre quedan
+  // editables después, esto solo propone el valor. Los <select> deben ya
+  // tener sus <option> pobladas para que la asignación de .value tenga
+  // efecto — ver orden en openNewOP()/editOP().
   if (recetaId) {
-    const primeraLinea = (state.recetaLineas||[]).find(l=>l.receta_id===recetaId);
-    const insumo    = primeraLinea ? state.productos.find(p=>p.id===primeraLinea.insumo_id) : null;
-    const catInsumo = insumo ? (state.categorias||[]).find(c=>c.id===insumo.categoria) : null;
-    const catProd   = prod   ? (state.categorias||[]).find(c=>c.id===prod.categoria)   : null;
     const selEnt = document.getElementById('op-bodega-entrada');
     const selSal = document.getElementById('op-bodega-salida');
-    if (selEnt && catInsumo?.bodega_entrada_default) selEnt.value = catInsumo.bodega_entrada_default;
-    if (selSal && catProd?.bodega_salida_default)    selSal.value = catProd.bodega_salida_default;
+    if (selEnt && receta?.bodega_entrada_default) selEnt.value = receta.bodega_entrada_default;
+    if (selSal && receta?.bodega_salida_default)  selSal.value = receta.bodega_salida_default;
   }
 
   document.getElementById('op-consumos-estimados-section').style.display = recetaId ? 'block' : 'none';
@@ -21812,8 +21843,6 @@ function openNewCategoria() {
   document.getElementById('cat-cta-entrada').value     = '';
   document.getElementById('cat-cta-salida').value      = '';
   document.getElementById('cat-cta-transito').value    = '';
-  populateBodegaSelect('cat-bodega-entrada');
-  populateBodegaSelect('cat-bodega-salida');
   document.getElementById('cat-notas').value           = '';
   document.getElementById('modal-categoria-title').textContent = 'Nueva Categoría';
   populateNomDropdowns();
@@ -21841,8 +21870,6 @@ function editCategoria(id) {
     document.getElementById('cat-cta-entrada').value    = c.cta_entrada||'';
     document.getElementById('cat-cta-salida').value     = c.cta_salida||'';
     document.getElementById('cat-cta-transito').value   = c.cta_transito||'';
-    populateBodegaSelect('cat-bodega-entrada', c.bodega_entrada_default||'');
-    populateBodegaSelect('cat-bodega-salida', c.bodega_salida_default||'');
   }, 30);
   openModal('modal-categoria');
 }
@@ -21872,8 +21899,6 @@ async function saveCategoria() {
     diario_stock:   document.getElementById('cat-diario-stock').value || null,
     cta_entrada:    document.getElementById('cat-cta-entrada').value,
     cta_salida:     document.getElementById('cat-cta-salida').value,
-    bodega_entrada_default: document.getElementById('cat-bodega-entrada')?.value || null,
-    bodega_salida_default:  document.getElementById('cat-bodega-salida')?.value || null,
     notas:               document.getElementById('cat-notas').value.trim(),
   };
   let err;
