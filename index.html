@@ -5534,6 +5534,15 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   </div>
 </div>
 
+<!-- ASISTENTE DE PLANIFICACIÓN — banner fijo (15/Ago/2026, a pedido
+     explícito). Queda visible arriba de todo mientras el asistente navega
+     entre Compras y Manufactura, para que el operador siempre sepa qué
+     está confirmando y en qué paso va. -->
+<div id="wizard-plan-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:2000;background:var(--accent);color:#fff;padding:10px 20px;align-items:center;justify-content:center;gap:16px;font-size:13px;font-weight:600;box-shadow:var(--shadow-md)">
+  <span id="wizard-plan-text"></span>
+  <button onclick="salirWizardPlanificacion()" style="background:rgba(255,255,255,0.22);border:none;color:#fff;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">✕ Salir del asistente</button>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -6595,23 +6604,97 @@ async function planificarAbastecimientoOV(ovId) {
   const fecha = p.fecha_entrega || p.date;
   let generadas = 0, sinRuta = 0;
   const sinProducto = [];
+  // Acumulador de documentos generados en TODA la cascada (todas las
+  // líneas de la OV, con toda su recursión de insumos) — usado para
+  // arrancar el Asistente de Planificación al terminar (15/Ago/2026, a
+  // pedido explícito). El orden de push ya sigue naturalmente la secuencia
+  // operativa correcta (servicio de subcontrato antes que sus propios
+  // insumos, insumo antes que SU insumo, etc.) porque así está armada la
+  // recursión — no hace falta reordenar nada acá.
+  const acc = [];
 
   for (const item of items) {
     const prod = state.productos.find(x => x.id === item.fabric_id);
     if (!prod) { sinProducto.push(item.fabric_id); continue; }
     const cantidad = Number(item.qty_kg||0);
     if (!cantidad) continue;
-    const res = await planificarAbastecimiento(prod.id, cantidad, fecha, 'OV', ovLabel(p), ovId);
+    const res = await planificarAbastecimiento(prod.id, cantidad, fecha, 'OV', ovLabel(p), ovId, acc);
     if (res) generadas++; else sinRuta++;
   }
 
   if (sinProducto.length) {
     toast(`${sinProducto.length} línea(s) sin producto vinculado en erp_productos — no se planificaron. Revisa el catálogo.`, 'error');
   }
-  toast(`Planificación completada: ${generadas} orden(es) generada(s)` + (sinRuta ? `, ${sinRuta} línea(s) sin ruta de abastecimiento (se asumen de stock existente).` : '.'));
+  if (sinRuta) {
+    toast(`${generadas} orden(es) generada(s), ${sinRuta} línea(s) sin ruta de abastecimiento (se asumen de stock existente).`);
+  }
 
   await loadAll();
-  verPedido(ovId);
+
+  if (acc.length) {
+    iniciarWizardPlanificacion(ovId, acc);
+  } else {
+    toast('Planificación completada — no se generaron documentos nuevos.');
+    verPedido(ovId);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ASISTENTE DE PLANIFICACIÓN (15/Ago/2026, a pedido explícito)
+// ═══════════════════════════════════════════════════════════════
+// Tras "Planificar Abastecimiento" en una OV, en vez de dejar al operador
+// buscando manualmente cada OC/OP generada entre Compras y Manufactura,
+// este asistente lo lleva automáticamente a cada documento, EN EL ORDEN
+// REAL DE LA CASCADA (ej. C-028-00: primero la OC de servicio de tintura,
+// luego la OP de tejido que la abastece, luego la OC de compra del hilo
+// que abastece esa OP) — y al confirmar cada uno, avanza solo al
+// siguiente. El operador sigue confirmando cada paso a mano (no se
+// auto-confirma nada) — el asistente solo elimina la navegación manual
+// entre módulos.
+let planWizard = null; // { ovId, queue:[{tipo,id,label}], index }
+
+function iniciarWizardPlanificacion(ovId, queueRaw) {
+  const queue = queueRaw.filter(x => x && x.id); // descarta ítems donde el insert falló (sin id)
+  if (!queue.length) { toast('Planificación completada — no se generaron documentos nuevos.'); verPedido(ovId); return; }
+  planWizard = { ovId, queue, index: 0 };
+  avanzarWizardPlanificacion();
+}
+
+function salirWizardPlanificacion() {
+  planWizard = null;
+  const banner = document.getElementById('wizard-plan-banner');
+  if (banner) banner.style.display = 'none';
+  toast('Asistente cerrado — podés confirmar los documentos pendientes manualmente desde Compras y Manufactura.');
+}
+
+async function avanzarWizardPlanificacion() {
+  if (!planWizard) return;
+  const w = planWizard;
+
+  if (w.index >= w.queue.length) {
+    const total = w.queue.length;
+    planWizard = null;
+    const banner = document.getElementById('wizard-plan-banner');
+    if (banner) banner.style.display = 'none';
+    toast(`✓ Cascada completa — ${total} documento${total===1?'':'s'} confirmado${total===1?'':'s'}.`);
+    return;
+  }
+
+  const item  = w.queue[w.index];
+  const banner = document.getElementById('wizard-plan-banner');
+  const tipoLabel = item.tipo === 'OP' ? 'Orden de Producción' : 'Orden de Compra';
+  document.getElementById('wizard-plan-text').textContent =
+    `Asistente de Planificación · Paso ${w.index+1} de ${w.queue.length} — Confirmar ${tipoLabel}: ${item.label||''}`;
+  if (banner) banner.style.display = 'flex';
+
+  await loadAll();
+  if (item.tipo === 'OP') {
+    showPage('op-lista', null);
+    setTimeout(() => editOP(item.id), 350);
+  } else {
+    showPage('compras', null);
+    setTimeout(() => showOCPanel(item.id), 350);
+  }
 }
 
 // ──────────────────────────────────────────────────
@@ -10820,20 +10903,34 @@ function addRecInsumo(insumo_id='', cantidad_base=1, merma_pct=0, unidad='kg', r
   ).join('');
   const tr = document.createElement('tr'); tr.id = id;
   tr.innerHTML = `
-    <td><select style="width:100%;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px">
+    <td><select onchange="calcRecCantReal('${id}');updateRecInsumoUnidad('${id}')" style="width:100%;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px">
       <option value="">— Insumo —</option>${opts}</select></td>
     <td><input type="number" step="0.0001" min="0" value="${cantidad_base}" placeholder="1.0000" oninput="calcRecCantReal('${id}')" style="width:90px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px"/></td>
     <td><input type="number" step="0.01" min="0" max="100" value="${merma_pct}" placeholder="0" oninput="calcRecCantReal('${id}')" style="width:70px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px"/> %</td>
     <td class="td-mono" id="${id}_real" style="font-size:12px;font-weight:600;color:var(--accent3)">—</td>
-    <td><select style="width:80px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px">
-      <option value="kg">kg</option><option value="yds">yds</option><option value="mts">mts</option>
-    </select></td>
+    <!-- Unidad (15/Ago/2026, a pedido explícito): ya no es un <select>
+         editable manualmente — era la fuente del bug de "unidad
+         incorrecta" (el usuario podía dejarlo en cualquier valor sin
+         relación al insumo elegido). Ahora es solo lectura, siempre
+         tomada de la configuración real del producto (prod.unidad). -->
+    <td class="td-mono" id="${id}_unidad" style="font-size:12px;color:var(--text2)">—</td>
     <td style="text-align:center"><input type="checkbox" class="ri-reabastecer" ${requiere_reabastecimiento!==false?'checked':''} style="width:15px;height:15px" title="Reabastecer MP automáticamente al subcontratista para este insumo"/></td>
     <td><button class="btn btn-sm btn-danger" onclick="document.getElementById('${id}').remove()">✕</button></td>`;
   document.getElementById('rec-insumos').appendChild(tr);
   if (insumo_id) tr.querySelector('select').value = insumo_id;
-  tr.querySelectorAll('select')[1] && (tr.querySelectorAll('select')[1].value = unidad);
   calcRecCantReal(id);
+  updateRecInsumoUnidad(id);
+}
+
+// Actualiza el display de Unidad de una línea de insumo tomando siempre la
+// configuración real del producto elegido (15/Ago/2026, a pedido explícito).
+function updateRecInsumoUnidad(rowId) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  const sel  = row.querySelector('select');
+  const prod = state.productos.find(p=>p.id===sel?.value);
+  const el   = document.getElementById(rowId+'_unidad');
+  if (el) el.textContent = prod?.unidad || '—';
 }
 
 function calcRecCantReal(rowId) {
@@ -10972,15 +11069,19 @@ async function saveReceta() {
   document.querySelectorAll('#rec-insumos tr').forEach(tr=>{
     const sel    = tr.querySelector('select');
     const inputs = tr.querySelectorAll('input[type=number]');
-    const uSel   = tr.querySelector('select:last-of-type');
     const chkReab = tr.querySelector('.ri-reabastecer');
     if (!sel?.value) return;
+    // Unidad (15/Ago/2026, a pedido explícito): ya no viene de un select
+    // manual — se toma siempre de la configuración real del producto
+    // insumo elegido, misma fuente confiable que ya usa el resto del
+    // sistema (ver getCtaValoracionProducto y el fix de "llaves" en OP).
+    const insumoProd = state.productos.find(p=>p.id===sel.value);
     insumos.push({
       receta_id: recetaId,
       insumo_id: sel.value,
       cantidad_base: parseFloat(inputs[0]?.value)||1,
       merma_pct:     parseFloat(inputs[1]?.value)||0,
-      unidad:        uSel?.value||'kg',
+      unidad:        insumoProd?.unidad||'kg',
       requiere_reabastecimiento: chkReab ? chkReab.checked : true,
     });
   });
@@ -11523,6 +11624,15 @@ async function saveOP(estado = 'borrador') {
   toast(estado==='en_proceso'?'OP iniciada — consumos registrados':'OP guardada como borrador');
   closeModal('modal-op');
   await loadAll();
+
+  // Asistente de Planificación (15/Ago/2026, a pedido explícito): "Iniciar
+  // Producción" es el equivalente de "confirmar" para una OP. Si esta OP
+  // es justo el paso actual del asistente, avanza sola al siguiente
+  // documento.
+  if (estado === 'en_proceso' && planWizard && planWizard.queue[planWizard.index]?.id === opId) {
+    planWizard.index++;
+    avanzarWizardPlanificacion();
+  }
 }
 
 async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockMap, opRow, lote) {
@@ -12873,7 +12983,12 @@ async function moverRecetaPrioridad(recetaId, dir, prodIdParam) {
  * @param {string} ovId        — OV raíz (para trazabilidad)
  * @returns {object}           — { tipo, referencia } de lo que se generó
  */
-async function planificarAbastecimiento(productoId, cantidad, fecha, origen_tipo, origen_id, ovId = null) {
+// El parámetro `acc` (opcional) es un array compartido donde cada función
+// de este módulo empuja {tipo, id} de cada OC/OP que crea — usado por el
+// Asistente de Planificación (15/Ago/2026, a pedido explícito) para saber,
+// al terminar toda la cascada de una OV, la lista completa y ordenada de
+// documentos generados que el operador debe ir confirmando uno por uno.
+async function planificarAbastecimiento(productoId, cantidad, fecha, origen_tipo, origen_id, ovId = null, acc = null) {
   const prod = state.productos.find(p => p.id === productoId);
   if (!prod) return null;
 
@@ -12882,20 +12997,20 @@ async function planificarAbastecimiento(productoId, cantidad, fecha, origen_tipo
 
   // Determinar ruta — siempre genera órdenes independiente del stock
   if (prod.ruta_fabricar) {
-    return await planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_id, ovId);
+    return await planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc);
   }
   if (prod.ruta_comprar) {
-    return await planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId);
+    return await planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc);
   }
   if (prod.ruta_subcontratar) {
-    return await planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId);
+    return await planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, null, acc);
   }
 
   return null;
 }
 
 // ── Ruta: FABRICAR → genera OP ─────────────────────────────────
-async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_id, ovId) {
+async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc = null) {
   // Elige SIEMPRE la receta predeterminada (menor número de prioridad) entre
   // TODAS las recetas de tejido activas del producto — interno o
   // subcontratado — sin preferir interno por default. Si un producto tiene
@@ -12911,7 +13026,7 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
   if (!receta) return null;
 
   if (receta.tipo === 'tejido_subcontrato') {
-    return await planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, receta);
+    return await planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, receta, acc);
   }
 
   // Crear OP
@@ -12946,11 +13061,12 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
   if (error) { console.error('Error creando OP:', error); return null; }
 
   toast(`OP ${numero} generada para ${prod.code} — ${cantidad} kg`);
+  if (acc) acc.push({ tipo: 'OP', id: opData.id, numero, label: `Tejido Interno — ${prod.code} ${cantidad} kg` });
 
   // Planificar insumos en cascada
   for (const l of lineas) {
     const cantInsumo = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad;
-    await planificarAbastecimiento(l.insumo_id, cantInsumo, fecha, 'OP', numero, ovId);
+    await planificarAbastecimiento(l.insumo_id, cantInsumo, fecha, 'OP', numero, ovId, acc);
   }
 
   await loadAll();
@@ -12958,7 +13074,7 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
 }
 
 // ── Ruta: COMPRAR → genera OC ──────────────────────────────────
-async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId) {
+async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc = null) {
   const provId = proveedorPredeterminado(prod);
   const prov   = state.proveedores.find(p => p.id === provId);
 
@@ -12995,12 +13111,13 @@ async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, o
   if (eLinea) console.error('Error creando línea de OC:', eLinea);
 
   toast(`Borrador de OC generado para ${prod.code} — ${prov?.name||'sin proveedor'} (pendiente de confirmar)`);
+  if (acc) acc.push({ tipo: 'OC', id: ocData.id, label: `Compra — ${prod.code} ${cantidad} kg` });
   await loadAll();
   return { tipo: 'OC', referencia: ocData.id, id: ocData.id };
 }
 
 // ── Ruta: SUBCONTRATAR → OC servicio + OC reabastecimiento MP ──
-async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, recetaOverride = null) {
+async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, recetaOverride = null, acc = null) {
   // Buscar receta de subcontrato con mayor prioridad
   const receta = recetaOverride || (state.recetas||[])
     .filter(r => r.producto_id === prod.id && esSubcontrato(r.tipo) && r.activa !== false)
@@ -13047,6 +13164,7 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
     });
     if (eLineaServ) console.error('Error creando línea de OC servicio:', eLineaServ);
     toast(`Borrador de OC Servicio → ${provSub?.name||'subcontratista'} | ${cantidad} kg (pendiente de confirmar)`);
+    if (acc) acc.push({ tipo: 'OC', id: ocServ.id, label: `Servicio ${OP_TIPO_LABEL[receta.tipo]||receta.tipo} — ${prod.code} ${cantidad} kg` });
   }
 
   // 2. OC de REABASTECIMIENTO de MP al subcontratista
@@ -13055,7 +13173,7 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
     const cantMP    = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad;
     const insumo    = state.productos.find(p => p.id === l.insumo_id);
     // Siempre genera reabastecimiento de MP independiente del stock
-    await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', refServ, ovId);
+    await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', refServ, ovId, acc);
   }
 
   await loadAll();
@@ -16838,6 +16956,16 @@ async function confirmarOC() {
   await sb.from('erp_oc').update(update).eq('id', currentOCId);
   toast(`OC ${update.numero||oc.numero} confirmada`);
   await loadAll();
+
+  // Asistente de Planificación (15/Ago/2026, a pedido explícito): si esta
+  // OC es justo el paso actual del asistente, avanza sola al siguiente
+  // documento en vez del refresh normal del panel.
+  if (planWizard && planWizard.queue[planWizard.index]?.id === currentOCId) {
+    planWizard.index++;
+    avanzarWizardPlanificacion();
+    return;
+  }
+
   showOCPanel(currentOCId);
 }
 
