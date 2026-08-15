@@ -1759,7 +1759,6 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
                 <th class="hide-mobile">Fecha Entrega</th>
                 <th>Estado</th>
                 <th>Pago</th>
-                <th></th>
               </tr></thead>
               <tbody id="tbl-oc"></tbody>
             </table>
@@ -1778,6 +1777,10 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div style="font-size:12px;color:var(--text2);margin-top:2px" id="oc-panel-sub"></div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <!-- Editar (15/Ago/2026, a pedido explícito): antes vivía como
+             botón suelto en la fila del listado; ahora vive acá, mismo
+             criterio de visibilidad que Confirmar (solo en borrador). -->
+        <button class="btn btn-sm btn-ghost" id="btn-editar-oc" onclick="closeModal('modal-oc-panel');editOC(currentOCId)" style="min-width:120px;justify-content:center">✎ Editar</button>
         <button class="btn btn-sm btn-primary"  id="btn-confirmar-oc" onclick="confirmarOC()"  style="min-width:120px;justify-content:center">✓ Confirmar</button>
         <button class="btn btn-sm" id="btn-recibir" onclick="openRecepcion()" style="min-width:120px;justify-content:center;background:var(--green-bg);color:var(--green);border:1px solid #b8dfc8">📦 Recibir Pedido</button>
         <button class="btn btn-sm" id="btn-pago-multi" onclick="openPagoProveedor(currentOCId)" style="min-width:120px;justify-content:center;background:#EFF6FF;color:#3B82F6;border:1px solid #BFDBFE">💳 Registrar Pago</button>
@@ -2822,7 +2825,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 <!-- PEDIDO -->
 <div class="modal-overlay" id="modal-ped">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg" style="max-width:90vw;width:90vw;max-height:90vh">
     <div class="modal-header">
       <div class="modal-title" id="modal-ped-title">Nueva Orden de Venta</div>
       <button class="modal-close" onclick="closeModal('modal-ped')">✕</button>
@@ -2877,7 +2880,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-ped')">Cancelar</button>
-      <button class="btn btn-primary" onclick="savePedido()">Guardar</button>
+      <button class="btn btn-primary" id="btn-ped-guardar" onclick="savePedido()">Guardar</button>
     </div>
   </div>
 </div>
@@ -7170,7 +7173,20 @@ async function editPedido(id) {
   openModal('modal-ped');
 }
 
+let guardandoPedido = false; // guard contra doble-submit — ver comentario en savePedido()
+
 async function savePedido() {
+  // BUGFIX (15/Ago/2026, a pedido explícito): no había ninguna protección
+  // contra doble-submit — si el guardado tardaba (ej. la query de
+  // nextOVNum()) y el usuario hacía click de nuevo pensando que no había
+  // pasado nada, cada click disparaba una ejecución completa e
+  // independiente de esta función, y como una OV nueva no tiene `id`
+  // todavía, ambas terminaban en un INSERT — dos Órdenes de Venta
+  // duplicadas. Mismo patrón de guard que confirmarOC/saveOP no
+  // necesitaban porque ya tienen sus propios candados de estado; acá no
+  // existía ninguno.
+  if (guardandoPedido) return;
+
   const id = document.getElementById('ped-id').value;
   const customer_id = document.getElementById('ped-customer').value;
   const date = document.getElementById('ped-date').value;
@@ -7190,43 +7206,62 @@ async function savePedido() {
   });
   if (!valid || !lines.length) { toast('Agregue al menos una tela válida','error'); return; }
 
-  const estadoElegido = document.getElementById('ped-status').value;
-  // CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): el order_number
-  // real solo se asigna la primera vez que la OV deja de ser 'borrador' —
-  // requiere que la columna ya no tenga autoincremento por DEFAULT (ver
-  // migración SQL entregada aparte). Mientras sigue en borrador, se guarda
-  // sin número — igual que ahora funciona erp_oc.
-  const existente = id ? (state.pedidos||[]).find(x=>x.id===id) : null;
-  const numeroActual = existente?.order_number || null;
-  const row = {
-    customer_id, date,
-    moneda:        getMonedaOV(customer_id),
-    fecha_entrega: document.getElementById('ped-fecha-entrega')?.value || null,
-    responsable:   document.getElementById('ped-responsable')?.value.trim() || null,
-    po_number:     document.getElementById('ped-po').value.trim(),
-    status:        estadoElegido,
-    notes:         document.getElementById('ped-notes').value.trim(),
-    terminos_pago: document.getElementById('ped-terminos')?.value||null,
-    dias_credito:  (() => { const sel=document.getElementById('ped-terminos'); return sel?.value?(parseInt(sel.options[sel.selectedIndex]?.getAttribute('data-dias'))||0):null; })(),
-    incoterms:     document.getElementById('ped-incoterms')?.value||null,
-    bodega_id:     document.getElementById('ped-bodega')?.value||null,
-  };
-  if (!numeroActual && estadoElegido !== 'borrador') row.order_number = await nextOVNum();
-  let orderId = id;
-  if (id) {
-    const {error} = await sb.from('erp_ov').update(row).eq('id',id);
-    if (error) { toast('Error: '+error.message,'error'); return; }
-    await sb.from('erp_ov_items').delete().eq('order_id',id);
-  } else {
-    const {data,error} = await sb.from('erp_ov').insert(row).select().single();
-    if (error) { toast('Error: '+error.message,'error'); return; }
-    orderId = data.id;
+  // El guard se activa recién acá — después de las validaciones locales
+  // (que no tocan la base de datos, así que no hay riesgo de duplicado
+  // todavía) y antes de cualquier operación async real. El botón se
+  // deshabilita físicamente también, para que el usuario vea de inmediato
+  // que el click sí se registró y no sienta la necesidad de volver a
+  // apretar.
+  guardandoPedido = true;
+  const btnGuardar = document.getElementById('btn-ped-guardar');
+  const btnTextoOriginal = btnGuardar?.textContent;
+  if (btnGuardar) { btnGuardar.disabled = true; btnGuardar.textContent = 'Guardando…'; }
+
+  try {
+    const estadoElegido = document.getElementById('ped-status').value;
+    // CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): el order_number
+    // real solo se asigna la primera vez que la OV deja de ser 'borrador' —
+    // requiere que la columna ya no tenga autoincremento por DEFAULT (ver
+    // migración SQL entregada aparte). Mientras sigue en borrador, se guarda
+    // sin número — igual que ahora funciona erp_oc.
+    const existente = id ? (state.pedidos||[]).find(x=>x.id===id) : null;
+    const numeroActual = existente?.order_number || null;
+    const row = {
+      customer_id, date,
+      moneda:        getMonedaOV(customer_id),
+      fecha_entrega: document.getElementById('ped-fecha-entrega')?.value || null,
+      responsable:   document.getElementById('ped-responsable')?.value.trim() || null,
+      po_number:     document.getElementById('ped-po').value.trim(),
+      status:        estadoElegido,
+      notes:         document.getElementById('ped-notes').value.trim(),
+      terminos_pago: document.getElementById('ped-terminos')?.value||null,
+      dias_credito:  (() => { const sel=document.getElementById('ped-terminos'); return sel?.value?(parseInt(sel.options[sel.selectedIndex]?.getAttribute('data-dias'))||0):null; })(),
+      incoterms:     document.getElementById('ped-incoterms')?.value||null,
+      bodega_id:     document.getElementById('ped-bodega')?.value||null,
+    };
+    if (!numeroActual && estadoElegido !== 'borrador') row.order_number = await nextOVNum();
+    let orderId = id;
+    if (id) {
+      const {error} = await sb.from('erp_ov').update(row).eq('id',id);
+      if (error) { toast('Error: '+error.message,'error'); return; }
+      await sb.from('erp_ov_items').delete().eq('order_id',id);
+    } else {
+      const {data,error} = await sb.from('erp_ov').insert(row).select().single();
+      if (error) { toast('Error: '+error.message,'error'); return; }
+      orderId = data.id;
+    }
+    const {error:ie} = await sb.from('erp_ov_items').insert(lines.map(l=>({...l, order_id: orderId})));
+    if (ie) { toast('Error guardando líneas: '+ie.message,'error'); return; }
+    toast(row.order_number ? `Orden de Venta OV-${String(row.order_number).padStart(4,'0')} guardada` : 'Borrador de Orden de Venta guardado');
+    closeModal('modal-ped');
+    await loadAll();
+  } finally {
+    // Se libera siempre, sin importar si el guardado terminó bien, con
+    // error de validación, o con una excepción no capturada — así el
+    // formulario nunca queda "trabado" sin poder volver a intentar.
+    guardandoPedido = false;
+    if (btnGuardar) { btnGuardar.disabled = false; btnGuardar.textContent = btnTextoOriginal||'Guardar'; }
   }
-  const {error:ie} = await sb.from('erp_ov_items').insert(lines.map(l=>({...l, order_id: orderId})));
-  if (ie) { toast('Error guardando líneas: '+ie.message,'error'); return; }
-  toast(row.order_number ? `Orden de Venta OV-${String(row.order_number).padStart(4,'0')} guardada` : 'Borrador de Orden de Venta guardado');
-  closeModal('modal-ped');
-  await loadAll();
 }
 
 async function deletePedido(id) {
@@ -16756,17 +16791,14 @@ function renderOC() {
     } else {
       pagoBadge = `<span style="color:var(--text3);font-size:12px">Sin facturar</span>`;
     }
-    return `<tr>
-      <td class="td-mono" style="font-weight:600;cursor:pointer;color:var(--accent);text-decoration:underline" onclick="showOCPanel('${o.id}')">${o.numero||'<span style="font-style:italic;opacity:.7">Borrador</span>'}</td>
+    return `<tr style="cursor:pointer" onclick="showOCPanel('${o.id}')">
+      <td class="td-mono" style="font-weight:600;color:var(--accent)">${o.numero||'<span style="font-style:italic;opacity:.7">Borrador</span>'}</td>
       <td style="white-space:nowrap">${fmtDate(o.fecha)}</td>
       <td>${provName(o.proveedor_id)}</td>
       <td class="hide-mobile" style="font-size:12px;color:var(--text2)">${o.representante||'—'}</td>
       <td class="hide-mobile" style="white-space:nowrap">${o.entrega?fmtDate(o.entrega):'—'}</td>
       <td><span class="badge ${OC_STATUS_COLOR[o.status]||'badge-gray'}">${OC_STATUS_LABEL[o.status]||o.status}</span></td>
       <td>${pagoBadge}</td>
-      <td><div class="td-actions">
-        <button class="btn btn-sm btn-ghost" onclick="editOC('${o.id}')">Editar</button>
-      </div></td>
     </tr>`;
   }).join('') : '<tr><td colspan="7"><div class="empty-state"><p>Sin órdenes de compra</p></div></td></tr>';
   if (currentOCId) renderOCPanel(currentOCId);
@@ -16908,6 +16940,11 @@ function showOCPanel(ocId) {
   // Confirmar — solo en borrador
   const btnConf = document.getElementById('btn-confirmar-oc');
   if (btnConf) { btnConf.style.display = isBorrador ? '' : 'none'; }
+
+  // Editar — mismo criterio que Confirmar: solo tiene sentido mientras
+  // sigue en borrador (15/Ago/2026, a pedido explícito).
+  const btnEdit = document.getElementById('btn-editar-oc');
+  if (btnEdit) { btnEdit.style.display = isBorrador ? '' : 'none'; }
 
   // Recibir — solo para productos físicos confirmados
   const btnRec = document.getElementById('btn-recibir');
