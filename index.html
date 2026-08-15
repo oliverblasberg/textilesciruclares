@@ -4623,12 +4623,12 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         "Reabastecer MP" solo tiene efecto en recetas subcontratadas: desmárcalo si el subcontratista ya tiene ese insumo en su propio stock y no debe dispararse compra/planificación automática de esa materia prima.
       </div>
 
-        <div class="field field-full" id="rec-prov-sub-field" style="display:none">
-          <label>Proveedor Subcontratista (predeterminado para OC)</label>
-          <select id="rec-prov-sub">
-            <option value="">— Seleccionar proveedor —</option>
-          </select>
-        </div>
+        <!-- Proveedor Subcontratista ELIMINADO de acá (14/Ago/2026, a
+             pedido explícito): duplicaba/podía chocar con la única fuente
+             de verdad de proveedor predeterminado — el primer proveedor
+             configurado en Producto/Compra/Proveedores (ver
+             proveedorPredeterminado() global). Ya no hace falta un
+             override aparte a nivel de receta. -->
 
         <!-- BODEGAS DE PRODUCCIÓN (14/Ago/2026, a pedido explícito — movido
              desde la categoría del producto): la categoría era demasiado
@@ -10798,14 +10798,8 @@ function onRecTipoChange() {
   const isSub = esSubcontrato(tipo);
   const costosSec = document.getElementById('rec-costos-section');
   if (costosSec) costosSec.style.display = esInterno(tipo) ? 'none' : 'block';
-  // Show proveedor sub field
-  const pvSubField = document.getElementById('rec-prov-sub-field');
-  if (pvSubField) pvSubField.style.display = isSub ? 'block' : 'none';
-  if (isSub) {
-    const pvSel = document.getElementById('rec-prov-sub');
-    if (pvSel) pvSel.innerHTML = '<option value="">— Seleccionar proveedor —</option>' +
-      (state.proveedores||[]).map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
-  }
+  // Campo "Proveedor Subcontratista" eliminado (14/Ago/2026) — ver
+  // comentario en el HTML donde vivía.
 }
 
 let recInsumoCount = 0, recCostoCount = 0;
@@ -10946,7 +10940,6 @@ async function saveReceta() {
     unidad_produce: document.getElementById('rec-unidad')?.value||'kg',
     activa:     document.getElementById('rec-activa').value==='true',
     notas:      document.getElementById('rec-notas').value.trim(),
-    proveedor_subcontrato: document.getElementById('rec-prov-sub')?.value || null,
     bodega_entrada_default: document.getElementById('rec-bodega-entrada')?.value || null,
     bodega_salida_default:  document.getElementById('rec-bodega-salida')?.value || null,
     prioridad:  1, // default, user reorders via priority list in product
@@ -11079,7 +11072,7 @@ function explodeBOM(productoId, cantidad = 1, stockMap, visitados = new Set()) {
     ? (state.recetaCostos||[]).filter(c => c.receta_id === receta.id).map(c => {
         const mGTQ = c.moneda === 'USD' ? c.monto * tc : c.monto;
         const monto = c.tipo === 'porcentaje' ? costoMP * (c.monto/100) : mGTQ; // por_kg y fijo se muestran igual: costo de referencia por 1 unidad
-        const prov = state.proveedores.find(p => p.id === c.proveedor_id) || state.proveedores.find(p => p.id === receta.proveedor_subcontrato);
+        const prov = state.proveedores.find(p => p.id === c.proveedor_id) || state.proveedores.find(p => p.id === proveedorPredeterminado(prod));
         return { descripcion: c.descripcion, tipo: c.tipo, proveedor: prov?.name || null, monto };
       })
     : [];
@@ -11786,7 +11779,7 @@ function abrirEnvioOP(opId) {
   const receta = (state.recetas||[]).find(r=>r.id===op.receta_id);
   const prod   = state.productos.find(p=>p.id===op.producto_id);
   if (!receta) { toast('OP sin receta asociada','error'); return; }
-  const provSubId = receta.proveedor_subcontrato || proveedorPredeterminado(prod);
+  const provSubId = proveedorPredeterminado(prod);
   const provSub   = state.proveedores.find(p=>p.id===provSubId);
   if (!provSubId) { toast('La receta de esta OP no tiene subcontratista asignado — configúralo en Recetas antes de enviar.','error'); return; }
 
@@ -11814,7 +11807,7 @@ async function confirmarEnvioOP() {
   if (!op) return;
   const receta = (state.recetas||[]).find(r=>r.id===op.receta_id);
   const prod   = state.productos.find(p=>p.id===op.producto_id);
-  const provSubId = receta?.proveedor_subcontrato || proveedorPredeterminado(prod);
+  const provSubId = proveedorPredeterminado(prod);
   const peso   = parseFloat(document.getElementById('envio-peso').value);
   const fecha  = document.getElementById('envio-fecha').value || today();
   const notas  = document.getElementById('envio-notas').value.trim();
@@ -12743,7 +12736,9 @@ function renderRecetasPrioridad(prodId) {
         <div style="font-weight:600;font-size:13px">${r.codigo}</div>
         <div style="font-size:11px;color:var(--text3);margin-top:2px">${TIPO_BADGE[r.tipo]||r.tipo}</div>
       </div>
-      ${r.proveedor_subcontrato ? `<div style="font-size:11px;color:var(--text2)">${state.proveedores.find(p=>p.id===r.proveedor_subcontrato)?.name||''}</div>` : ''}
+      <!-- Display de proveedor subcontratista eliminado (14/Ago/2026) — el
+           campo ya no existe en la receta; el proveedor predeterminado se
+           ve en la sección Compra/Proveedores del producto. -->
     </div>`).join('');
 }
 
@@ -12929,7 +12924,7 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
 
   if (!receta) return null;
 
-  const provSubId = receta.proveedor_subcontrato || proveedorPredeterminado(prod);
+  const provSubId = proveedorPredeterminado(prod);
   const provSub   = state.proveedores.find(p => p.id === provSubId);
   const tc        = tcHoy() || 7.75;
 
