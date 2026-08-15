@@ -1171,7 +1171,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <table>
               <thead><tr>
                 <th>Receta</th><th>Tipo</th>
-                <th>Insumos</th><th>Costos Conversión</th><th>Estado</th><th></th>
+                <th>Estado</th><th></th>
               </tr></thead>
               <tbody id="tbl-recetas"></tbody>
             </table>
@@ -3805,7 +3805,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
                 Recetas por Prioridad
                 <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3);margin-left:8px">— El sistema usará la de mayor prioridad disponible</span>
               </span>
-              <button type="button" class="btn btn-sm btn-ghost" id="btn-prod-ver-estructura" style="display:none" onclick="abrirEstructuraBOM(document.getElementById('prod-id').value)">🌳 Ver Estructura Completa</button>
+              <button type="button" class="btn btn-sm btn-ghost" id="btn-prod-ver-estructura" style="display:none" onclick="abrirEstructuraBOM(document.getElementById('prod-id').value)">⚙️ Ver Estructura Completa</button>
             </label>
             <div id="prod-recetas-lista" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
             <div style="font-size:11px;color:var(--text3)">Las recetas se configuran en el módulo de Manufactura → Recetas. Aquí solo se establece el orden de prioridad.</div>
@@ -4572,7 +4572,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     <div class="modal-header">
       <div class="modal-title" id="modal-receta-title">Nueva Receta</div>
       <div style="display:flex;align-items:center;gap:10px">
-        <button class="btn btn-sm btn-ghost" id="btn-rec-ver-estructura" style="display:none" onclick="abrirEstructuraBOM(document.getElementById('rec-producto').value)">🌳 Ver Estructura Completa</button>
+        <button class="btn btn-sm btn-ghost" id="btn-rec-ver-estructura" style="display:none" onclick="abrirEstructuraBOM(document.getElementById('rec-producto').value)">⚙️ Ver Estructura Completa</button>
         <button class="modal-close" onclick="closeModal('modal-receta')">✕</button>
       </div>
     </div>
@@ -4751,7 +4751,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 <!-- OP MODAL -->
 <div class="modal-overlay" id="modal-op">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg" style="max-width:90vw;width:90vw;max-height:90vh">
     <div class="modal-header">
       <div class="modal-title" id="modal-op-title">Nueva Orden de Producción</div>
       <button class="modal-close" onclick="closeModal('modal-op')">✕</button>
@@ -5512,6 +5512,24 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
            suelto en la fila del listado; ahora vive aquí adentro). -->
       <div id="op-detail-footer-actions" style="display:flex;gap:8px"></div>
       <button class="btn btn-ghost" onclick="closeModal('modal-op-detail')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- DETALLE DE RECETA — modal (15/Ago/2026, a pedido explícito: la fila
+     del listado ya no abre edición directa ni muestra Insumos/Costos como
+     columnas — al hacer click se despliega este detalle en pop-up.
+     Mismo patrón de tamaño 90vw/90vh que modal-op-detail. -->
+<div class="modal-overlay" id="modal-receta-detail">
+  <div class="modal modal-lg" style="max-width:90vw;width:90vw;max-height:90vh">
+    <div class="modal-header">
+      <div class="modal-title" id="receta-detail-title">Receta</div>
+      <button class="modal-close" onclick="closeModal('modal-receta-detail')">✕</button>
+    </div>
+    <div class="modal-body" id="receta-detail-body" style="padding:20px"></div>
+    <div class="modal-footer">
+      <div id="receta-detail-footer-actions" style="display:flex;gap:8px"></div>
+      <button class="btn btn-ghost" onclick="closeModal('modal-receta-detail')">Cerrar</button>
     </div>
   </div>
 </div>
@@ -10736,20 +10754,20 @@ function renderRecetas() {
   grupos.sort((a,b) => (a.prod?.description||'').localeCompare(b.prod?.description||''));
 
   if (!grupos.length) {
-    tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📐</div><p>Sin recetas configuradas</p></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">📐</div><p>Sin recetas configuradas</p></div></td></tr>';
     return;
   }
 
   tbody.innerHTML = grupos.map(({prod, recetas}) => {
     const expandido = prod ? recetasProductosExpandidos.has(prod.id) : false;
     const groupHeader = `<tr class="tr-group-header" ${prod ? `onclick="toggleRecetasProducto('${prod.id}')" style="cursor:pointer"` : ''}>
-      <td colspan="6" style="background:var(--surface2);padding:10px 14px;border-top:2px solid var(--border)">
+      <td colspan="4" style="background:var(--surface2);padding:10px 14px;border-top:2px solid var(--border)">
         <div style="display:flex;align-items:center;gap:10px">
           <span style="font-size:11px;color:var(--text3);width:14px;display:inline-block;text-align:center">${expandido?'▼':'▶'}</span>
           <span style="font-weight:700;font-size:13px">${prod?.description||'(producto no encontrado)'}</span>
           <span style="font-size:11px;color:var(--text3);font-family:'DM Mono',monospace">${prod?.codigo_interno||prod?.code||''}</span>
           <span style="font-size:11px;color:var(--text3)">· ${recetas.length} receta${recetas.length===1?'':'s'}</span>
-          ${prod ? `<button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="event.stopPropagation();abrirEstructuraBOM('${prod.id}')">🌳 Ver Estructura</button>` : ''}
+          ${prod ? `<button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="event.stopPropagation();abrirEstructuraBOM('${prod.id}')">⚙️ Ver Estructura</button>` : ''}
         </div>
       </td>
     </tr>`;
@@ -10757,21 +10775,14 @@ function renderRecetas() {
     if (!expandido) return groupHeader;
 
     const rows = recetas.map((r, i) => {
-      const lineas   = (state.recetaLineas||[]).filter(l => l.receta_id === r.id);
-      const costos   = (state.recetaCostos||[]).filter(c => c.receta_id === r.id);
-      const insumosStr = lineas.map(l => {
-        const p = state.productos.find(x => x.id === l.insumo_id);
-        const cantReal = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100);
-        return `${p?.code||'?'} × ${cantReal.toFixed(4)} ${l.unidad||'kg'}`;
-      }).join('<br>');
       const esPredeterminada = i === 0;
 
-      return `<tr>
+      return `<tr style="cursor:pointer" onclick="showRecetaDetail('${r.id}')">
         <td style="padding-left:28px">
           <div style="display:flex;align-items:center;gap:8px">
             <div style="display:flex;flex-direction:column;gap:0">
-              <button onclick="moverRecetaPrioridad('${r.id}','up','${prod?.id||''}')" ${i===0?'disabled':''} style="padding:0 4px;background:none;border:none;cursor:pointer;color:var(--text3);font-size:11px;line-height:1">▲</button>
-              <button onclick="moverRecetaPrioridad('${r.id}','down','${prod?.id||''}')" ${i===recetas.length-1?'disabled':''} style="padding:0 4px;background:none;border:none;cursor:pointer;color:var(--text3);font-size:11px;line-height:1">▼</button>
+              <button onclick="event.stopPropagation();moverRecetaPrioridad('${r.id}','up','${prod?.id||''}')" ${i===0?'disabled':''} style="padding:0 4px;background:none;border:none;cursor:pointer;color:var(--text3);font-size:11px;line-height:1">▲</button>
+              <button onclick="event.stopPropagation();moverRecetaPrioridad('${r.id}','down','${prod?.id||''}')" ${i===recetas.length-1?'disabled':''} style="padding:0 4px;background:none;border:none;cursor:pointer;color:var(--text3);font-size:11px;line-height:1">▼</button>
             </div>
             <div style="width:20px;height:20px;border-radius:50%;background:${esPredeterminada?'var(--accent)':'var(--border)'};color:${esPredeterminada?'#fff':'var(--text3)'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">${r.prioridad||i+1}</div>
             <span class="td-mono" style="font-weight:600;color:var(--accent)">${r.codigo}</span>
@@ -10779,12 +10790,9 @@ function renderRecetas() {
           </div>
         </td>
         <td>${RECETA_TIPO_BADGE[r.tipo]||`<span class="badge badge-blue">${OP_TIPO_LABEL[r.tipo]||r.tipo}</span>`}</td>
-        <td style="font-size:12px;line-height:1.8">${insumosStr||'—'}</td>
-        <td style="font-size:12px">${costos.map(c=>`${c.descripcion}: ${fmtMoney(c.monto)} ${c.moneda}`).join('<br>')||'—'}</td>
         <td>${r.activa!==false?'<span class="badge badge-green">Activa</span>':'<span class="badge badge-gray">Inactiva</span>'}</td>
         <td><div class="td-actions">
-          <button class="btn btn-sm btn-ghost" onclick="editReceta('${r.id}')">Editar</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteReceta('${r.id}')">Eliminar</button>
+          <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteReceta('${r.id}')">Eliminar</button>
         </div></td>
       </tr>`;
     }).join('');
@@ -12327,6 +12335,82 @@ function showOPDetail(id) {
     ? `<button class="btn btn-ghost btn-sm" onclick="closeModal('modal-op-detail');editOP('${id}')">✎ Editar</button>`
     : '';
   openModal('modal-op-detail');
+}
+
+// DETALLE DE RECETA — modal (15/Ago/2026, a pedido explícito: ver
+// comentario en el HTML de modal-receta-detail). Mismo patrón que
+// showOPDetail: la fila del listado ya no edita directo, solo abre este
+// detalle de solo lectura; Editar vive en el footer del modal.
+function showRecetaDetail(id) {
+  const r       = (state.recetas||[]).find(x=>x.id===id);
+  const prod    = state.productos.find(p=>p.id===r?.producto_id);
+  const lineas  = (state.recetaLineas||[]).filter(l=>l.receta_id===id);
+  const costos  = (state.recetaCostos||[]).filter(c=>c.receta_id===id);
+  const provPredet = state.proveedores.find(p=>p.id===proveedorPredeterminado(prod));
+  const bodEnt  = (state.bodegas||[]).find(b=>b.id===r?.bodega_entrada_default);
+  const bodSal  = (state.bodegas||[]).find(b=>b.id===r?.bodega_salida_default);
+
+  document.getElementById('receta-detail-title').textContent = `${r?.codigo||'Receta'} — ${prod?.description||'—'}`;
+  document.getElementById('receta-detail-body').innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px">
+          <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Tipo</div>
+            ${RECETA_TIPO_BADGE[r?.tipo]||`<span class="badge badge-blue">${OP_TIPO_LABEL[r?.tipo]||r?.tipo}</span>`}</div>
+          <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Producto Fabricado</div>
+            <span style="font-size:13px">${prod?.codigo_interno||prod?.code||''} — ${prod?.description||'—'}</span></div>
+          <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Unidad de Producción</div>
+            <span style="font-size:13px">${r?.unidad_produce||'kg'}</span></div>
+          <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Estado</div>
+            ${r?.activa!==false?'<span class="badge badge-green">Activa</span>':'<span class="badge badge-gray">Inactiva</span>'}</div>
+          <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Proveedor Predeterminado</div>
+            <span style="font-size:13px">${provPredet?.name||'— sin proveedores configurados en el producto —'}</span></div>
+          <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Bodega Entrada (MP)</div>
+            <span style="font-size:13px">${bodEnt?.nombre||'— sin definir —'}</span></div>
+          <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Bodega Salida (PT/WIP)</div>
+            <span style="font-size:13px">${bodSal?.nombre||'— sin definir —'}</span></div>
+        </div>
+
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Insumos (Materiales)</div>
+        <div class="table-wrap" style="margin-bottom:20px">
+          <table>
+            <thead><tr><th>Insumo</th><th style="text-align:right">Cant. Base / 1 kg</th><th style="text-align:right">% Merma</th><th style="text-align:right">Cant. Real / 1 kg</th><th>Reabastecer MP</th></tr></thead>
+            <tbody>${lineas.length ? lineas.map(l=>{
+              const p = state.productos.find(x=>x.id===l.insumo_id);
+              const cantReal = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100);
+              return `<tr>
+                <td><div style="font-weight:500">${p?.description||'—'}</div><div style="font-size:11px;color:var(--text3)">${p?.codigo_interno||p?.code||''}</div></td>
+                <td class="td-mono" style="text-align:right">${fmtNum(l.cantidad_base)} ${p?.unidad||'kg'}</td>
+                <td class="td-mono" style="text-align:right">${Number(l.merma_pct||0).toFixed(2)}%</td>
+                <td class="td-mono" style="text-align:right;font-weight:600;color:var(--accent3)">${cantReal.toFixed(4)} ${p?.unidad||'kg'}</td>
+                <td>${l.requiere_reabastecimiento!==false?'<span class="badge badge-green" style="font-size:10px">Sí</span>':'<span class="badge badge-gray" style="font-size:10px">No</span>'}</td>
+              </tr>`;
+            }).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:12px">Sin insumos configurados</td></tr>'}</tbody>
+          </table>
+        </div>
+
+        ${esSubcontrato(r?.tipo) ? `
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Costos de Conversión</div>
+        <div class="table-wrap" style="margin-bottom:20px">
+          <table>
+            <thead><tr><th>Descripción</th><th>Tipo</th><th>Proveedor</th><th style="text-align:right">Monto</th></tr></thead>
+            <tbody>${costos.length ? costos.map(c=>{
+              const pv=state.proveedores.find(x=>x.id===c.proveedor_id);
+              return `<tr>
+                <td>${c.descripcion}</td>
+                <td style="font-size:12px;color:var(--text2)">${c.tipo}</td>
+                <td style="font-size:12px;color:var(--text2)">${pv?.name||'—'}</td>
+                <td class="td-mono" style="text-align:right">${fmtMoney(c.monto)} ${c.moneda}</td>
+              </tr>`;
+            }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:12px">Sin costos configurados</td></tr>'}</tbody>
+          </table>
+        </div>` : ''}
+
+        ${r?.notas ? `
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Notas</div>
+        <div style="font-size:13px;color:var(--text2);white-space:pre-wrap">${r.notas}</div>` : ''}`;
+
+  document.getElementById('receta-detail-footer-actions').innerHTML =
+    `<button class="btn btn-ghost btn-sm" onclick="closeModal('modal-receta-detail');editReceta('${id}')">✎ Editar</button>`;
+  openModal('modal-receta-detail');
 }
 
 // ═══════════════════════════════════════════════════
