@@ -4653,20 +4653,13 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           </div>
         </div>
 
-        <div class="form-section-title" style="margin-top:20px;margin-bottom:4px">
-          Costos de Conversión (Subcontrato)
-        </div>
-        <div style="font-size:12px;color:var(--text3);margin-bottom:10px">
-          Solo para tejido/teñido subcontratado. Para manufactura interna, los costos (MO, energía) van al Estado de Resultados y no se cargan al inventario.
-        </div>
-        <div class="line-items" style="margin-bottom:8px">
-          <table>
-            <thead><tr><th>Descripción</th><th>Tipo</th><th>Monto</th><th>Moneda</th><th>Proveedor</th><th></th></tr></thead>
-            <tbody id="rec-costos"></tbody>
-          </table>
-        </div>
-        <button class="btn-add-line" onclick="addRecCosto()">+ Agregar costo</button>
-      </div>
+        <!-- Costos de Conversión ELIMINADO de acá (15/Ago/2026, a pedido
+             explícito): mismo criterio que ya se aplicó al Proveedor
+             Subcontratista — el costo por kg del servicio ya vive en la
+             ficha del producto (pestaña Compra/Proveedores), como el
+             precio configurado para ese proveedor. No hace falta una
+             configuración aparte y duplicada acá — ver
+             costoConversionPredeterminado() global. -->
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-receta')">Cancelar</button>
@@ -5647,7 +5640,7 @@ function enterModule(hub) {
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
          sc, scI, oc, ocI, ocR, ocRI, plC, ocF, pagosOC, ocA, asi, asiL, dj, bod, tc,
-         rec, recL, recC, op_, opC, opCo, extL, extB, envT, envTI, roll] = await Promise.all([
+         rec, recL, op_, opC, opCo, extL, extB, envT, envTI, roll] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
     sb.from('erp_ov').select('*').order('order_number', {ascending:false}),
@@ -5682,7 +5675,6 @@ async function loadAll() {
     sb.from('erp_tipos_cambio').select('*').order('fecha', {ascending: false}).limit(90),
     sb.from('erp_recetas').select('*').order('codigo'),
     sb.from('erp_receta_lineas').select('*'),
-    sb.from('erp_receta_costos').select('*'),
     sb.from('erp_op').select('*').order('numero', {ascending:false}),
     sb.from('erp_op_consumos').select('*'),
     sb.from('erp_op_costos').select('*'),
@@ -5706,7 +5698,7 @@ async function loadAll() {
     erp_oc_recepcion_items:ocRI, erp_oc_pl:plC, erp_oc_facturas:ocF, erp_pagos_oc:pagosOC,
     erp_oc_anticipos:ocA, erp_asientos:asi, erp_asiento_lineas:asiL, erp_diarios:dj,
     erp_bodegas:bod, erp_tipos_cambio:tc, erp_recetas:rec, erp_receta_lineas:recL,
-    erp_receta_costos:recC, erp_op:op_, erp_op_consumos:opC, erp_op_costos:opCo,
+    erp_op:op_, erp_op_consumos:opC, erp_op_costos:opCo,
     erp_extracto_lotes:extL, erp_extracto_bancario:extB, erp_envios_terceros:envT,
     erp_envios_terceros_items:envTI, erp_rollos:roll,
   };
@@ -5749,7 +5741,6 @@ async function loadAll() {
   state.tiposCambio        = tc.data   || [];
   state.recetas            = rec.data  || [];
   state.recetaLineas       = recL.data || [];
-  state.recetaCostos       = recC.data || [];
   state.op                 = op_.data  || [];
   state.opConsumos         = opC.data  || [];
   state.opCostos           = opCo.data || [];
@@ -10749,7 +10740,6 @@ function monedaTag(moneda, fuente) {
 // ── State ──
 state.recetas       = [];
 state.recetaLineas  = [];
-state.recetaCostos  = [];
 state.op            = [];
 state.opConsumos    = [];
 state.opCostos      = [];
@@ -10921,14 +10911,12 @@ function renderRecetas() {
 
 function onRecTipoChange() {
   const tipo = document.getElementById('rec-tipo').value;
-  const isSub = esSubcontrato(tipo);
-  const costosSec = document.getElementById('rec-costos-section');
-  if (costosSec) costosSec.style.display = esInterno(tipo) ? 'none' : 'block';
-  // Campo "Proveedor Subcontratista" eliminado (14/Ago/2026) — ver
-  // comentario en el HTML donde vivía.
+  // Campo "Proveedor Subcontratista" eliminado (14/Ago/2026) y sección
+  // "Costos de Conversión" eliminada (15/Ago/2026) — ver comentarios en el
+  // HTML donde vivían. Ya no queda nada que mostrar/ocultar acá según tipo.
 }
 
-let recInsumoCount = 0, recCostoCount = 0;
+let recInsumoCount = 0;
 
 function addRecInsumo(insumo_id='', cantidad_base=1, merma_pct=0, unidad='kg', requiere_reabastecimiento=true) {
   recInsumoCount++;
@@ -10979,30 +10967,9 @@ function calcRecCantReal(rowId) {
   if (el) el.textContent = real.toFixed(4);
 }
 
-function addRecCosto(descripcion='', tipo='fijo', monto=0, moneda='GTQ', proveedor_id='') {
-  recCostoCount++;
-  const id = 'rc_'+recCostoCount;
-  const pvOpts = state.proveedores.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
-  const tr = document.createElement('tr'); tr.id = id;
-  tr.innerHTML = `
-    <td><input type="text" value="${descripcion}" placeholder="Ej. Costo de tejido" style="width:100%;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px"/></td>
-    <td><select style="padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px">
-      <option value="por_kg">Por kg producido</option>
-      <option value="fijo">Fijo por OP</option>
-      <option value="porcentaje">% del costo MP</option>
-    </select></td>
-    <td><input type="number" step="0.01" min="0" value="${monto}" placeholder="0.00" style="width:90px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px"/></td>
-    <td><select style="padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px">
-      <option value="GTQ">GTQ</option><option value="USD">USD</option>
-    </select></td>
-    <td><select style="width:100%;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px">
-      <option value="">— Proveedor —</option>${pvOpts}</select></td>
-    <td><button class="btn btn-sm btn-danger" onclick="document.getElementById('${id}').remove()">✕</button></td>`;
-  document.getElementById('rec-costos').appendChild(tr);
-  tr.querySelectorAll('select')[0].value = tipo;
-  tr.querySelectorAll('select')[1].value = moneda;
-  if (proveedor_id) tr.querySelectorAll('select')[2].value = proveedor_id;
-}
+// función addRecCosto() eliminada (15/Ago/2026) — construía filas para la
+// tabla de "Costos de Conversión" que ya no existe en el HTML. Ver
+// comentario en el HTML de modal-receta y costoConversionPredeterminado().
 
 function openNewReceta() {
   document.getElementById('rec-id').value     = '';
@@ -11013,8 +10980,7 @@ function openNewReceta() {
   document.getElementById('rec-activa').value  = 'true';
   document.getElementById('rec-notas').value   = '';
   document.getElementById('rec-insumos').innerHTML = '';
-  document.getElementById('rec-costos').innerHTML  = '';
-  recInsumoCount = 0; recCostoCount = 0;
+  recInsumoCount = 0;
   onRecTipoChange();
   // Populate producto dropdown
   const prodOpts = '<option value="">— Seleccionar —</option>' +
@@ -11024,7 +10990,7 @@ function openNewReceta() {
   document.getElementById('rec-producto').innerHTML = prodOpts;
   populateBodegaSelect('rec-bodega-entrada');
   populateBodegaSelect('rec-bodega-salida');
-  addRecInsumo(); addRecCosto();
+  addRecInsumo();
   document.getElementById('modal-receta-title').textContent = 'Nueva Receta';
   document.getElementById('btn-rec-ver-estructura').style.display = 'none';
   openModal('modal-receta');
@@ -11047,13 +11013,9 @@ function editReceta(id) {
   populateBodegaSelect('rec-bodega-entrada', r.bodega_entrada_default||'');
   populateBodegaSelect('rec-bodega-salida', r.bodega_salida_default||'');
   document.getElementById('rec-insumos').innerHTML = '';
-  document.getElementById('rec-costos').innerHTML  = '';
-  recInsumoCount = 0; recCostoCount = 0;
+  recInsumoCount = 0;
   (state.recetaLineas||[]).filter(l=>l.receta_id===id).forEach(l=>
     addRecInsumo(l.insumo_id, l.cantidad_base, l.merma_pct, l.unidad||'kg', l.requiere_reabastecimiento)
-  );
-  (state.recetaCostos||[]).filter(c=>c.receta_id===id).forEach(c=>
-    addRecCosto(c.descripcion, c.tipo, c.monto, c.moneda, c.proveedor_id)
   );
   document.getElementById('modal-receta-title').textContent = 'Editar Receta';
   document.getElementById('btn-rec-ver-estructura').style.display = 'inline-flex';
@@ -11090,7 +11052,6 @@ async function saveReceta() {
     ({error:err}=await sb.from('erp_recetas').update(row).eq('id',id));
     if (!err) {
       await sb.from('erp_receta_lineas').delete().eq('receta_id',id);
-      await sb.from('erp_receta_costos').delete().eq('receta_id',id);
     }
   } else {
     const {data,error}=await sb.from('erp_recetas').insert(row).select().single();
@@ -11122,23 +11083,11 @@ async function saveReceta() {
   });
   if (insumos.length) await sb.from('erp_receta_lineas').insert(insumos);
 
-  // Save costos
-  const costos = [];
-  document.querySelectorAll('#rec-costos tr').forEach(tr=>{
-    const input = tr.querySelector('input[type=text]');
-    const num   = tr.querySelector('input[type=number]');
-    const sels  = tr.querySelectorAll('select');
-    if (!input?.value) return;
-    costos.push({
-      receta_id:   recetaId,
-      descripcion: input.value,
-      tipo:        sels[0]?.value||'por_kg',
-      monto:       parseFloat(num?.value)||0,
-      moneda:      sels[1]?.value||'GTQ',
-      proveedor_id:sels[2]?.value||null,
-    });
-  });
-  if (costos.length) await sb.from('erp_receta_costos').insert(costos);
+  // Bloque "Save costos" eliminado (15/Ago/2026) — la tabla
+  // rec-costos ya no existe en el formulario; el costo de conversión
+  // ahora se lee de prod.proveedores_compra[0] vía
+  // costoConversionPredeterminado(). erp_receta_costos se elimina de la
+  // base de datos por completo (ver migración SQL entregada aparte).
 
   toast('Receta guardada');
   closeModal('modal-receta');
@@ -11148,7 +11097,6 @@ async function saveReceta() {
 async function deleteReceta(id) {
   if (!confirm('¿Eliminar esta receta?')) return;
   await sb.from('erp_receta_lineas').delete().eq('receta_id',id);
-  await sb.from('erp_receta_costos').delete().eq('receta_id',id);
   await sb.from('erp_recetas').delete().eq('id',id);
   toast('Receta eliminada');
   await loadAll();
@@ -11206,21 +11154,17 @@ function explodeBOM(productoId, cantidad = 1, stockMap, visitados = new Set()) {
 
   const costoMP = hijos.reduce((s,h) => s + h.costoLista, 0);
 
-  // Costos de conversión (solo rutas subcontratadas) — mismo cálculo que ya
-  // usa registrarMovimientosOP/planificarSubcontrato, expresado por 1 unidad
-  // de salida de este nivel (los "fijo" se muestran prorateados a 1 unidad,
-  // solo como referencia — el costo real de una OP concreta se calcula
-  // sobre su cantidad real, no aquí).
+  // Costo de conversión (solo rutas subcontratadas) — 15/Ago/2026: ya no
+  // viene de una lista configurable de costos en la receta (sección
+  // eliminada) — se toma directo del precio configurado en la ficha del
+  // producto (Compra/Proveedores), vía costoConversionPredeterminado().
   const tc = tcHoy() || 7.75;
-  const costosConversion = esSubcontrato(receta.tipo)
-    ? (state.recetaCostos||[]).filter(c => c.receta_id === receta.id).map(c => {
-        const mGTQ = c.moneda === 'USD' ? c.monto * tc : c.monto;
-        const monto = c.tipo === 'porcentaje' ? costoMP * (c.monto/100) : mGTQ; // por_kg y fijo se muestran igual: costo de referencia por 1 unidad
-        const prov = state.proveedores.find(p => p.id === c.proveedor_id) || state.proveedores.find(p => p.id === proveedorPredeterminado(prod));
-        return { descripcion: c.descripcion, tipo: c.tipo, proveedor: prov?.name || null, monto };
-      })
+  const montoConv = esSubcontrato(receta.tipo) ? costoConversionPredeterminado(prod, tc) * cantidad : 0;
+  const provConv  = state.proveedores.find(p => p.id === proveedorPredeterminado(prod));
+  const costosConversion = montoConv > 0
+    ? [{ descripcion: 'Servicio de conversión', tipo: 'por_kg', proveedor: provConv?.name || null, monto: montoConv }]
     : [];
-  const costoConvTotal = costosConversion.reduce((s,c) => s + c.monto, 0);
+  const costoConvTotal = montoConv;
   const costoUnitario = costoMP + costoConvTotal;
 
   return {
@@ -11403,7 +11347,6 @@ function calcOPConsumosEstimados() {
   }
 
   const lineas = (state.recetaLineas||[]).filter(l=>l.receta_id===recetaId);
-  const costos = (state.recetaCostos||[]).filter(c=>c.receta_id===recetaId);
   const stockMap = calcStock();
 
   let costoMPConMerma = 0;
@@ -11441,23 +11384,29 @@ function calcOPConsumosEstimados() {
   const tipoOP_est = document.getElementById('op-tipo').value;
   const esSub_est  = esSubcontrato(tipoOP_est);
   const tc = tcHoy() || 7.75;
+  const receta_est = (state.recetas||[]).find(r=>r.id===recetaId);
+  const prod_est    = state.productos.find(p=>p.id===receta_est?.producto_id);
+  // 15/Ago/2026: costo de conversión ya no viene de una lista configurable
+  // en la receta — se toma de la ficha del producto (Compra/Proveedores),
+  // vía costoConversionPredeterminado(). Ver comentario en el HTML de
+  // modal-receta.
+  const costoConvPorKg = costoConversionPredeterminado(prod_est, tc);
   let costoConvTotal = 0;
   const costosDiv = document.getElementById('op-costos-est');
 
-  if (esSub_est && costos.length) {
-    costosDiv.innerHTML = costos.map(c => {
-      const montoGTQ = c.moneda==='USD' ? c.monto*tc : c.monto;
-      let montoTotal = 0;
-      if (c.tipo==='por_kg')    montoTotal = montoGTQ * cantProg;
-      else if (c.tipo==='fijo') montoTotal = montoGTQ;
-      else                      montoTotal = costoMPConMerma * (c.monto/100);
-      costoConvTotal += montoTotal;
-      return `<div style="background:var(--surface2);border-radius:8px;padding:12px 16px">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:4px">${c.descripcion}</div>
-        <div style="font-size:16px;font-weight:700;font-family:'DM Mono',monospace;color:var(--accent3)">${fmtMoney(montoTotal)}</div>
-        <div style="font-size:10px;color:var(--text3);margin-top:2px">${c.tipo==='por_kg'?`Q${montoGTQ.toFixed(4)}/kg`:c.tipo==='porcentaje'?`${c.monto}% de MP`:'Fijo'}</div>
+  if (esSub_est && costoConvPorKg > 0) {
+    costoConvTotal = costoConvPorKg * cantProg;
+    const provConv_est = state.proveedores.find(p=>p.id===proveedorPredeterminado(prod_est));
+    costosDiv.innerHTML = `<div style="background:var(--surface2);border-radius:8px;padding:12px 16px">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:4px">Servicio de conversión — ${provConv_est?.name||'sin proveedor'}</div>
+        <div style="font-size:16px;font-weight:700;font-family:'DM Mono',monospace;color:var(--accent3)">${fmtMoney(costoConvTotal)}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px">Q${costoConvPorKg.toFixed(4)}/kg</div>
       </div>`;
-    }).join('');
+  } else if (esSub_est) {
+    costosDiv.innerHTML = `<div style="background:#FEF2F2;border:1.5px solid #FECACA;border-radius:8px;padding:12px 16px;grid-column:1/-1">
+      <div style="font-size:13px;font-weight:600;color:#DC2626">⚠ Sin precio configurado</div>
+      <div style="font-size:12px;color:#DC2626;margin-top:4px">El producto ${prod_est?.codigo_interno||prod_est?.code||''} no tiene proveedor/precio en su ficha (Compra/Proveedores) — el costo de conversión quedará en Q0.00 hasta que lo configures ahí.</div>
+    </div>`;
   } else {
     costosDiv.innerHTML = `<div style="background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:8px;padding:12px 16px;grid-column:1/-1">
       <div style="font-size:13px;font-weight:600;color:#1D4ED8">📋 Manufactura Interna</div>
@@ -11565,7 +11514,7 @@ async function saveOP(estado = 'borrador') {
 
   // Calculate costs using absorption formula (merma absorbed into unit cost)
   const lineas = (state.recetaLineas||[]).filter(l=>l.receta_id===receta_id);
-  const costos = (state.recetaCostos||[]).filter(c=>c.receta_id===receta_id);
+  const prodOP = state.productos.find(p=>p.id===receta?.producto_id);
 
   // MP cost with merma absorbed
   let costoMPConMerma = 0;
@@ -11576,16 +11525,10 @@ async function saveOP(estado = 'borrador') {
     costoMPConMerma += cantConMerma * cu;
   });
 
-  // Conversion costs — only for subcontract routes
-  let costoConvTotal = 0;
-  if (esSub_op) {
-    costos.forEach(c => {
-      const mGTQ = c.moneda==='USD' ? c.monto*tc : c.monto;
-      if (c.tipo==='por_kg')    costoConvTotal += mGTQ * cantidad_prog;
-      else if (c.tipo==='fijo') costoConvTotal += mGTQ;
-      else                      costoConvTotal += costoMPConMerma * (c.monto/100);
-    });
-  }
+  // Conversion costs — only for subcontract routes. 15/Ago/2026: ya no
+  // viene de recetaCostos (sección eliminada) — se toma de la ficha del
+  // producto vía costoConversionPredeterminado().
+  const costoConvTotal = esSub_op ? costoConversionPredeterminado(prodOP, tc) * cantidad_prog : 0;
 
   const row = {
     numero:         numeroPreservado || await nextOPNum(),
@@ -11638,19 +11581,20 @@ async function saveOP(estado = 'borrador') {
     });
     if (consumoRows.length) await sb.from('erp_op_consumos').insert(consumoRows);
 
-    // Register cost rows
-    const costoRows = costos.map(c => {
-      const mGTQ = c.moneda==='USD' ? c.monto*tc : c.monto;
-      let monto = c.tipo==='por_kg' ? c.monto*cantidad_prog : c.tipo==='fijo' ? c.monto : costoMPTotal*(c.monto/100);
-      return {
+    // Register cost rows — 15/Ago/2026: una sola fila desde el costo de
+    // conversión configurado en la ficha del producto (ver comentario más
+    // arriba en esta misma función), en vez de iterar sobre la lista de
+    // recetaCostos que ya no existe.
+    if (esSub_op && costoConvTotal > 0) {
+      const provConvOP = state.proveedores.find(p=>p.id===proveedorPredeterminado(prodOP));
+      await sb.from('erp_op_costos').insert([{
         op_id: opId,
-        descripcion: c.descripcion, tipo: c.tipo,
-        monto, moneda: c.moneda, tipo_cambio: c.moneda==='USD'?tc:1,
-        monto_gtq: parseFloat((c.moneda==='USD'?monto*tc:monto).toFixed(4)),
-        proveedor_id: c.proveedor_id||null,
-      };
-    });
-    if (costoRows.length) await sb.from('erp_op_costos').insert(costoRows);
+        descripcion: 'Servicio de conversión', tipo: 'por_kg',
+        monto: costoConvTotal, moneda: 'GTQ', tipo_cambio: 1,
+        monto_gtq: parseFloat(costoConvTotal.toFixed(4)),
+        proveedor_id: provConvOP?.id||null,
+      }]);
+    }
 
     // Register inventory movements: consume MP, add WIP/PT
     await registrarMovimientosOP(opId, opId, lineas, cantidad_prog, stockMap, row, lote);
@@ -11719,19 +11663,11 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockM
   // ── Costos de conversión ──
   // Ruta interna: MO/energía van al Estado de Resultados, NO al inventario
   // Ruta subcontrato: sí se suman al costo del inventario
-  const costosConv = esSub
-    ? (state.recetaCostos||[]).filter(c => c.receta_id === opRow.receta_id)
-    : [];
-
-  let costoConvTotal = 0;
-  if (esSub) {
-    costosConv.forEach(c => {
-      const mGTQ = c.moneda === 'USD' ? c.monto * tc : c.monto;
-      if (c.tipo === 'por_kg')    costoConvTotal += mGTQ * cantidad_prog;
-      else if (c.tipo === 'fijo') costoConvTotal += mGTQ;
-      else                        costoConvTotal += costoMPConMerma * (c.monto/100);
-    });
-  }
+  // 15/Ago/2026: ya no viene de recetaCostos (sección eliminada de la
+  // receta) — se toma de la ficha del producto (Compra/Proveedores) vía
+  // costoConversionPredeterminado().
+  const prodFabricado = state.productos.find(p => p.id === receta?.producto_id);
+  const costoConvTotal = esSub ? costoConversionPredeterminado(prodFabricado, tc) * cantidad_prog : 0;
 
   // Costo unitario = (MP con merma + conversión subcontrato) / kg
   // Para ruta interna: solo costo MP con merma
@@ -11856,23 +11792,17 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockM
       descripcion: `Costos de conversión OP ${opRow.numero}`,
     });
 
-    // Por cada costo de conversión, un crédito
-    for (const c of costosConv) {
-      const mGTQ = c.moneda === 'USD' ? c.monto * tc : c.monto;
-      let montoLinea = 0;
-      if (c.tipo === 'por_kg')    montoLinea = mGTQ * cantidad_prog;
-      else if (c.tipo === 'fijo') montoLinea = mGTQ;
-      else                        montoLinea = costoMPConMerma * (c.monto/100);
-      if (montoLinea <= 0) continue;
-
-      convLineas.push({
-        cuenta_id:    ctaPorPagar?.id||null,
-        cuenta_codigo: ctaPorPagar?.codigo||'POR PAGAR',
-        cuenta_nombre: c.descripcion,
-        debe: 0, haber: montoLinea,
-        descripcion: `${c.descripcion} — ${c.moneda==='USD'?`USD ${c.monto} × Q${tc.toFixed(4)}`:`Q${mGTQ.toFixed(2)}`}`,
-      });
-    }
+    // Contrapartida — una sola línea, ya que el costo de conversión ahora
+    // es un único monto (viene de la ficha del producto, no de una lista
+    // configurable de costos en la receta).
+    const provConvAsiento = state.proveedores.find(p=>p.id===proveedorPredeterminado(prodFabricado));
+    convLineas.push({
+      cuenta_id:    ctaPorPagar?.id||null,
+      cuenta_codigo: ctaPorPagar?.codigo||'POR PAGAR',
+      cuenta_nombre: provConvAsiento?.name||'Servicio de conversión',
+      debe: 0, haber: costoConvTotal,
+      descripcion: `Servicio de conversión — ${provConvAsiento?.name||'sin proveedor'} — Q${costoConvTotal.toFixed(2)}`,
+    });
 
     await crearAsiento({
       diario: DIARIO_MANUFACTURA,
@@ -12490,10 +12420,12 @@ function showRecetaDetail(id) {
   const r       = (state.recetas||[]).find(x=>x.id===id);
   const prod    = state.productos.find(p=>p.id===r?.producto_id);
   const lineas  = (state.recetaLineas||[]).filter(l=>l.receta_id===id);
-  const costos  = (state.recetaCostos||[]).filter(c=>c.receta_id===id);
   const provPredet = state.proveedores.find(p=>p.id===proveedorPredeterminado(prod));
   const bodEnt  = (state.bodegas||[]).find(b=>b.id===r?.bodega_entrada_default);
   const bodSal  = (state.bodegas||[]).find(b=>b.id===r?.bodega_salida_default);
+  // 15/Ago/2026: costo de conversión ya no viene de una tabla configurable
+  // en la receta — se toma de la ficha del producto (Compra/Proveedores).
+  const costoConvPorKg = costoConversionPredeterminado(prod, tcHoy()||7.75);
 
   document.getElementById('receta-detail-title').textContent = `${r?.codigo||'Receta'} — ${prod?.description||'—'}`;
   document.getElementById('receta-detail-body').innerHTML = `
@@ -12508,6 +12440,8 @@ function showRecetaDetail(id) {
             ${r?.activa!==false?'<span class="badge badge-green">Activa</span>':'<span class="badge badge-gray">Inactiva</span>'}</div>
           <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Proveedor Predeterminado</div>
             <span style="font-size:13px">${provPredet?.name||'— sin proveedores configurados en el producto —'}</span></div>
+          ${esSubcontrato(r?.tipo) ? `<div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Costo de Conversión</div>
+            <span style="font-size:13px">${costoConvPorKg>0?`Q${costoConvPorKg.toFixed(4)}/kg`:'— sin precio en Compra/Proveedores —'}</span></div>` : ''}
           <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Bodega Entrada (MP)</div>
             <span style="font-size:13px">${bodEnt?.nombre||'— sin definir —'}</span></div>
           <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Bodega Salida (PT/WIP)</div>
@@ -12531,23 +12465,6 @@ function showRecetaDetail(id) {
             }).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:12px">Sin insumos configurados</td></tr>'}</tbody>
           </table>
         </div>
-
-        ${esSubcontrato(r?.tipo) ? `
-        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Costos de Conversión</div>
-        <div class="table-wrap" style="margin-bottom:20px">
-          <table>
-            <thead><tr><th>Descripción</th><th>Tipo</th><th>Proveedor</th><th style="text-align:right">Monto</th></tr></thead>
-            <tbody>${costos.length ? costos.map(c=>{
-              const pv=state.proveedores.find(x=>x.id===c.proveedor_id);
-              return `<tr>
-                <td>${c.descripcion}</td>
-                <td style="font-size:12px;color:var(--text2)">${c.tipo}</td>
-                <td style="font-size:12px;color:var(--text2)">${pv?.name||'—'}</td>
-                <td class="td-mono" style="text-align:right">${fmtMoney(c.monto)} ${c.moneda}</td>
-              </tr>`;
-            }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:12px">Sin costos configurados</td></tr>'}</tbody>
-          </table>
-        </div>` : ''}
 
         ${r?.notas ? `
         <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Notas</div>
@@ -13168,11 +13085,11 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
   // CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): mismo criterio que
   // planificarCompra — nace en 'borrador' sin número; el operador la
   // confirma manualmente y ahí se asigna el correlativo real.
-  const costosConv = (state.recetaCostos||[]).filter(c => c.receta_id === receta.id);
-  const costoServPorKg = costosConv.reduce((s,c) => {
-    const mGTQ = c.moneda==='USD' ? c.monto*tc : c.monto;
-    return s + (c.tipo==='por_kg' ? mGTQ : c.tipo==='fijo' ? mGTQ/cantidad : 0);
-  }, 0);
+  // 15/Ago/2026: costo del servicio ya no viene de recetaCostos (sección
+  // eliminada de la receta) — se toma de la ficha del producto
+  // (Compra/Proveedores) vía costoConversionPredeterminado(), misma fuente
+  // que ya usa proveedorPredeterminado() dos líneas arriba.
+  const costoServPorKg = costoConversionPredeterminado(prod, tc);
 
   const { data: ocServ, error: e1 } = await sb.from('erp_oc').insert({
     numero: null, proveedor_id: provSubId||null,
@@ -14247,6 +14164,21 @@ const DIARIO_MANUFACTURA = 'MANUFACTURA';
 // que es la única fuente de verdad de qué proveedores vende ese producto.
 function proveedorPredeterminado(prod) {
   return (prod?.proveedores_compra||[])[0]?.proveedor_id || null;
+}
+
+// Costo de conversión (servicio subcontratado) predeterminado de un
+// producto (15/Ago/2026, a pedido explícito): la sección "Costos de
+// Conversión" de la receta se eliminó por completo — mismo criterio que
+// Proveedor Subcontratista. El precio ya vive en la ficha del producto,
+// en la misma línea de Compra/Proveedores que ya define el proveedor
+// (proveedorPredeterminado) — para un producto con ruta subcontratada,
+// esa línea representa el precio por kg de ESE servicio. Devuelve el
+// costo por kg ya convertido a GTQ.
+function costoConversionPredeterminado(prod, tc) {
+  const info = (prod?.proveedores_compra||[])[0];
+  if (!info) return 0;
+  const precio = Number(info.precio||0);
+  return info.moneda === 'USD' ? precio * (tc || tcHoy() || 7.75) : precio;
 }
 
 // Cuenta de valoración REAL de un producto, según la categoría a la que
