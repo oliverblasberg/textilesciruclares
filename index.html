@@ -1777,6 +1777,10 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div style="font-size:12px;color:var(--text2);margin-top:2px" id="oc-panel-sub"></div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <!-- Reabastecer — visible solo si la receta de esta OC de servicio
+             lo requiere (15/Ago/2026, a pedido explícito). Ver la lógica
+             dentro de showOCPanel(). -->
+        <button class="btn btn-sm btn-ghost" id="btn-oc-reabastecer" style="display:none;min-width:140px;justify-content:center" onclick="abrirReabastecimiento('oc', currentOCId)">🔄 Reabastecer</button>
         <!-- Editar (15/Ago/2026, a pedido explícito): antes vivía como
              botón suelto en la fila del listado; ahora vive acá, mismo
              criterio de visibilidad que Confirmar (solo en borrador). -->
@@ -4623,7 +4627,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       </div>
       <button class="btn-add-line" onclick="addRecInsumo()">+ Agregar insumo</button>
       <div style="font-size:12px;color:var(--text3);margin:6px 0 4px">
-        "Reabastecer MP" solo tiene efecto en recetas subcontratadas: desmárcalo si el subcontratista ya tiene ese insumo en su propio stock y no debe dispararse compra/planificación automática de esa materia prima.
+        "Reabastecer MP" ya no se decide acá — es un indicador de solo lectura que refleja si el insumo tiene activada la ruta "Obtener bajo pedido" en su propia ficha de producto. Para cambiarlo, editá la ficha de ese producto (Configuración → Productos).
       </div>
 
         <!-- Proveedor Subcontratista ELIMINADO de acá (14/Ago/2026, a
@@ -4826,9 +4830,13 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       </div>
     </div>
     <div class="modal-footer">
+      <!-- Reabastecer — visible solo si la receta lo requiere (15/Ago/2026,
+           a pedido explícito). Ver refrescarBotonReabastecerOP(). -->
+      <button class="btn btn-ghost" id="btn-op-reabastecer" style="display:none;margin-right:auto" onclick="abrirReabastecimiento('op', document.getElementById('op-id').value)">🔄 Reabastecer</button>
+      <div id="op-reab-hint" style="display:none;font-size:11px;color:var(--red);align-self:center;margin-right:8px"></div>
       <button class="btn btn-ghost" onclick="closeModal('modal-op')">Cancelar</button>
       <button class="btn btn-secondary" onclick="saveOP('borrador')">Guardar Borrador</button>
-      <button class="btn btn-primary" onclick="saveOP('en_proceso')">▶ Iniciar Producción</button>
+      <button class="btn btn-primary" id="btn-op-iniciar" onclick="saveOP('en_proceso')">▶ Iniciar Producción</button>
     </div>
   </div>
 </div>
@@ -5530,6 +5538,24 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   </div>
 </div>
 
+<!-- REABASTECIMIENTO POR LOTE — modal (15/Ago/2026, a pedido explícito).
+     Reemplaza el consumo FIFO automático: acá el operador elige a mano de
+     qué lote(s) reales sale cada insumo que la receta de una OP (o de una
+     OC de servicio de subcontrato) necesita, antes de poder Iniciar
+     Producción / Confirmar. Mismo tamaño 90vw/90vh que los demás. -->
+<div class="modal-overlay" id="modal-reabastecimiento">
+  <div class="modal modal-lg" style="max-width:90vw;width:90vw;max-height:90vh">
+    <div class="modal-header">
+      <div class="modal-title" id="reab-title">Reabastecimiento</div>
+      <button class="modal-close" onclick="closeModal('modal-reabastecimiento')">✕</button>
+    </div>
+    <div class="modal-body" id="reab-body" style="padding:20px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-reabastecimiento')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ASISTENTE DE PLANIFICACIÓN — banner fijo (15/Ago/2026, a pedido
      explícito). Queda visible arriba de todo mientras el asistente navega
      entre Compras y Manufactura, para que el operador siempre sepa qué
@@ -5640,7 +5666,7 @@ function enterModule(hub) {
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
          sc, scI, oc, ocI, ocR, ocRI, plC, ocF, pagosOC, ocA, asi, asiL, dj, bod, tc,
-         rec, recL, op_, opC, opCo, extL, extB, envT, envTI, roll] = await Promise.all([
+         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
     sb.from('erp_ov').select('*').order('order_number', {ascending:false}),
@@ -5678,6 +5704,7 @@ async function loadAll() {
     sb.from('erp_op').select('*').order('numero', {ascending:false}),
     sb.from('erp_op_consumos').select('*'),
     sb.from('erp_op_costos').select('*'),
+    sb.from('erp_reabastecimiento').select('*').order('created_at', {ascending:false}),
     sb.from('erp_extracto_lotes').select('*').order('fecha_fin', {ascending:false}),
     sb.from('erp_extracto_bancario').select('*').order('fecha', {ascending:false}),
     sb.from('erp_envios_terceros').select('*').order('created_at', {ascending:false}),
@@ -5698,7 +5725,7 @@ async function loadAll() {
     erp_oc_recepcion_items:ocRI, erp_oc_pl:plC, erp_oc_facturas:ocF, erp_pagos_oc:pagosOC,
     erp_oc_anticipos:ocA, erp_asientos:asi, erp_asiento_lineas:asiL, erp_diarios:dj,
     erp_bodegas:bod, erp_tipos_cambio:tc, erp_recetas:rec, erp_receta_lineas:recL,
-    erp_op:op_, erp_op_consumos:opC, erp_op_costos:opCo,
+    erp_op:op_, erp_op_consumos:opC, erp_op_costos:opCo, erp_reabastecimiento:reab,
     erp_extracto_lotes:extL, erp_extracto_bancario:extB, erp_envios_terceros:envT,
     erp_envios_terceros_items:envTI, erp_rollos:roll,
   };
@@ -5744,6 +5771,7 @@ async function loadAll() {
   state.op                 = op_.data  || [];
   state.opConsumos         = opC.data  || [];
   state.opCostos           = opCo.data || [];
+  state.reabastecimiento   = reab.data || [];
   state.extractoLotes      = extL.data || [];
   state.extractoBancario   = extB.data || [];
   state.enviosTerceros      = envT.data  || [];
@@ -10743,6 +10771,7 @@ state.recetaLineas  = [];
 state.op            = [];
 state.opConsumos    = [];
 state.opCostos      = [];
+state.reabastecimiento = [];
 
 // ── Correlativos ──
 // BUGFIX (debugging en vivo, 13/Ago/2026): antes leía state.op (cacheado en
@@ -10918,7 +10947,7 @@ function onRecTipoChange() {
 
 let recInsumoCount = 0;
 
-function addRecInsumo(insumo_id='', cantidad_base=1, merma_pct=0, unidad='kg', requiere_reabastecimiento=true) {
+function addRecInsumo(insumo_id='', cantidad_base=1, merma_pct=0, unidad='kg') {
   recInsumoCount++;
   const id = 'ri_'+recInsumoCount;
   const opts = state.productos.filter(p=>p.puede_comprado!==false).map(p=>
@@ -10937,7 +10966,12 @@ function addRecInsumo(insumo_id='', cantidad_base=1, merma_pct=0, unidad='kg', r
          relación al insumo elegido). Ahora es solo lectura, siempre
          tomada de la configuración real del producto (prod.unidad). -->
     <td class="td-mono" id="${id}_unidad" style="font-size:12px;color:var(--text2)">—</td>
-    <td style="text-align:center"><input type="checkbox" class="ri-reabastecer" ${requiere_reabastecimiento!==false?'checked':''} style="width:15px;height:15px" title="Reabastecer MP automáticamente al subcontratista para este insumo"/></td>
+    <!-- Reabastecer MP (15/Ago/2026, a pedido explícito): ya no es un
+         checkbox editable acá — era una segunda fuente de verdad sobre la
+         misma decisión que ya vive en la ruta "Obtener bajo pedido" de la
+         ficha del insumo. Ahora es solo un indicador de lo que ya está
+         configurado ahí — ver updateRecInsumoUnidad(). -->
+    <td style="text-align:center" id="${id}_reab">—</td>
     <td><button class="btn btn-sm btn-danger" onclick="document.getElementById('${id}').remove()">✕</button></td>`;
   document.getElementById('rec-insumos').appendChild(tr);
   if (insumo_id) tr.querySelector('select').value = insumo_id;
@@ -10945,15 +10979,24 @@ function addRecInsumo(insumo_id='', cantidad_base=1, merma_pct=0, unidad='kg', r
   updateRecInsumoUnidad(id);
 }
 
-// Actualiza el display de Unidad de una línea de insumo tomando siempre la
-// configuración real del producto elegido (15/Ago/2026, a pedido explícito).
+// Actualiza, para una línea de insumo, tanto el display de Unidad como el
+// indicador de Reabastecer MP — ambos tomados siempre en vivo de la
+// configuración real del producto elegido (15/Ago/2026, a pedido
+// explícito), nunca editados manualmente en la receta.
 function updateRecInsumoUnidad(rowId) {
   const row = document.getElementById(rowId);
   if (!row) return;
   const sel  = row.querySelector('select');
   const prod = state.productos.find(p=>p.id===sel?.value);
-  const el   = document.getElementById(rowId+'_unidad');
-  if (el) el.textContent = prod?.unidad || '—';
+  const elU  = document.getElementById(rowId+'_unidad');
+  if (elU) elU.textContent = prod?.unidad || '—';
+  const elR  = document.getElementById(rowId+'_reab');
+  if (elR) {
+    elR.innerHTML = !prod ? '—'
+      : prod.ruta_obtener_bajo_pedido
+        ? '<span class="badge badge-green" style="font-size:10px" title="Ruta \'Obtener bajo pedido\' activa en la ficha del producto">Sí</span>'
+        : '<span class="badge badge-gray" style="font-size:10px" title="Ruta \'Obtener bajo pedido\' inactiva en la ficha del producto">No</span>';
+  }
 }
 
 function calcRecCantReal(rowId) {
@@ -11015,7 +11058,7 @@ function editReceta(id) {
   document.getElementById('rec-insumos').innerHTML = '';
   recInsumoCount = 0;
   (state.recetaLineas||[]).filter(l=>l.receta_id===id).forEach(l=>
-    addRecInsumo(l.insumo_id, l.cantidad_base, l.merma_pct, l.unidad||'kg', l.requiere_reabastecimiento)
+    addRecInsumo(l.insumo_id, l.cantidad_base, l.merma_pct, l.unidad||'kg')
   );
   document.getElementById('modal-receta-title').textContent = 'Editar Receta';
   document.getElementById('btn-rec-ver-estructura').style.display = 'inline-flex';
@@ -11065,7 +11108,6 @@ async function saveReceta() {
   document.querySelectorAll('#rec-insumos tr').forEach(tr=>{
     const sel    = tr.querySelector('select');
     const inputs = tr.querySelectorAll('input[type=number]');
-    const chkReab = tr.querySelector('.ri-reabastecer');
     if (!sel?.value) return;
     // Unidad (15/Ago/2026, a pedido explícito): ya no viene de un select
     // manual — se toma siempre de la configuración real del producto
@@ -11078,7 +11120,14 @@ async function saveReceta() {
       cantidad_base: parseFloat(inputs[0]?.value)||1,
       merma_pct:     parseFloat(inputs[1]?.value)||0,
       unidad:        insumoProd?.unidad||'kg',
-      requiere_reabastecimiento: chkReab ? chkReab.checked : true,
+      // Reabastecer MP (15/Ago/2026, a pedido explícito): ya no viene de un
+      // checkbox editable en la receta — era una segunda fuente de verdad
+      // sobre la misma decisión que ya vive en la ruta "Obtener bajo
+      // pedido" de la ficha del insumo. Se guarda acá solo como snapshot
+      // para mostrar en listados/detalle; la lógica real de planificación
+      // (planificarSubcontrato) consulta el producto en vivo, no este
+      // campo, para no quedar desactualizada si la ruta cambia después.
+      requiere_reabastecimiento: !!insumoProd?.ruta_obtener_bajo_pedido,
     });
   });
   if (insumos.length) await sb.from('erp_receta_lineas').insert(insumos);
@@ -11418,6 +11467,60 @@ function calcOPConsumosEstimados() {
   const total = costoMPConMerma + costoConvTotal;
   document.getElementById('op-costo-total-est').textContent =
     `${fmtMoney(total)} | Q${costoUnitFabricado.toFixed(4)}/kg`;
+
+  refrescarBotonReabastecerOP();
+}
+
+// Muestra/oculta el botón Reabastecer y habilita/deshabilita Iniciar
+// Producción según si la receta elegida lo requiere y, si lo requiere, si
+// ya está completo (15/Ago/2026, a pedido explícito). Se llama cada vez
+// que cambia la receta o la cantidad del formulario de OP.
+function refrescarBotonReabastecerOP() {
+  const btnReab = document.getElementById('btn-op-reabastecer');
+  const btnIni  = document.getElementById('btn-op-iniciar');
+  const hint    = document.getElementById('op-reab-hint');
+  if (!btnReab || !btnIni) return;
+
+  const opId     = document.getElementById('op-id').value;
+  const recetaId = document.getElementById('op-receta').value;
+  const cantProg = parseFloat(document.getElementById('op-cantidad-prog').value)||0;
+  const receta   = (state.recetas||[]).find(r=>r.id===recetaId);
+
+  if (!receta || !cantProg) {
+    btnReab.style.display = 'none';
+    hint.style.display = 'none';
+    btnIni.disabled = false;
+    return;
+  }
+
+  const est = estadoReabastecimiento('op', opId, receta, cantProg);
+  if (!est.requiere) {
+    btnReab.style.display = 'none';
+    hint.style.display = 'none';
+    btnIni.disabled = false;
+    return;
+  }
+
+  btnReab.style.display = '';
+  if (!opId) {
+    btnReab.textContent = '🔄 Reabastecer (guardá primero)';
+    btnReab.disabled = true;
+    btnIni.disabled = false; // el propio saveOP('en_proceso') se encarga de guardar como borrador primero
+    hint.style.display = 'none';
+  } else {
+    btnReab.disabled = false;
+    if (est.completo) {
+      btnReab.textContent = '✓ Reabastecido';
+      btnIni.disabled = false;
+      hint.style.display = 'none';
+    } else {
+      const cubiertos = est.detalle.filter(d=>d.completo).length;
+      btnReab.textContent = `🔄 Reabastecer (${cubiertos}/${est.detalle.length})`;
+      btnIni.disabled = true;
+      hint.textContent = 'Faltan insumos por reabastecer';
+      hint.style.display = 'block';
+    }
+  }
 }
 
 async function openNewOP() {
@@ -11512,18 +11615,49 @@ async function saveOP(estado = 'borrador') {
   const tipoOP    = document.getElementById('op-tipo').value;
   const esSub_op  = esSubcontrato(tipoOP);
 
+  // REABASTECIMIENTO (15/Ago/2026, a pedido explícito): no se puede
+  // Iniciar Producción hasta haber asignado manualmente los lotes reales
+  // de cada insumo que la receta necesite reabastecer. Una OP que todavía
+  // no existe en la base (sin `id`) nunca puede tener reabastecimiento
+  // asignado de antemano — en ese caso se guarda primero como borrador
+  // (así consigue un id real al que atar la asignación de lotes) y se
+  // detiene ahí, en vez de dejar avanzar a 'en_proceso' a medias.
+  let bloqueadoPorReabastecimiento = false;
+  if (estado === 'en_proceso') {
+    if (!id) {
+      toast('Primero se guarda como borrador — asigná el reabastecimiento y volvé a Iniciar Producción','error');
+      estado = 'borrador';
+      bloqueadoPorReabastecimiento = true;
+    } else {
+      const estReab = estadoReabastecimiento('op', id, receta, cantidad_prog);
+      if (estReab.requiere && !estReab.completo) {
+        toast('Faltan insumos por reabastecer — asigná los lotes pendientes antes de iniciar producción','error');
+        return;
+      }
+    }
+  }
+
   // Calculate costs using absorption formula (merma absorbed into unit cost)
   const lineas = (state.recetaLineas||[]).filter(l=>l.receta_id===receta_id);
   const prodOP = state.productos.find(p=>p.id===receta?.producto_id);
 
-  // MP cost with merma absorbed
+  // MP cost with merma absorbed. 15/Ago/2026, a pedido explícito: si ya
+  // hay reabastecimiento asignado para esta OP, se usa el costo REAL de
+  // esos lotes (no el promedio FIFO) — el FIFO estimado solo se usa como
+  // preliminar antes de que exista ningún lote asignado (ej. para mostrar
+  // un costo de referencia mientras se arma el formulario).
+  const reabPrevio = id ? (state.reabastecimiento||[]).filter(r => r.op_id === id) : [];
   let costoMPConMerma = 0;
-  lineas.forEach(l => {
-    const cantConMerma = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad_prog;
-    const st = stockMap[l.insumo_id];
-    const cu = st && st.saldo>0 ? st.valoracion/st.saldo : (state.productos.find(p=>p.id===l.insumo_id)?.precio_compra||0);
-    costoMPConMerma += cantConMerma * cu;
-  });
+  if (reabPrevio.length) {
+    costoMPConMerma = reabPrevio.reduce((s,r) => s + Number(r.cantidad||0) * Number(r.costo_unitario||0), 0);
+  } else {
+    lineas.forEach(l => {
+      const cantConMerma = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad_prog;
+      const st = stockMap[l.insumo_id];
+      const cu = st && st.saldo>0 ? st.valoracion/st.saldo : (state.productos.find(p=>p.id===l.insumo_id)?.precio_compra||0);
+      costoMPConMerma += cantConMerma * cu;
+    });
+  }
 
   // Conversion costs — only for subcontract routes. 15/Ago/2026: ya no
   // viene de recetaCostos (sección eliminada) — se toma de la ficha del
@@ -11556,29 +11690,35 @@ async function saveOP(estado = 'borrador') {
   }
   if (err){toast('Error: '+err.message,'error');return;}
 
+  // Si se bajó a 'borrador' porque faltaba reabastecer (arriba), refresca
+  // el modal con el id real recién asignado y el botón Reabastecer, en vez
+  // de seguir como si el usuario hubiera pedido guardar un borrador normal.
+  if (bloqueadoPorReabastecimiento) {
+    document.getElementById('op-id').value = opId;
+    document.getElementById('op-numero-preview').textContent = numeroPreservado || row.numero;
+    await loadAll();
+    refrescarBotonReabastecerOP();
+    return;
+  }
+
   // If starting production, register consumos in DB
   if (estado === 'en_proceso') {
-    const consumoRows = lineas.map(l => {
-      const cantReal = Number(l.cantidad_base||0) * (1+Number(l.merma_pct||0)/100) * cantidad_prog;
-      const st = stockMap[l.insumo_id];
-      const cu = st && st.saldo>0 ? st.valoracion/st.saldo : 0;
-      // Get lote from FIFO — first available layer
-      const primerLote = state.movimientos
-        .filter(m=>m.producto_id===l.insumo_id && (m.tipo==='entrada'||m.tipo==='ajuste_positivo'||m.tipo==='consignacion'))
-        .sort((a,b)=>a.fecha?.localeCompare(b.fecha||'')||0)[0];
-      return {
-        op_id: opId,
-        insumo_id: l.insumo_id,
-        cantidad_prog: cantReal,
-        cantidad_real: cantReal,
-        costo_unitario: cu,
-        costo_total: parseFloat((cantReal*cu).toFixed(4)),
-        lote: primerLote?.lote||null,
-        poliza: primerLote?.poliza||null,
-        bodega_id: document.getElementById('op-bodega-entrada').value||null,
-        unidad: l.unidad||'kg',
-      };
-    });
+    // 15/Ago/2026, a pedido explícito: ya no se calcula con stockMap
+    // (FIFO estimado) — se usan las filas reales que el operador ya
+    // asignó en el módulo de Reabastecimiento (lote, costo y bodega
+    // reales, no un promedio). Puede haber más de un lote por insumo.
+    const reabAsignado = (state.reabastecimiento||[]).filter(r => r.op_id === opId);
+    const consumoRows = reabAsignado.map(r => ({
+      op_id: opId,
+      insumo_id: r.insumo_id,
+      cantidad_prog: r.cantidad,
+      cantidad_real: r.cantidad,
+      costo_unitario: r.costo_unitario,
+      costo_total: parseFloat((r.cantidad * r.costo_unitario).toFixed(4)),
+      lote: r.lote,
+      bodega_id: r.bodega_id,
+      unidad: state.productos.find(p=>p.id===r.insumo_id)?.unidad || 'kg',
+    }));
     if (consumoRows.length) await sb.from('erp_op_consumos').insert(consumoRows);
 
     // Register cost rows — 15/Ago/2026: una sola fila desde el costo de
@@ -11596,8 +11736,10 @@ async function saveOP(estado = 'borrador') {
       }]);
     }
 
-    // Register inventory movements: consume MP, add WIP/PT
-    await registrarMovimientosOP(opId, opId, lineas, cantidad_prog, stockMap, row, lote);
+    // Register inventory movements: add WIP/PT + asientos, con el costo
+    // real del reabastecimiento (la salida del insumo ya se movió al
+    // asignar el lote — acá no se repite).
+    await registrarMovimientosOP(opId, opId, lineas, cantidad_prog, reabAsignado, row, lote);
   }
 
   toast(estado==='en_proceso'?'OP iniciada — consumos registrados':'OP guardada como borrador');
@@ -11614,7 +11756,7 @@ async function saveOP(estado = 'borrador') {
   }
 }
 
-async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockMap, opRow, lote) {
+async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, reabAsignado, opRow, lote) {
   const receta     = (state.recetas||[]).find(r => r.id === opRow.receta_id);
   const tipoOP     = opRow.tipo;
   const esInter    = esInterno(tipoOP);
@@ -11645,19 +11787,19 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockM
   // ── PASO 1: Calcular costo unitario del producto fabricado ──
   // Costo = (costo_MP × (1 + merma%)) + costo_conversion
   // La merma se absorbe en el costo, no es cuenta separada
-
-  let costoMPBase = 0; // costo MP sin merma
-  let costoMPConMerma = 0; // costo MP incluyendo merma
-
-  const consumoData = lineas.map(l => {
-    const cantSinMerma  = Number(l.cantidad_base||0) * cantidad_prog;
-    const cantConMerma  = cantSinMerma * (1 + Number(l.merma_pct||0)/100);
-    const st            = stockMap[l.insumo_id];
-    const costoUnitMP   = st && st.saldo > 0 ? st.valoracion / st.saldo : (state.productos.find(p=>p.id===l.insumo_id)?.precio_compra||0);
-    const costoLinea    = cantConMerma * costoUnitMP;
-    costoMPBase        += cantSinMerma * costoUnitMP;
-    costoMPConMerma    += costoLinea;
-    return { ...l, cantSinMerma, cantConMerma, costoUnit: costoUnitMP, costoLinea };
+  //
+  // 15/Ago/2026, a pedido explícito: el costo de MP ya no se estima con
+  // stockMap (FIFO promedio ciego) — viene de las filas reales de
+  // erp_reabastecimiento que el operador ya asignó lote por lote antes de
+  // poder llegar hasta acá (bloqueado en saveOP si faltaba). Puede haber
+  // más de una fila por insumo si se cubrió con varios lotes.
+  let costoMPConMerma = 0;
+  const consumoData = (reabAsignado||[]).map(r => {
+    const cant  = Number(r.cantidad||0);
+    const costo = Number(r.costo_unitario||0);
+    const costoLinea = cant * costo;
+    costoMPConMerma += costoLinea;
+    return { insumo_id: r.insumo_id, cantConMerma: cant, costoUnit: costo, costoLinea };
   });
 
   // ── Costos de conversión ──
@@ -11675,28 +11817,13 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, stockM
   const costoUnitFabricado    = cantidad_prog > 0 ? costoTotalFabricacion / cantidad_prog : 0;
 
   // ── PASO 2: Movimientos de inventario ──
-
-  // 2a. SALIDA de cada insumo → bodega entrada
-  for (const d of consumoData) {
-    const prod = state.productos.find(p => p.id === d.insumo_id);
-    const primerLote = state.movimientos
-      .filter(m => m.producto_id === d.insumo_id &&
-        (m.tipo==='entrada'||m.tipo==='ajuste_positivo'||m.tipo==='consignacion'))
-      .sort((a,b) => (a.fecha||'').localeCompare(b.fecha||''))[0];
-
-    await crearMovimiento({
-      tipo: 'salida',
-      producto_id: d.insumo_id,
-      cantidad: d.cantConMerma,
-      costo_unitario: d.costoUnit,
-      referencia_tipo: 'OP', referencia_id: opRow.numero,
-      notas: `Consumo OP ${opRow.numero} (incl. ${Number(d.merma_pct||0)}% merma)`,
-      fecha: opRow.fecha_inicio || today(),
-      bodega_id: opRow.bodega_entrada,
-      lote: primerLote?.lote||null,
-      poliza: primerLote?.poliza||null,
-    });
-  }
+  //
+  // 2a. SALIDA de cada insumo — ELIMINADO de acá (15/Ago/2026, a pedido
+  // explícito): ya no se genera en este punto. El movimiento de salida
+  // real, lote por lote, se crea en confirmarAsignacionLotes() en el
+  // momento en que el operador asigna cada lote — antes de que "Iniciar
+  // Producción" siquiera esté habilitado. Repetirlo acá hubiera duplicado
+  // la salida de inventario.
 
   // 2b. ENTRADA del producto fabricado → bodega salida
   await crearMovimiento({
@@ -12460,7 +12587,7 @@ function showRecetaDetail(id) {
                 <td class="td-mono" style="text-align:right">${fmtNum(l.cantidad_base)} ${p?.unidad||'kg'}</td>
                 <td class="td-mono" style="text-align:right">${Number(l.merma_pct||0).toFixed(2)}%</td>
                 <td class="td-mono" style="text-align:right;font-weight:600;color:var(--accent3)">${cantReal.toFixed(4)} ${p?.unidad||'kg'}</td>
-                <td>${l.requiere_reabastecimiento!==false?'<span class="badge badge-green" style="font-size:10px">Sí</span>':'<span class="badge badge-gray" style="font-size:10px">No</span>'}</td>
+                <td>${p?.ruta_obtener_bajo_pedido?'<span class="badge badge-green" style="font-size:10px">Sí</span>':'<span class="badge badge-gray" style="font-size:10px">No</span>'}</td>
               </tr>`;
             }).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:12px">Sin insumos configurados</td></tr>'}</tbody>
           </table>
@@ -13094,7 +13221,7 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
   const { data: ocServ, error: e1 } = await sb.from('erp_oc').insert({
     numero: null, proveedor_id: provSubId||null,
     fecha, entrega: fecha, status: 'borrador',
-    tipo_oc: 'subcontrato', ov_id: ovId,
+    tipo_oc: 'subcontrato', ov_id: ovId, receta_id: receta.id,
     notas: `Servicio ${OP_TIPO_LABEL[receta.tipo]||receta.tipo} — ${prod.code} ${cantidad} kg | desde ${origen_tipo} ${origen_id}`,
   }).select().single();
 
@@ -13120,11 +13247,18 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
   }
 
   // 2. OC de REABASTECIMIENTO de MP al subcontratista
-  const lineas = (state.recetaLineas||[]).filter(l => l.receta_id === receta.id && l.requiere_reabastecimiento !== false);
+  // 15/Ago/2026, a pedido explícito: la decisión de "reabastecer o no" ya
+  // no se lee de erp_receta_lineas.requiere_reabastecimiento (un snapshot
+  // que podía quedar desactualizado) — se consulta en vivo la ruta
+  // "Obtener bajo pedido" de la ficha del propio insumo, misma fuente que
+  // ya usa planificarAbastecimiento() para decidir si genera algo. Un
+  // insumo con esa ruta desactivada nunca se reabastece, sin importar qué
+  // diga la receta.
+  const lineas = (state.recetaLineas||[]).filter(l => l.receta_id === receta.id);
   for (const l of lineas) {
-    const cantMP    = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad;
-    const insumo    = state.productos.find(p => p.id === l.insumo_id);
-    // Siempre genera reabastecimiento de MP independiente del stock
+    const insumo = state.productos.find(p => p.id === l.insumo_id);
+    if (!insumo?.ruta_obtener_bajo_pedido) continue;
+    const cantMP = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad;
     await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', refServ, ovId, acc);
   }
 
@@ -14162,6 +14296,164 @@ const DIARIO_MANUFACTURA = 'MANUFACTURA';
 // aunque el producto ya tuviera proveedores configurados en Compra. Ahora
 // siempre se toma el primero de la lista real (prod.proveedores_compra),
 // que es la única fuente de verdad de qué proveedores vende ese producto.
+// ═══════════════════════════════════════════════════════════════
+// REABASTECIMIENTO POR LOTE (15/Ago/2026, a pedido explícito)
+// ═══════════════════════════════════════════════════════════════
+// Antes, "Iniciar Producción" consumía materia prima automáticamente a
+// costo FIFO promedio, sin que nadie eligiera de qué lote específico salía.
+// Ahora, cuando la receta de una OP (o de una OC de servicio de
+// subcontrato) tiene algún insumo con ruta "Obtener bajo pedido" activa,
+// el operador debe primero asignar manualmente los lotes reales que van a
+// cubrir esa cantidad — con su bodega y costo real — antes de poder
+// iniciar/confirmar. Esto reemplaza el cálculo FIFO ciego por trazabilidad
+// real de lote, y deja que el material vaya siempre a la bodega correcta.
+
+// Líneas de receta cuyo insumo necesita reabastecimiento — la fuente única
+// de verdad es la ruta del propio insumo, no un campo aparte en la receta.
+function lineasQueRequierenReabastecimiento(receta) {
+  return (state.recetaLineas||[]).filter(l => l.receta_id === receta?.id).filter(l => {
+    const insumo = state.productos.find(p => p.id === l.insumo_id);
+    return !!insumo?.ruta_obtener_bajo_pedido;
+  });
+}
+
+// Estado de reabastecimiento de un documento (OP u OC de servicio de
+// subcontrato): cuánto se requiere de cada insumo vs. cuánto ya se asignó
+// en erp_reabastecimiento, y si ya está completo (habilita Iniciar
+// Producción / Confirmar OC).
+function estadoReabastecimiento(tipoDoc, docId, receta, cantidadBase) {
+  const lineasReq = lineasQueRequierenReabastecimiento(receta);
+  if (!lineasReq.length) return { requiere: false, completo: true, detalle: [] };
+  const asignados = (state.reabastecimiento||[]).filter(r =>
+    tipoDoc === 'op' ? r.op_id === docId : r.oc_id === docId);
+  const detalle = lineasReq.map(l => {
+    const requerido = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidadBase;
+    const asignado  = asignados.filter(a => a.insumo_id === l.insumo_id).reduce((s,a) => s + Number(a.cantidad||0), 0);
+    return { insumo_id: l.insumo_id, requerido, asignado, completo: asignado >= requerido - 0.0001 };
+  });
+  return { requiere: true, completo: detalle.every(d => d.completo), detalle };
+}
+
+let reabCurrentDoc = null; // { tipoDoc:'op'|'oc', docId, numero, receta, cantidadBase }
+
+function abrirReabastecimiento(tipoDoc, docId) {
+  const doc = tipoDoc === 'op' ? (state.op||[]).find(x=>x.id===docId) : (state.oc||[]).find(x=>x.id===docId);
+  if (!doc) { toast('Documento no encontrado','error'); return; }
+  const receta = (state.recetas||[]).find(r=>r.id===doc.receta_id);
+  if (!receta) { toast('Esta orden no tiene receta asociada — no se puede reabastecer','error'); return; }
+  const cantidadBase = tipoDoc === 'op'
+    ? Number(doc.cantidad_prog||0)
+    : Number((state.ocItems||[]).find(i=>i.oc_id===doc.id)?.cantidad||0);
+
+  reabCurrentDoc = { tipoDoc, docId, numero: doc.numero||'Borrador', receta, cantidadBase };
+  renderReabastecimientoModal();
+  openModal('modal-reabastecimiento');
+}
+
+function renderReabastecimientoModal() {
+  const { tipoDoc, docId, numero, receta, cantidadBase } = reabCurrentDoc;
+  const estado = estadoReabastecimiento(tipoDoc, docId, receta, cantidadBase);
+  document.getElementById('reab-title').textContent = `Reabastecimiento — ${numero}`;
+
+  const secciones = estado.detalle.map((d, idx) => {
+    const insumo    = state.productos.find(p=>p.id===d.insumo_id);
+    const pendiente = Math.max(0, d.requerido - d.asignado);
+    const bodegaSel = document.getElementById(`reab-bodega-${idx}`);
+    const bodegaId  = bodegaSel ? bodegaSel.value : (receta.bodega_entrada_default||'');
+    const lotes     = bodegaId ? calcStockPorLote(d.insumo_id, bodegaId).filter(l => l.saldo > 0.0001) : [];
+    const bodOpts   = '<option value="">— Seleccionar —</option>' +
+      (state.bodegas||[]).filter(b=>b.activa!==false).map(b=>`<option value="${b.id}" ${b.id===bodegaId?'selected':''}>${b.codigo} — ${b.nombre}</option>`).join('');
+
+    return `
+      <div style="border:1.5px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-weight:700;font-size:14px">${insumo?.description||'—'}</div>
+            <div style="font-size:11px;color:var(--text3)">${insumo?.codigo_interno||insumo?.code||''}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:11px;color:var(--text3)">Requerido / Asignado / Pendiente</div>
+            <div style="font-family:'DM Mono',monospace;font-weight:700">
+              ${fmtNum(d.requerido)} / <span style="color:${d.completo?'var(--green)':'var(--accent3)'}">${fmtNum(d.asignado)}</span> /
+              <span style="color:${pendiente>0.0001?'var(--red)':'var(--green)'}">${fmtNum(pendiente)}</span> ${insumo?.unidad||'kg'}
+            </div>
+          </div>
+        </div>
+
+        <div class="field" style="margin-bottom:10px;max-width:320px">
+          <label>Bodega</label>
+          <select id="reab-bodega-${idx}" onchange="renderReabastecimientoModal()">${bodOpts}</select>
+        </div>
+
+        ${pendiente <= 0.0001 ? '<div style="color:var(--green);font-size:12px;font-weight:600">✓ Cubierto</div>' :
+          !bodegaId ? '<div style="color:var(--text3);font-size:12px">Elegí una bodega para ver los lotes disponibles.</div>' :
+          !lotes.length ? '<div style="color:var(--red);font-size:12px">Sin stock disponible en esta bodega.</div>' :
+          `<div class="table-wrap">
+            <table>
+              <thead><tr><th>Lote</th><th style="text-align:right">Disponible</th><th style="text-align:right">Costo Unit.</th><th style="text-align:right">Asignar</th></tr></thead>
+              <tbody>${lotes.map((l,li) => `
+                <tr>
+                  <td class="td-mono">${l.lote}</td>
+                  <td class="td-mono" style="text-align:right">${fmtNum(l.saldo)} ${insumo?.unidad||'kg'}</td>
+                  <td class="td-mono" style="text-align:right">${fmtMoney(l.costo)}</td>
+                  <td style="text-align:right"><input type="number" id="reab-cant-${idx}-${li}" min="0" max="${l.saldo}" step="0.0001" placeholder="0.000" style="width:110px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px;text-align:right"/></td>
+                </tr>`).join('')}</tbody>
+            </table>
+          </div>
+          <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="confirmarAsignacionLotes(${idx}, '${d.insumo_id}')">Asignar lotes seleccionados</button>`
+        }
+      </div>`;
+  }).join('');
+
+  document.getElementById('reab-body').innerHTML = secciones + `
+    <div style="text-align:center;padding:12px;border-radius:8px;background:${estado.completo?'#ECFDF5':'#FFFBEB'};color:${estado.completo?'#16A34A':'#D97706'};font-weight:600;font-size:13px">
+      ${estado.completo ? '✓ Reabastecimiento completo' : '⏳ Reabastecimiento pendiente — no se puede iniciar/confirmar hasta asignar todos los lotes'}
+    </div>`;
+}
+
+async function confirmarAsignacionLotes(idx, insumoId) {
+  const { tipoDoc, docId, numero } = reabCurrentDoc;
+  const bodegaId = document.getElementById(`reab-bodega-${idx}`)?.value;
+  if (!bodegaId) { toast('Elegí una bodega primero','error'); return; }
+  const lotes = calcStockPorLote(insumoId, bodegaId).filter(l => l.saldo > 0.0001);
+
+  const asignaciones = [];
+  for (let li = 0; li < lotes.length; li++) {
+    const input = document.getElementById(`reab-cant-${idx}-${li}`);
+    const cant  = parseFloat(input?.value)||0;
+    if (cant <= 0) continue;
+    if (cant > lotes[li].saldo + 0.0001) { toast(`La cantidad excede el saldo disponible del lote ${lotes[li].lote}`,'error'); return; }
+    asignaciones.push({ lote: lotes[li].lote, cantidad: cant, costo: lotes[li].costo });
+  }
+  if (!asignaciones.length) { toast('Ingresá una cantidad para al menos un lote','error'); return; }
+
+  for (const a of asignaciones) {
+    const { error } = await sb.from('erp_reabastecimiento').insert({
+      op_id: tipoDoc==='op' ? docId : null,
+      oc_id: tipoDoc==='oc' ? docId : null,
+      insumo_id: insumoId, lote: a.lote, cantidad: a.cantidad,
+      costo_unitario: a.costo, bodega_id: bodegaId,
+    });
+    if (error) { toast('Error asignando lote: '+error.message,'error'); continue; }
+
+    await crearMovimiento({
+      tipo: 'salida', producto_id: insumoId, cantidad: a.cantidad, costo_unitario: a.costo,
+      referencia_tipo: 'REABASTECIMIENTO', referencia_id: numero,
+      notas: `Reabastecimiento ${numero} — lote ${a.lote}`,
+      fecha: today(), bodega_id: bodegaId, lote: a.lote,
+    });
+  }
+
+  toast('Lotes asignados');
+  await loadAll();
+  reabCurrentDoc.receta = (state.recetas||[]).find(r=>r.id===reabCurrentDoc.receta.id); // refresh en caso de cambios
+  renderReabastecimientoModal();
+
+  // Refrescar el botón Iniciar/Confirmar del documento padre, si sigue abierto
+  if (tipoDoc === 'op') { refrescarBotonReabastecerOP(); }
+  else { showOCPanel(docId); }
+}
+
 function proveedorPredeterminado(prod) {
   return (prod?.proveedores_compra||[])[0]?.proveedor_id || null;
 }
@@ -16878,6 +17170,27 @@ function showOCPanel(ocId) {
   const btnEdit = document.getElementById('btn-editar-oc');
   if (btnEdit) { btnEdit.style.display = isBorrador ? '' : 'none'; }
 
+  // Reabastecer (15/Ago/2026, a pedido explícito): solo aplica a OC de
+  // servicio de subcontrato con receta asociada (planificarSubcontrato ya
+  // guarda receta_id al generarla). Si la receta requiere reabastecimiento
+  // y todavía no está completo, Confirmar queda deshabilitado — mismo
+  // criterio que Iniciar Producción en la OP.
+  const btnReabOC = document.getElementById('btn-oc-reabastecer');
+  if (btnReabOC) {
+    const recetaOC = (state.recetas||[]).find(r=>r.id===oc.receta_id);
+    const cantidadOC = Number(ocItems[0]?.cantidad||0);
+    const estOC = recetaOC && cantidadOC ? estadoReabastecimiento('oc', ocId, recetaOC, cantidadOC) : { requiere:false, completo:true };
+    if (estOC.requiere) {
+      btnReabOC.style.display = '';
+      const cubiertos = estOC.detalle.filter(d=>d.completo).length;
+      btnReabOC.textContent = estOC.completo ? '✓ Reabastecido' : `🔄 Reabastecer (${cubiertos}/${estOC.detalle.length})`;
+      if (btnConf) btnConf.disabled = isBorrador && !estOC.completo;
+    } else {
+      btnReabOC.style.display = 'none';
+      if (btnConf) btnConf.disabled = false;
+    }
+  }
+
   // Recibir — solo para productos físicos confirmados
   const btnRec = document.getElementById('btn-recibir');
   if (btnRec) btnRec.style.display = canReceive ? '' : 'none';
@@ -16908,6 +17221,19 @@ async function confirmarOC() {
 
   const ocItems  = state.ocItems.filter(i => i.oc_id === currentOCId);
   const esServicio = ocItems.every(i => state.productos.find(p=>p.id===i.producto_id)?.tipo === 'servicio');
+
+  // REABASTECIMIENTO (15/Ago/2026, a pedido explícito): mismo criterio que
+  // Iniciar Producción en la OP — no se puede confirmar hasta haber
+  // asignado los lotes reales de los insumos que la receta requiera.
+  const recetaOC = (state.recetas||[]).find(r=>r.id===oc.receta_id);
+  const cantidadOC = Number(ocItems[0]?.cantidad||0);
+  if (recetaOC && cantidadOC) {
+    const estOC = estadoReabastecimiento('oc', currentOCId, recetaOC, cantidadOC);
+    if (estOC.requiere && !estOC.completo) {
+      toast('Faltan insumos por reabastecer — asigná los lotes pendientes antes de confirmar','error');
+      return;
+    }
+  }
 
   const label = oc.numero || 'esta OC (aún sin número)';
   const msg = esServicio
