@@ -4931,6 +4931,39 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   </div>
 </div>
 
+<!-- RECEPCIÓN DE TELA MODAL (16/Ago/2026, a pedido explícito) — captura de
+     rollos individuales (catch weight) para OPs de tejido interno. Asignar
+     el hilo ya NO convierte instantáneamente en tela (ver comentario en
+     registrarMovimientosOP) — la conversión real ocurre acá, rollo por
+     rollo, a medida que el operador pesa cada rollo físico que sale del
+     telar. Usa erp_rollos (existía en el esquema desde Fase 1, sin pantalla
+     hasta ahora). -->
+<div class="modal-overlay" id="modal-recepcion-tela">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="recep-tela-title">Recepción de Tela</div>
+      <button class="modal-close" onclick="closeModal('modal-recepcion-tela')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="recep-tela-op-id"/>
+      <div id="recep-tela-info" style="margin-bottom:20px"></div>
+
+      <div class="form-section-title" style="margin-bottom:12px">Agregar Rollo</div>
+      <div class="form-grid form-grid-2" style="margin-bottom:10px">
+        <div class="field"><label>Número / Código de Rollo *</label><input type="text" id="recep-tela-rollo-numero"/></div>
+        <div class="field"><label>Peso (kg) *</label><input type="number" step="0.0001" min="0" id="recep-tela-rollo-peso" placeholder="0.000"/></div>
+      </div>
+      <button class="btn btn-primary btn-sm" style="margin-bottom:20px" onclick="confirmarRollo()">+ Agregar Rollo</button>
+
+      <div class="form-section-title" style="margin-bottom:12px">Rollos Registrados</div>
+      <div class="line-items" id="recep-tela-lista"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-recepcion-tela')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- BODEGA MODAL -->
 <div class="modal-overlay" id="modal-bodega">
   <div class="modal">
@@ -11323,7 +11356,8 @@ function renderOP() {
       <td><div class="td-actions">
         ${o.estado==='en_proceso'&&esSubcontrato(o.tipo)?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirEnvioOP('${o.id}')">📦 Enviar a Terceros</button>`:''}
         ${o.estado==='enviado_terceros'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirRecepcionOP('${o.id}')">📥 Recibir de Terceros</button>`:''}
-        ${o.estado==='en_proceso'&&!esSubcontrato(o.tipo)?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirCompletarOP('${o.id}')">✓ Completar</button>`:''}
+        ${o.estado==='en_proceso'&&esInterno(o.tipo)?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirRecepcionTela('${o.id}')">📥 Recepción de Tela (${fmtNum(kgRecibidosOP(o.id))}/${fmtNum(o.cantidad_prog)} kg)</button>`:''}
+        ${o.estado==='en_proceso'&&esInterno(o.tipo)&&kgRecibidosOP(o.id)>=Number(o.cantidad_prog||0)-0.0001?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirCompletarOP('${o.id}')">✓ Completar</button>`:''}
         ${o.estado==='recibido_terceros'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirCompletarOP('${o.id}')">✓ Completar</button>`:''}
         ${o.estado==='borrador'||o.estado==='en_proceso'?`
           <button class="btn btn-sm btn-ghost" style="color:var(--red);border-color:var(--red)" onclick="event.stopPropagation();cancelarOP('${o.id}')">✕ Cancelar</button>`:''}
@@ -11825,40 +11859,55 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, reabAs
   // Producción" siquiera esté habilitado. Repetirlo acá hubiera duplicado
   // la salida de inventario.
 
-  // 2b. ENTRADA del producto fabricado → bodega salida
-  await crearMovimiento({
-    tipo: 'entrada',
-    producto_id: receta?.producto_id,
-    cantidad: cantidad_prog,
-    costo_unitario: parseFloat(costoUnitFabricado.toFixed(4)),
-    referencia_tipo: 'OP', referencia_id: opRow.numero,
-    notas: `Producción OP ${opRow.numero} | Costo: ${fmtMoney(costoUnitFabricado)}/kg`,
-    fecha: opRow.fecha_inicio || today(),
-    bodega_id: opRow.bodega_salida,
-    lote,
-  });
-
-  // 2c. Rollo físico de producto terminado — solo cuando el destino es una
-  // bodega tipo "producto_terminado" (producción intermedia — tejido crudo,
-  // WIP — que aterriza en otras bodegas no genera rollo despachable). Este
-  // rollo es lo que "Generar Despacho" (módulo de Ventas) usa para saber qué
-  // hay disponible y de qué OV es, vía opRow.ov_id. Por ahora se genera UN
-  // solo rollo por corrida (= cantidad_prog); partir la producción en varios
-  // rollos físicos desde el inicio queda pendiente si se necesita.
-  const bodegaSalidaRow = (state.bodegas||[]).find(b => b.id === opRow.bodega_salida);
-  if (bodegaSalidaRow?.tipo === 'producto_terminado' && receta?.producto_id) {
-    const { error: rolloErr } = await sb.from('erp_rollos').insert({
-      numero_rollo: `${opRow.numero}-R1`,
-      producto_id: receta.producto_id,
-      peso_kg: cantidad_prog,
+  // 2b/2c/ASIENTO 3 (entrada del producto fabricado, rollo físico y
+  // terminación WIP→destino): SOLO para rutas subcontratadas (16/Ago/2026,
+  // a pedido explícito). BUGFIX real encontrado probando en vivo: para
+  // tejido interno, esto convertía el hilo en tela de forma instantánea en
+  // el mismo momento de "Iniciar Producción" — como si asignar la materia
+  // prima ya fuera el producto terminado. No es así: asignar el hilo solo
+  // debe descargarlo a Inventario en Proceso (Asiento 1, abajo). La
+  // conversión real a tela ocurre después, rollo por rollo, en el nuevo
+  // módulo "Recepción de Tela" (ver abrirRecepcionTela/confirmarRollo) — el
+  // operador va pesando cada rollo físico según sale del telar, hasta
+  // completar la cantidad programada, y ahí recién se cierra la OP.
+  // Las rutas subcontratadas (tejido/tintura/acabado con proveedor externo)
+  // no tienen ese módulo todavía — mantienen el comportamiento anterior:
+  // entrada + rollo + Asiento 3 en bloque, al iniciar producción.
+  if (!esInter) {
+    // 2b. ENTRADA del producto fabricado → bodega salida
+    await crearMovimiento({
+      tipo: 'entrada',
+      producto_id: receta?.producto_id,
+      cantidad: cantidad_prog,
+      costo_unitario: parseFloat(costoUnitFabricado.toFixed(4)),
+      referencia_tipo: 'OP', referencia_id: opRow.numero,
+      notas: `Producción OP ${opRow.numero} | Costo: ${fmtMoney(costoUnitFabricado)}/kg`,
+      fecha: opRow.fecha_inicio || today(),
       bodega_id: opRow.bodega_salida,
-      estado: 'disponible',
-      op_id: opId,
       lote,
     });
-    if (rolloErr) {
-      console.error('registrarMovimientosOP: error creando rollo:', rolloErr.message);
-      toast('Producción registrada, pero no se pudo crear el rollo de inventario — revisa la consola', 'error');
+
+    // 2c. Rollo físico de producto terminado — solo cuando el destino es una
+    // bodega tipo "producto_terminado". Por ahora se genera UN solo rollo
+    // por corrida (= cantidad_prog); partir la producción en varios rollos
+    // físicos desde el inicio queda pendiente si se necesita (mismo gap que
+    // ya existía, sin cambios acá — el fix de catch-weight rollo-por-rollo
+    // solo se construyó para tejido interno, ver comentario arriba).
+    const bodegaSalidaRow = (state.bodegas||[]).find(b => b.id === opRow.bodega_salida);
+    if (bodegaSalidaRow?.tipo === 'producto_terminado' && receta?.producto_id) {
+      const { error: rolloErr } = await sb.from('erp_rollos').insert({
+        numero_rollo: `${opRow.numero}-R1`,
+        producto_id: receta.producto_id,
+        peso_kg: cantidad_prog,
+        bodega_id: opRow.bodega_salida,
+        estado: 'disponible',
+        op_id: opId,
+        lote,
+      });
+      if (rolloErr) {
+        console.error('registrarMovimientosOP: error creando rollo:', rolloErr.message);
+        toast('Producción registrada, pero no se pudo crear el rollo de inventario — revisa la consola', 'error');
+      }
     }
   }
 
@@ -11951,32 +12000,225 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, reabAs
   // en este catálogo también es 11301002), el asiento queda con efecto
   // neto cero — correcto: el valor ya estaba en la cuenta correcta desde
   // el Asiento 1, no hay nada más que mover hasta el siguiente nivel.
-  const ctaDestino = getCtaValoracionProducto(receta?.producto_id) || ctaTerminado;
+  //
+  // 16/Ago/2026: para tejido interno este Asiento 3 ya NO se postea acá —
+  // se posterá rollo por rollo desde confirmarRollo() (Recepción de Tela),
+  // mismo cálculo (costoUnitFabricado = op.costo_total/cantidad_prog),
+  // prorrateado por el peso real de cada rollo en vez de todo de un golpe.
+  if (!esInter) {
+    const ctaDestino = getCtaValoracionProducto(receta?.producto_id) || ctaTerminado;
 
-  // ASIENTO 3: Terminación — WIP → cuenta real del producto fabricado
+    // ASIENTO 3: Terminación — WIP → cuenta real del producto fabricado
+    await crearAsiento({
+      diario: DIARIO_MANUFACTURA,
+      fecha: opRow.fecha_inicio || today(),
+      descripcion: `OP ${opRow.numero} — Terminación: WIP → ${ctaDestino?.nombre||'PT'} | Lote ${lote}`,
+      referencia: opRow.numero, referencia_id: opId,
+      moneda: 'GTQ', tipo_cambio: 1,
+      lineas: [
+        {
+          cuenta_id:    ctaDestino?.id||null,
+          cuenta_codigo: ctaDestino?.codigo||CTA_INV_TERMINADO,
+          cuenta_nombre: ctaDestino?.nombre||'Inventario Producto Terminado',
+          debe: costoTotalFabricacion, haber: 0,
+          descripcion: `${cantidad_prog} kg × Q${costoUnitFabricado.toFixed(4)}/kg = Q${costoTotalFabricacion.toFixed(2)} | Lote ${lote}`,
+        },
+        {
+          cuenta_id:    ctaProceso?.id||null,
+          cuenta_codigo: CTA_INV_PROCESO,
+          cuenta_nombre: ctaProceso?.nombre||'Inventario en Proceso',
+          debe: 0, haber: costoTotalFabricacion,
+          descripcion: `Cierre WIP OP ${opRow.numero}`,
+        },
+      ],
+    });
+  }
+}
+
+// ════════════════════════════════════════════════════
+// Recepción de Tela — captura de rollos individuales, catch weight
+// (16/Ago/2026, a pedido explícito)
+//
+// Solo para tejido interno (esInterno) por ahora — ver comentario en
+// registrarMovimientosOP. Cada rollo que el operador pesa físicamente:
+//   1. Crea el registro trazable en erp_rollos (existía en el esquema
+//      desde Fase 1 — propuesta_arquitectura_produccion.md — pero nunca
+//      tuvo pantalla propia).
+//   2. Genera el movimiento de entrada real de inventario, por el peso de
+//      ESE rollo (no la cantidad programada completa).
+//   3. Postea su propia porción del Asiento 3 (WIP → cuenta real de la
+//      categoría del producto fabricado), prorrateada por peso — el mismo
+//      cálculo que antes se hacía de un solo golpe en registrarMovimientosOP.
+// El costo unitario usado es siempre op.costo_total / op.cantidad_prog —
+// mismo patrón que ya usa confirmarEnvioOP/confirmarRecepcionOP para el
+// costo de un kg de este producto (ya incluye el costo real de MP de los
+// lotes asignados vía reabastecimiento).
+// ════════════════════════════════════════════════════
+
+function rollosDeOP(opId) {
+  return (state.rollos||[]).filter(r => r.op_id === opId)
+    .sort((a,b) => (a.created_at||'').localeCompare(b.created_at||''));
+}
+
+function kgRecibidosOP(opId) {
+  return rollosDeOP(opId).reduce((s,r) => s + Number(r.peso_kg||0), 0);
+}
+
+function abrirRecepcionTela(opId) {
+  const op = (state.op||[]).find(x=>x.id===opId);
+  if (!op) { toast('OP no encontrada','error'); return; }
+  if (!op.bodega_salida) { toast('Esta OP no tiene bodega de salida configurada','error'); return; }
+  document.getElementById('recep-tela-op-id').value = opId;
+  renderRecepcionTelaModal();
+  openModal('modal-recepcion-tela');
+}
+
+function renderRecepcionTelaModal() {
+  const opId = document.getElementById('recep-tela-op-id').value;
+  const op   = (state.op||[]).find(x=>x.id===opId);
+  if (!op) return;
+  const prod      = state.productos.find(p=>p.id===op.producto_id);
+  const rollos    = rollosDeOP(opId);
+  const recibido  = rollos.reduce((s,r)=>s+Number(r.peso_kg||0),0);
+  const pendiente = Math.max(0, Number(op.cantidad_prog||0) - recibido);
+
+  document.getElementById('recep-tela-title').textContent = `📥 Recepción de Tela — ${op.numero}`;
+  document.getElementById('recep-tela-info').innerHTML = `
+    <div style="display:flex;gap:16px;align-items:center;padding:12px 16px;background:var(--surface2);border-radius:8px;flex-wrap:wrap">
+      <div><div style="font-size:11px;color:var(--text3)">Producto</div><div style="font-size:13px;font-weight:600">${prod?.description||'—'}</div></div>
+      <div><div style="font-size:11px;color:var(--text3)">Programado</div><div style="font-size:13px;font-weight:600">${fmtNum(op.cantidad_prog)} kg</div></div>
+      <div><div style="font-size:11px;color:var(--text3)">Recibido</div><div style="font-size:13px;font-weight:600;color:var(--green)">${fmtNum(recibido)} kg</div></div>
+      <div><div style="font-size:11px;color:var(--text3)">Pendiente</div><div style="font-size:13px;font-weight:700;color:${pendiente>0.0001?'var(--red)':'var(--green)'}">${fmtNum(pendiente)} kg</div></div>
+    </div>
+    ${pendiente<=0.0001 ? '<div style="margin-top:10px;text-align:center;padding:10px;border-radius:8px;background:#ECFDF5;color:#16A34A;font-weight:600;font-size:13px">✓ Cantidad completa — cerrá la OP con el botón "Completar" en la lista de Órdenes de Producción</div>' : ''}
+  `;
+
+  document.getElementById('recep-tela-rollo-numero').value = `${op.numero}-R${rollos.length+1}`;
+  document.getElementById('recep-tela-rollo-peso').value   = '';
+
+  document.getElementById('recep-tela-lista').innerHTML = rollos.length ? `
+    <table><thead><tr><th>Rollo</th><th style="text-align:right">Peso</th><th>Bodega</th><th>Fecha</th><th></th></tr></thead>
+    <tbody>${rollos.map(r=>{
+      const bod = (state.bodegas||[]).find(b=>b.id===r.bodega_id);
+      return `<tr>
+        <td class="td-mono">${r.numero_rollo}</td>
+        <td class="td-mono" style="text-align:right">${fmtNum(r.peso_kg)} kg</td>
+        <td style="font-size:12px">${bod?.nombre||'—'}</td>
+        <td style="font-size:12px">${r.created_at?fmtDate(r.created_at.slice(0,10)):'—'}</td>
+        <td style="text-align:right"><button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="eliminarRolloOP('${r.id}')">✕</button></td>
+      </tr>`;
+    }).join('')}</tbody></table>
+  ` : '<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">Sin rollos registrados todavía</div>';
+}
+
+async function confirmarRollo() {
+  const opId = document.getElementById('recep-tela-op-id').value;
+  const op   = (state.op||[]).find(x=>x.id===opId);
+  if (!op) return;
+  const numero = document.getElementById('recep-tela-rollo-numero').value.trim();
+  const peso   = parseFloat(document.getElementById('recep-tela-rollo-peso').value);
+  if (!numero) { toast('Ingresá un número/código de rollo','error'); return; }
+  if (isNaN(peso) || peso <= 0) { toast('Peso inválido','error'); return; }
+  if ((state.rollos||[]).some(r=>r.numero_rollo===numero)) { toast('Ya existe un rollo con ese número','error'); return; }
+
+  // Mismo patrón que confirmarEnvioOP/confirmarRecepcionOP: costo por kg =
+  // costo total de la OP (ya con el costo real de MP del reabastecimiento)
+  // / cantidad programada. Constante por OP, se prorratea por el peso real
+  // de cada rollo.
+  const costoUnit = op.cantidad_prog > 0 ? Number(op.costo_total||0)/Number(op.cantidad_prog) : 0;
+
+  const { error: rolloErr } = await sb.from('erp_rollos').insert({
+    numero_rollo: numero, producto_id: op.producto_id, peso_kg: peso,
+    bodega_id: op.bodega_salida, estado: 'disponible', op_id: opId, lote: op.lote_produccion,
+  });
+  if (rolloErr) { toast('Error creando rollo: '+rolloErr.message,'error'); return; }
+
+  await crearMovimiento({
+    tipo: 'entrada', producto_id: op.producto_id, cantidad: peso,
+    costo_unitario: parseFloat(costoUnit.toFixed(4)),
+    referencia_tipo: 'OP-ROLLO', referencia_id: numero,
+    notas: `Recepción de tela — OP ${op.numero} — rollo ${numero}`,
+    fecha: today(), bodega_id: op.bodega_salida, lote: op.lote_produccion,
+  });
+
+  const ctaProceso = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
+  const ctaDestino = getCtaValoracionProducto(op.producto_id) || state.nomenclatura.find(n=>n.codigo===CTA_INV_TERMINADO);
+  const monto      = parseFloat((peso * costoUnit).toFixed(4));
   await crearAsiento({
-    diario: DIARIO_MANUFACTURA,
-    fecha: opRow.fecha_inicio || today(),
-    descripcion: `OP ${opRow.numero} — Terminación: WIP → ${ctaDestino?.nombre||'PT'} | Lote ${lote}`,
-    referencia: opRow.numero, referencia_id: opId,
+    diario: DIARIO_MANUFACTURA, fecha: today(),
+    descripcion: `OP ${op.numero} — Recepción rollo ${numero} — ${fmtNum(peso)} kg`,
+    referencia: op.numero, referencia_id: opId,
     moneda: 'GTQ', tipo_cambio: 1,
     lineas: [
       {
-        cuenta_id:    ctaDestino?.id||null,
-        cuenta_codigo: ctaDestino?.codigo||CTA_INV_TERMINADO,
-        cuenta_nombre: ctaDestino?.nombre||'Inventario Producto Terminado',
-        debe: costoTotalFabricacion, haber: 0,
-        descripcion: `${cantidad_prog} kg × Q${costoUnitFabricado.toFixed(4)}/kg = Q${costoTotalFabricacion.toFixed(2)} | Lote ${lote}`,
+        cuenta_id: ctaDestino?.id||null, cuenta_codigo: ctaDestino?.codigo||CTA_INV_TERMINADO,
+        cuenta_nombre: ctaDestino?.nombre||'Inventario', debe: monto, haber: 0,
+        descripcion: `Rollo ${numero} — ${fmtNum(peso)} kg × Q${costoUnit.toFixed(4)}/kg`,
       },
       {
-        cuenta_id:    ctaProceso?.id||null,
-        cuenta_codigo: CTA_INV_PROCESO,
-        cuenta_nombre: ctaProceso?.nombre||'Inventario en Proceso',
-        debe: 0, haber: costoTotalFabricacion,
-        descripcion: `Cierre WIP OP ${opRow.numero}`,
+        cuenta_id: ctaProceso?.id||null, cuenta_codigo: CTA_INV_PROCESO,
+        cuenta_nombre: ctaProceso?.nombre||'Inventario en Proceso', debe: 0, haber: monto,
+        descripcion: `Salida WIP — rollo ${numero}`,
       },
     ],
   });
+
+  toast(`Rollo ${numero} registrado — ${fmtNum(peso)} kg`);
+  await loadAll();
+  renderRecepcionTelaModal();
+  renderOP();
+}
+
+async function eliminarRolloOP(rolloId) {
+  const rollo = (state.rollos||[]).find(r=>r.id===rolloId);
+  if (!rollo) return;
+  if (!confirm(`¿Eliminar el rollo ${rollo.numero_rollo}? Esto revierte el movimiento de inventario y el asiento contable asociados.`)) return;
+
+  // Mismo costo unitario con el que se creó el rollo — se busca en el
+  // movimiento de entrada original en vez de recalcularlo desde
+  // op.costo_total, que puede haber cambiado desde entonces. Si por algo no
+  // se encuentra, se usa el costo actual como respaldo (mejor que costo 0,
+  // que dejaría la valorización del lote inflada tras el ajuste).
+  const op = (state.op||[]).find(x=>x.id===rollo.op_id);
+  const movOrig = (state.movimientos||[]).find(m =>
+    m.referencia_tipo === 'OP-ROLLO' && m.referencia_id === rollo.numero_rollo && m.tipo === 'entrada');
+  const costoUnitReversa = movOrig
+    ? Number(movOrig.costo_unitario_gtq||movOrig.costo_unitario||0)
+    : (op && op.cantidad_prog > 0 ? Number(op.costo_total||0)/Number(op.cantidad_prog) : 0);
+
+  await crearMovimiento({
+    tipo: 'ajuste_negativo', producto_id: rollo.producto_id, cantidad: rollo.peso_kg,
+    costo_unitario: parseFloat(costoUnitReversa.toFixed(4)),
+    referencia_tipo: 'OP-ROLLO-REVERSA', referencia_id: rollo.numero_rollo,
+    notas: `Reversa rollo ${rollo.numero_rollo}`, fecha: today(), bodega_id: rollo.bodega_id, lote: rollo.lote,
+  });
+
+  // Reversa contable: busca el asiento original de este rollo específico
+  // (por descripción — mismo patrón que usa deleteOP para sus reversas) y
+  // postea uno igual con debe/haber invertidos.
+  const asientoOrig = (state.asientos||[]).find(a =>
+    a.referencia_id === rollo.op_id && (a.descripcion||'').includes(`rollo ${rollo.numero_rollo} —`));
+  if (asientoOrig) {
+    const lineasOrig = (state.asientoLineas||[]).filter(l=>l.asiento_id===asientoOrig.id);
+    if (lineasOrig.length) {
+      await crearAsiento({
+        diario: DIARIO_MANUFACTURA, fecha: today(),
+        descripcion: `REVERSA — ${asientoOrig.descripcion}`,
+        referencia: asientoOrig.referencia, referencia_id: asientoOrig.referencia_id,
+        moneda: 'GTQ', tipo_cambio: 1,
+        lineas: lineasOrig.map(l => ({
+          cuenta_id: l.cuenta_id, cuenta_codigo: l.cuenta_codigo, cuenta_nombre: l.cuenta_nombre,
+          debe: l.haber, haber: l.debe, descripcion: `Reversa: ${l.descripcion||''}`,
+        })),
+      });
+    }
+  }
+
+  await sb.from('erp_rollos').delete().eq('id', rolloId);
+  toast(`Rollo ${rollo.numero_rollo} eliminado`);
+  await loadAll();
+  renderRecepcionTelaModal();
+  renderOP();
 }
 
 // ════════════════════════════════════════════════════
@@ -12136,7 +12378,12 @@ function abrirCompletarOP(id) {
   if (!op) return;
   const consumos = (state.opConsumos||[]).filter(c=>c.op_id===id);
   const envioRecibido = (state.enviosTerceros||[]).find(e=>e.op_id===id && e.estado==='recibido');
-  const cantRealDefault = envioRecibido?.peso_recibido_kg ?? op.cantidad_prog;
+  // 16/Ago/2026: para tejido interno ahora existe el peso REAL capturado
+  // rollo por rollo (Recepción de Tela) — se usa ese total en vez de asumir
+  // que se produjo exactamente lo programado, mismo criterio que ya se
+  // usaba para el peso recibido de un subcontratista.
+  const kgRollos = esInterno(op.tipo) ? kgRecibidosOP(id) : 0;
+  const cantRealDefault = envioRecibido?.peso_recibido_kg ?? (kgRollos > 0 ? kgRollos : op.cantidad_prog);
 
   document.getElementById('completar-op-id').value = id;
   document.getElementById('completar-op-cantprog').textContent = fmtNum(op.cantidad_prog)+' kg';
@@ -12177,7 +12424,18 @@ async function confirmarCompletarOP() {
   const mensajes = [];
 
   // Si cantidad real ≠ programada → ajuste contable por diferencia
-  const diff = cantReal - Number(op.cantidad_prog||0);
+  //
+  // 16/Ago/2026: este ajuste asume que ya se posteó un Asiento 3 en bloque
+  // por cantidad_prog completa (WIP → Terminado), que "Completar OP" viene
+  // a corregir contra lo real — eso sigue siendo cierto para rutas
+  // subcontratadas. Para tejido interno YA NO aplica: cada rollo (Recepción
+  // de Tela) posteó su propio Asiento 3 prorrateado por su peso real a
+  // medida que se recibía — no hay un asiento en bloque que corregir acá.
+  // El saldo que quede en Proceso (Asiento 1 menos lo acreditado rollo por
+  // rollo) YA ES la merma/variación real de conversión, correctamente
+  // reflejada sin necesidad de este ajuste — aplicarlo de nuevo aquí
+  // duplicaría el efecto contable.
+  const diff = (esInterno(op.tipo) ? 0 : cantReal - Number(op.cantidad_prog||0));
   if (Math.abs(diff) >= 0.001) {
     const ctaProceso   = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
     // BUGFIX (debugging en vivo, 13/Ago/2026): usaba CTA_INV_TERMINADO
@@ -12406,7 +12664,34 @@ async function deleteOP(id) {
       });
     }
     // Reverse: remove the fabricated product
-    if (op.producto_id && op.cantidad_prog > 0) {
+    //
+    // 16/Ago/2026: para tejido interno ya no hay una sola entrada en bloque
+    // que reversar — el producto entró rollo por rollo (Recepción de Tela).
+    // Reversar acá una sola vez por cantidad_prog/cantidad_real inventaría
+    // una cantidad que nunca se registró así. En su lugar se reversa cada
+    // rollo individualmente y se elimina su registro trazable.
+    if (esInterno(op.tipo)) {
+      for (const rollo of rollosDeOP(id)) {
+        const movRollo = (state.movimientos||[]).find(m =>
+          m.referencia_tipo === 'OP-ROLLO' && m.referencia_id === rollo.numero_rollo && m.tipo === 'entrada');
+        const costoRollo = movRollo
+          ? Number(movRollo.costo_unitario_gtq||movRollo.costo_unitario||0)
+          : (op.costo_total > 0 && op.cantidad_prog > 0 ? Number(op.costo_total)/Number(op.cantidad_prog) : 0);
+        await crearMovimiento({
+          tipo: 'ajuste_negativo',
+          producto_id: rollo.producto_id,
+          cantidad: rollo.peso_kg,
+          costo_unitario: costoRollo,
+          referencia_tipo: 'OP-REVERSA',
+          referencia_id: op.numero,
+          notas: `Reversa producción OP ${op.numero} — rollo ${rollo.numero_rollo}`,
+          fecha: today(),
+          bodega_id: rollo.bodega_id,
+          lote: rollo.lote,
+        });
+      }
+      await sb.from('erp_rollos').delete().eq('op_id', id);
+    } else if (op.producto_id && op.cantidad_prog > 0) {
       const costoUnit = op.costo_total > 0 ? Number(op.costo_total) / Number(op.cantidad_prog) : 0;
       await crearMovimiento({
         tipo: 'ajuste_negativo',
