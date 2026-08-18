@@ -4966,7 +4966,6 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="Maquina 2">Maquina 2</option>
           </select>
         </div>
-        <div class="field field-full"><label>Fecha y Hora *</label><input type="datetime-local" id="recep-tela-fecha-hora"/></div>
       </div>
       <button class="btn btn-primary btn-sm" style="margin-bottom:20px" onclick="confirmarRollo()">+ Agregar Rollo</button>
 
@@ -12116,6 +12115,7 @@ function renderRecepcionTelaModal() {
       <div><div style="font-size:11px;color:var(--text3)">Programado</div><div style="font-size:13px;font-weight:600">${fmtNum(op.cantidad_prog)} kg</div></div>
       <div><div style="font-size:11px;color:var(--text3)">Recibido</div><div style="font-size:13px;font-weight:600;color:var(--green)">${fmtNum(recibido)} kg</div></div>
       <div><div style="font-size:11px;color:var(--text3)">Pendiente</div><div style="font-size:13px;font-weight:700;color:${pendiente>0.0001?'var(--red)':'var(--green)'}">${fmtNum(pendiente)} kg</div></div>
+      <div><div style="font-size:11px;color:var(--text3)">Fecha y Hora (al agregar)</div><div class="td-mono" style="font-size:13px;font-weight:600">${nowDateTimeLocal().replace('T',' ')}</div></div>
     </div>
     ${pendiente<=0.0001 ? '<div style="margin-top:10px;text-align:center;padding:10px;border-radius:8px;background:#ECFDF5;color:#16A34A;font-weight:600;font-size:13px">✓ Cantidad completa — cerrá la OP con el botón "Completar" en la lista de Órdenes de Producción</div>' : ''}
   `;
@@ -12124,7 +12124,6 @@ function renderRecepcionTelaModal() {
   document.getElementById('recep-tela-rollo-peso').value   = '';
   document.getElementById('recep-tela-tejedor').value      = '';
   document.getElementById('recep-tela-maquina').value      = '';
-  document.getElementById('recep-tela-fecha-hora').value   = nowDateTimeLocal();
 
   document.getElementById('recep-tela-lista').innerHTML = rollos.length ? `
     <table><thead><tr><th>Rollo</th><th style="text-align:right">Peso</th><th>Tejedor</th><th>Máquina</th><th>Bodega</th><th>Fecha y Hora</th><th></th></tr></thead>
@@ -12151,21 +12150,18 @@ async function confirmarRollo() {
   const peso       = parseFloat(document.getElementById('recep-tela-rollo-peso').value);
   const tejedor    = document.getElementById('recep-tela-tejedor').value;
   const maquina    = document.getElementById('recep-tela-maquina').value;
-  const fechaHoraLocal = document.getElementById('recep-tela-fecha-hora').value;
   if (!numero) { toast('Ingresá un número/código de rollo','error'); return; }
   if (isNaN(peso) || peso <= 0) { toast('Peso inválido','error'); return; }
   if (!tejedor) { toast('Seleccioná el tejedor','error'); return; }
   if (!maquina) { toast('Seleccioná la máquina','error'); return; }
-  if (!fechaHoraLocal) { toast('Ingresá la fecha y hora','error'); return; }
   if ((state.rollos||[]).some(r=>r.numero_rollo===numero)) { toast('Ya existe un rollo con ese número','error'); return; }
 
-  // El input datetime-local no trae zona horaria — new Date() lo interpreta
-  // en hora LOCAL del navegador, que es lo correcto acá (es la hora real de
-  // planta). fechaHoraISO se guarda tal cual en erp_rollos.fecha_hora (para
-  // KPIs de producción — turnos, tiempos entre rollos, etc.); fechaMov es
-  // solo la fecha (para movimiento/asiento, que son por día, no por hora).
-  const fechaHoraISO = new Date(fechaHoraLocal).toISOString();
-  const fechaMov     = fechaHoraLocal.slice(0,10);
+  // 17/Ago/2026, a pedido explícito: la fecha/hora ya NO es editable — el
+  // timestamp real es el momento exacto del click en "Agregar Rollo", no
+  // algo que el operador escriba. Se toma acá, no de un input.
+  const ahora        = new Date();
+  const fechaHoraISO = ahora.toISOString();
+  const fechaMov     = today();
 
   // Mismo patrón que confirmarEnvioOP/confirmarRecepcionOP: costo por kg =
   // costo total de la OP (ya con el costo real de MP del reabastecimiento)
