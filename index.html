@@ -4952,6 +4952,21 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div class="form-grid form-grid-2" style="margin-bottom:10px">
         <div class="field"><label>Número / Código de Rollo *</label><input type="text" id="recep-tela-rollo-numero"/></div>
         <div class="field"><label>Peso (kg) *</label><input type="number" step="0.0001" min="0" id="recep-tela-rollo-peso" placeholder="0.000"/></div>
+        <div class="field"><label>Tejedor *</label>
+          <select id="recep-tela-tejedor">
+            <option value="">— Seleccionar —</option>
+            <option value="Usuario 1">Usuario 1</option>
+            <option value="Usuario 2">Usuario 2</option>
+          </select>
+        </div>
+        <div class="field"><label>Máquina *</label>
+          <select id="recep-tela-maquina">
+            <option value="">— Seleccionar —</option>
+            <option value="Maquina 1">Maquina 1</option>
+            <option value="Maquina 2">Maquina 2</option>
+          </select>
+        </div>
+        <div class="field field-full"><label>Fecha y Hora *</label><input type="datetime-local" id="recep-tela-fecha-hora"/></div>
       </div>
       <button class="btn btn-primary btn-sm" style="margin-bottom:20px" onclick="confirmarRollo()">+ Agregar Rollo</button>
 
@@ -5997,6 +6012,18 @@ function fmtGTQ(n) { return fmtMoney(n, 'GTQ'); }
 function fmtUSD(n) { return fmtMoney(n, 'USD'); }
 function fmtKg(n) { return Number(n||0).toLocaleString('es-GT',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' kg'; }
 function today() { return new Date().toISOString().split('T')[0]; }
+
+// Valor por defecto para un <input type="datetime-local"> — hora LOCAL, no
+// UTC (a diferencia de today()/toISOString(), que sí es UTC y no aplica
+// acá porque el input datetime-local se interpreta y se muestra en hora
+// local del navegador). 16/Ago/2026, a pedido explícito: Recepción de Tela
+// necesita capturar fecha+hora real de cada rollo para KPIs de producción
+// más adelante (turnos, tiempos entre rollos, etc.), no solo la fecha.
+function nowDateTimeLocal() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 function statusBadge(s) {
   const map = {
@@ -12095,16 +12122,21 @@ function renderRecepcionTelaModal() {
 
   document.getElementById('recep-tela-rollo-numero').value = `${op.numero}-R${rollos.length+1}`;
   document.getElementById('recep-tela-rollo-peso').value   = '';
+  document.getElementById('recep-tela-tejedor').value      = '';
+  document.getElementById('recep-tela-maquina').value      = '';
+  document.getElementById('recep-tela-fecha-hora').value   = nowDateTimeLocal();
 
   document.getElementById('recep-tela-lista').innerHTML = rollos.length ? `
-    <table><thead><tr><th>Rollo</th><th style="text-align:right">Peso</th><th>Bodega</th><th>Fecha</th><th></th></tr></thead>
+    <table><thead><tr><th>Rollo</th><th style="text-align:right">Peso</th><th>Tejedor</th><th>Máquina</th><th>Bodega</th><th>Fecha y Hora</th><th></th></tr></thead>
     <tbody>${rollos.map(r=>{
       const bod = (state.bodegas||[]).find(b=>b.id===r.bodega_id);
       return `<tr>
         <td class="td-mono">${r.numero_rollo}</td>
         <td class="td-mono" style="text-align:right">${fmtNum(r.peso_kg)} kg</td>
+        <td style="font-size:12px">${r.tejedor||'—'}</td>
+        <td style="font-size:12px">${r.maquina||'—'}</td>
         <td style="font-size:12px">${bod?.nombre||'—'}</td>
-        <td style="font-size:12px">${r.created_at?fmtDate(r.created_at.slice(0,10)):'—'}</td>
+        <td style="font-size:12px">${r.fecha_hora?new Date(r.fecha_hora).toLocaleString('es-GT',{dateStyle:'short',timeStyle:'short'}):(r.created_at?fmtDate(r.created_at.slice(0,10)):'—')}</td>
         <td style="text-align:right"><button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="eliminarRolloOP('${r.id}')">✕</button></td>
       </tr>`;
     }).join('')}</tbody></table>
@@ -12115,11 +12147,25 @@ async function confirmarRollo() {
   const opId = document.getElementById('recep-tela-op-id').value;
   const op   = (state.op||[]).find(x=>x.id===opId);
   if (!op) return;
-  const numero = document.getElementById('recep-tela-rollo-numero').value.trim();
-  const peso   = parseFloat(document.getElementById('recep-tela-rollo-peso').value);
+  const numero     = document.getElementById('recep-tela-rollo-numero').value.trim();
+  const peso       = parseFloat(document.getElementById('recep-tela-rollo-peso').value);
+  const tejedor    = document.getElementById('recep-tela-tejedor').value;
+  const maquina    = document.getElementById('recep-tela-maquina').value;
+  const fechaHoraLocal = document.getElementById('recep-tela-fecha-hora').value;
   if (!numero) { toast('Ingresá un número/código de rollo','error'); return; }
   if (isNaN(peso) || peso <= 0) { toast('Peso inválido','error'); return; }
+  if (!tejedor) { toast('Seleccioná el tejedor','error'); return; }
+  if (!maquina) { toast('Seleccioná la máquina','error'); return; }
+  if (!fechaHoraLocal) { toast('Ingresá la fecha y hora','error'); return; }
   if ((state.rollos||[]).some(r=>r.numero_rollo===numero)) { toast('Ya existe un rollo con ese número','error'); return; }
+
+  // El input datetime-local no trae zona horaria — new Date() lo interpreta
+  // en hora LOCAL del navegador, que es lo correcto acá (es la hora real de
+  // planta). fechaHoraISO se guarda tal cual en erp_rollos.fecha_hora (para
+  // KPIs de producción — turnos, tiempos entre rollos, etc.); fechaMov es
+  // solo la fecha (para movimiento/asiento, que son por día, no por hora).
+  const fechaHoraISO = new Date(fechaHoraLocal).toISOString();
+  const fechaMov     = fechaHoraLocal.slice(0,10);
 
   // Mismo patrón que confirmarEnvioOP/confirmarRecepcionOP: costo por kg =
   // costo total de la OP (ya con el costo real de MP del reabastecimiento)
@@ -12130,6 +12176,7 @@ async function confirmarRollo() {
   const { error: rolloErr } = await sb.from('erp_rollos').insert({
     numero_rollo: numero, producto_id: op.producto_id, peso_kg: peso,
     bodega_id: op.bodega_salida, estado: 'disponible', op_id: opId, lote: op.lote_produccion,
+    tejedor, maquina, fecha_hora: fechaHoraISO,
   });
   if (rolloErr) { toast('Error creando rollo: '+rolloErr.message,'error'); return; }
 
@@ -12137,15 +12184,15 @@ async function confirmarRollo() {
     tipo: 'entrada', producto_id: op.producto_id, cantidad: peso,
     costo_unitario: parseFloat(costoUnit.toFixed(4)),
     referencia_tipo: 'OP-ROLLO', referencia_id: numero,
-    notas: `Recepción de tela — OP ${op.numero} — rollo ${numero}`,
-    fecha: today(), bodega_id: op.bodega_salida, lote: op.lote_produccion,
+    notas: `Recepción de tela — OP ${op.numero} — rollo ${numero} — Tejedor: ${tejedor} — Máquina: ${maquina}`,
+    fecha: fechaMov, bodega_id: op.bodega_salida, lote: op.lote_produccion,
   });
 
   const ctaProceso = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
   const ctaDestino = getCtaValoracionProducto(op.producto_id) || state.nomenclatura.find(n=>n.codigo===CTA_INV_TERMINADO);
   const monto      = parseFloat((peso * costoUnit).toFixed(4));
   await crearAsiento({
-    diario: DIARIO_MANUFACTURA, fecha: today(),
+    diario: DIARIO_MANUFACTURA, fecha: fechaMov,
     descripcion: `OP ${op.numero} — Recepción rollo ${numero} — ${fmtNum(peso)} kg`,
     referencia: op.numero, referencia_id: opId,
     moneda: 'GTQ', tipo_cambio: 1,
@@ -12785,13 +12832,12 @@ function showOPDetail(id) {
         <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Consumo de Materiales</div>
         <div class="table-wrap" style="margin-bottom:16px">
           <table>
-            <thead><tr><th>Insumo</th><th>Lote</th><th>Póliza</th><th style="text-align:right">Cant. Prog.</th><th style="text-align:right">Cant. Real</th><th style="text-align:right">Costo Unit.</th><th style="text-align:right">Costo Total</th></tr></thead>
+            <thead><tr><th>Insumo</th><th>Lote</th><th style="text-align:right">Cant. Prog.</th><th style="text-align:right">Cant. Real</th><th style="text-align:right">Costo Unit.</th><th style="text-align:right">Costo Total</th></tr></thead>
             <tbody>${consumos.map(c=>{
               const p=state.productos.find(x=>x.id===c.insumo_id);
               return `<tr>
                 <td><div style="font-weight:500">${p?.description||'—'}</div><div style="font-size:11px;color:var(--text3)">${p?.codigo_interno||p?.code||''}</div></td>
                 <td><span class="badge badge-blue td-mono" style="font-size:10px">${c.lote||'—'}</span></td>
-                <td style="font-size:12px;color:var(--text2)">${c.poliza||'—'}</td>
                 <td class="td-mono" style="text-align:right">${fmtNum(c.cantidad_prog)} ${c.unidad||'kg'}</td>
                 <td class="td-mono" style="text-align:right;color:var(--green)">${fmtNum(c.cantidad_real)} ${c.unidad||'kg'}</td>
                 <td class="td-mono" style="text-align:right">${fmtMoney(c.costo_unitario)}</td>
