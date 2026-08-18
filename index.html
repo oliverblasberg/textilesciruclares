@@ -4773,15 +4773,15 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <option value="">— Seleccionar receta —</option>
           </select>
         </div>
-        <div class="field"><label>Tipo *</label>
-          <select id="op-tipo" onchange="onOPTipoChange()">
-            <option value="tejido_interno">Tejido Interno</option>
-            <option value="tejido_subcontrato">Tejido Subcontratado</option>
-            <option value="tenido_subcontrato">Teñido Subcontratado</option>
-            <option value="acabado_subcontrato">Acabado Subcontratado</option>
-          </select>
-        </div>
-        <div class="field"><label>Referencia</label>
+        <!-- 18/Ago/2026, a pedido explícito: "Tipo" se sacó del formulario —
+             una Orden de Producción manual siempre es Tejido Interno; las
+             otras rutas (tejido/teñido/acabado subcontratado) se generan
+             por Orden de Compra de servicio (planificarSubcontrato), nunca
+             a mano desde acá. Se deja como input oculto con valor fijo para
+             no tocar el resto de la lógica (onOPTipoChange, saveOP, etc.),
+             que sigue leyendo document.getElementById('op-tipo').value. -->
+        <input type="hidden" id="op-tipo" value="tejido_interno"/>
+        <div class="field field-full"><label>Referencia</label>
           <select id="op-ov"><option value="">— Sin vincular (producción para stock) —</option></select>
         </div>
         <div class="field"><label>Fecha Inicio</label><input type="date" id="op-fecha-inicio"/></div>
@@ -11590,7 +11590,7 @@ async function openNewOP() {
   document.getElementById('op-fecha-inicio').value   = today();
   document.getElementById('op-fecha-fin').value      = '';
   document.getElementById('op-notas').value          = '';
-  document.getElementById('op-tipo').value           = 'tejido';
+  document.getElementById('op-tipo').value           = 'tejido_interno'; // fijo, ver comentario en el input oculto en el HTML
   document.getElementById('op-numero-preview').textContent = await nextOPNum();
   document.getElementById('op-consumos-estimados-section').style.display = 'none';
   document.getElementById('op-producto-display').textContent = '— Selecciona una receta —';
@@ -11619,7 +11619,7 @@ async function editOP(id) {
   if (!op) { toast('Orden de Producción no encontrada','error'); return; }
 
   document.getElementById('op-id').value            = op.id;
-  document.getElementById('op-tipo').value          = op.tipo||'tejido';
+  document.getElementById('op-tipo').value          = op.tipo||'tejido_interno';
   onOPTipoChange(); // puebla el dropdown de recetas según el tipo
 
   document.getElementById('op-cantidad-prog').value = op.cantidad_prog||'';
