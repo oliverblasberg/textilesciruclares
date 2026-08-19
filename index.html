@@ -4031,7 +4031,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div class="field"><label>Incoterms</label>
           <select id="oc-incoterms"><option value="">— Seleccionar —</option></select>
         </div>
-        <div class="field"><label>SC Origen</label><input type="text" id="oc-sc-ref" readonly style="background:var(--surface2);color:var(--text2)"/></div>
+        <div class="field"><label>Origen</label><input type="text" id="oc-sc-ref" readonly style="background:var(--surface2);color:var(--text2)"/></div>
         <div class="field"><label>Estado</label>
           <select id="oc-status">
             <option value="borrador">Borrador</option>
@@ -11741,6 +11741,7 @@ async function saveOP(estado = 'borrador') {
     ov_id:          document.getElementById('op-ov')?.value || null,
   };
 
+  const esNuevaOP = !id;
   let err, opId = id;
   if (id) ({error:err}=await sb.from('erp_op').update(row).eq('id',id));
   else {
@@ -11749,6 +11750,30 @@ async function saveOP(estado = 'borrador') {
     opId = data.id;
   }
   if (err){toast('Error: '+err.message,'error');return;}
+
+  // RUTA DEL PRODUCTO (19/Ago/2026, a pedido explícito — "siempre que se
+  // genere un OV, una OC o una OP, el sistema debe ir a verificar las rutas
+  // y operar acorde a las rutas", "indiferente si está en el asistente
+  // automático o no"): al crear una OP nueva — manual desde este modal, o
+  // ya venía pasando así para las que genera el asistente vía
+  // planificarFabricacion() — se cascadea el mismo motor
+  // (planificarAbastecimiento) para los insumos de la receta. Por cada
+  // insumo con ruta_obtener_bajo_pedido=true se genera su OP/OC de
+  // reabastecimiento en borrador. Solo al CREAR (esNuevaOP), nunca al
+  // editar/re-guardar, para no duplicar. Igual que el resto del motor, NO
+  // revisa stock existente — genera siempre, mismo comportamiento ya
+  // documentado en planificarAbastecimientoOV.
+  if (esNuevaOP) {
+    let seGeneroInsumoOP = false;
+    for (const l of lineas) {
+      const insumoOP = state.productos.find(p => p.id === l.insumo_id);
+      if (!insumoOP?.ruta_obtener_bajo_pedido) continue;
+      const cantInsumoOP = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad_prog;
+      const resInsumoOP = await planificarAbastecimiento(l.insumo_id, cantInsumoOP, row.fecha_inicio || today(), 'OP', row.numero, row.ov_id, null, opId);
+      if (resInsumoOP) seGeneroInsumoOP = true;
+    }
+    if (seGeneroInsumoOP) toast(`OP ${row.numero} guardada — insumos de la receta planificados (revisa OC/OP generadas)`);
+  }
 
   // Si se bajó a 'borrador' porque faltaba reabastecer (arriba), refresca
   // el modal con el id real recién asignado y el botón Reabastecer, en vez
@@ -12086,8 +12111,14 @@ function rollosDeOP(opId) {
     .sort((a,b) => (a.created_at||'').localeCompare(b.created_at||''));
 }
 
+// CAMBIO (20/Ago/2026, a pedido explícito): "eliminar" un rollo ya NO borra
+// la fila de erp_rollos — solo la marca estado:'eliminado' (ver
+// eliminarRolloOP) para conservar visibilidad de que el rollo se generó y
+// luego se eliminó. Por eso el kg recibido excluye explícitamente los
+// rollos eliminados — si no, un rollo reversado (que ya no representa tela
+// real recibida) seguiría inflando "Recibido"/bloqueando "Pendiente".
 function kgRecibidosOP(opId) {
-  return rollosDeOP(opId).reduce((s,r) => s + Number(r.peso_kg||0), 0);
+  return rollosDeOP(opId).filter(r => r.estado !== 'eliminado').reduce((s,r) => s + Number(r.peso_kg||0), 0);
 }
 
 function abrirRecepcionTela(opId) {
@@ -12104,8 +12135,8 @@ function renderRecepcionTelaModal() {
   const op   = (state.op||[]).find(x=>x.id===opId);
   if (!op) return;
   const prod      = state.productos.find(p=>p.id===op.producto_id);
-  const rollos    = rollosDeOP(opId);
-  const recibido  = rollos.reduce((s,r)=>s+Number(r.peso_kg||0),0);
+  const rollos    = rollosDeOP(opId); // incluye eliminados — se muestran tachados en la lista de abajo
+  const recibido  = kgRecibidosOP(opId); // excluye eliminados
   const pendiente = Math.max(0, Number(op.cantidad_prog||0) - recibido);
 
   document.getElementById('recep-tela-title').textContent = `📥 Recepción de Tela — ${op.numero}`;
@@ -12125,18 +12156,28 @@ function renderRecepcionTelaModal() {
   document.getElementById('recep-tela-tejedor').value      = '';
   document.getElementById('recep-tela-maquina').value      = '';
 
+  // CAMBIO (20/Ago/2026, a pedido explícito — "no elimines el registro de
+  // la lista de rollos, solo lo marcas como eliminado... para poder ver
+  // que está eliminado"): un rollo con estado:'eliminado' se sigue
+  // listando, pero atenuado y tachado, sin botón de eliminar (ya está
+  // eliminado — no hay acción que repetir). Los asientos/movimiento de
+  // reversa ya se hicieron en eliminarRolloOP; esto es solo visual.
   document.getElementById('recep-tela-lista').innerHTML = rollos.length ? `
     <table><thead><tr><th>Rollo</th><th style="text-align:right">Peso</th><th>Tejedor</th><th>Máquina</th><th>Bodega</th><th>Fecha y Hora</th><th></th></tr></thead>
     <tbody>${rollos.map(r=>{
       const bod = (state.bodegas||[]).find(b=>b.id===r.bodega_id);
-      return `<tr>
+      const eliminado = r.estado === 'eliminado';
+      const rowAttrs = eliminado ? ' style="opacity:0.45;text-decoration:line-through"' : '';
+      return `<tr${rowAttrs}>
         <td class="td-mono">${r.numero_rollo}</td>
         <td class="td-mono" style="text-align:right">${fmtNum(r.peso_kg)} kg</td>
         <td style="font-size:12px">${r.tejedor||'—'}</td>
         <td style="font-size:12px">${r.maquina||'—'}</td>
         <td style="font-size:12px">${bod?.nombre||'—'}</td>
         <td style="font-size:12px">${r.fecha_hora?new Date(r.fecha_hora).toLocaleString('es-GT',{dateStyle:'short',timeStyle:'short'}):(r.created_at?fmtDate(r.created_at.slice(0,10)):'—')}</td>
-        <td style="text-align:right"><button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="eliminarRolloOP('${r.id}')">✕</button></td>
+        <td style="text-align:right">${eliminado
+          ? '<span style="font-size:11px;color:var(--text3);text-decoration:none">Eliminado</span>'
+          : `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="eliminarRolloOP('${r.id}')">✕</button>`}</td>
       </tr>`;
     }).join('')}</tbody></table>
   ` : '<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">Sin rollos registrados todavía</div>';
@@ -12215,7 +12256,8 @@ async function confirmarRollo() {
 async function eliminarRolloOP(rolloId) {
   const rollo = (state.rollos||[]).find(r=>r.id===rolloId);
   if (!rollo) return;
-  if (!confirm(`¿Eliminar el rollo ${rollo.numero_rollo}? Esto revierte el movimiento de inventario y el asiento contable asociados.`)) return;
+  if (rollo.estado === 'eliminado') { toast('Este rollo ya está eliminado','error'); return; }
+  if (!confirm(`¿Eliminar el rollo ${rollo.numero_rollo}? Esto revierte el movimiento de inventario y el asiento contable asociados. El rollo se conserva en la lista, marcado como eliminado, para trazabilidad.`)) return;
 
   // Mismo costo unitario con el que se creó el rollo — se busca en el
   // movimiento de entrada original en vez de recalcularlo desde
@@ -12257,8 +12299,14 @@ async function eliminarRolloOP(rolloId) {
     }
   }
 
-  await sb.from('erp_rollos').delete().eq('id', rolloId);
-  toast(`Rollo ${rollo.numero_rollo} eliminado`);
+  // CAMBIO (20/Ago/2026, a pedido explícito): antes se borraba la fila de
+  // erp_rollos. Ahora se conserva — solo se marca estado:'eliminado' — para
+  // que quede visibilidad de que el rollo se generó y luego se eliminó. Los
+  // asientos y el movimiento de reversa de arriba ya dejan el efecto
+  // contable/inventario correcto; kgRecibidosOP() ya excluye estos rollos
+  // del cálculo de "Recibido"/"Pendiente", y la lista los muestra tachados.
+  await sb.from('erp_rollos').update({ estado: 'eliminado' }).eq('id', rolloId);
+  toast(`Rollo ${rollo.numero_rollo} eliminado — asientos y movimiento revertidos (queda visible en la lista, marcado como eliminado)`);
   await loadAll();
   renderRecepcionTelaModal();
   renderOP();
@@ -13389,12 +13437,33 @@ async function moverRecetaPrioridad(recetaId, dir, prodIdParam) {
  * @param {string} ovId        — OV raíz (para trazabilidad)
  * @returns {object}           — { tipo, referencia } de lo que se generó
  */
+// BUGFIX (19/Ago/2026, reportado en vivo): las notas de los documentos
+// generados en cascada quedaban duplicadas — ej. "Generado automáticamente
+// desde OP OP-2026-0001". Pasa porque `origen_id` en TODOS los puntos donde
+// se llama al motor ya viene con su propio prefijo de documento (numero de
+// OP, ovLabel de OV, numero/id corto de OC) — no es un id crudo. Un helper
+// único evita repetir `origen_tipo` cuando `origen_id` ya trae ese prefijo,
+// en vez de andar corrigiendo cada punto de llamada por separado.
+function formatOrigenCascada(origen_tipo, origen_id) {
+  const id = String(origen_id||'');
+  if (/^(OV|OP|OC)-/i.test(id)) return id;
+  return `${origen_tipo} ${id}`;
+}
+
 // El parámetro `acc` (opcional) es un array compartido donde cada función
 // de este módulo empuja {tipo, id} de cada OC/OP que crea — usado por el
 // Asistente de Planificación (15/Ago/2026, a pedido explícito) para saber,
 // al terminar toda la cascada de una OV, la lista completa y ordenada de
 // documentos generados que el operador debe ir confirmando uno por uno.
-async function planificarAbastecimiento(productoId, cantidad, fecha, origen_tipo, origen_id, ovId = null, acc = null) {
+// `origenRowId` (20/Ago/2026, a pedido explícito — "en las OC hay un campo
+// SC Origen, allí debes colocar siempre la referencia de la orden que la
+// solicitó"): además del texto libre en notas (formatOrigenCascada),
+// erp_oc.op_id y erp_op.oc_id son columnas FK reales que ya existían en el
+// esquema pero nunca se poblaban — se usa este parámetro para guardar el id
+// real (no el texto) del documento que originó la orden generada, y así
+// poder mostrarlo en un campo estructurado del formulario en vez de solo en
+// notas.
+async function planificarAbastecimiento(productoId, cantidad, fecha, origen_tipo, origen_id, ovId = null, acc = null, origenRowId = null) {
   const prod = state.productos.find(p => p.id === productoId);
   if (!prod) return null;
 
@@ -13403,20 +13472,20 @@ async function planificarAbastecimiento(productoId, cantidad, fecha, origen_tipo
 
   // Determinar ruta — siempre genera órdenes independiente del stock
   if (prod.ruta_fabricar) {
-    return await planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc);
+    return await planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc, origenRowId);
   }
   if (prod.ruta_comprar) {
-    return await planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc);
+    return await planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc, origenRowId);
   }
   if (prod.ruta_subcontratar) {
-    return await planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, null, acc);
+    return await planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, null, acc, origenRowId);
   }
 
   return null;
 }
 
 // ── Ruta: FABRICAR → genera OP ─────────────────────────────────
-async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc = null) {
+async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc = null, origenRowId = null) {
   // Elige SIEMPRE la receta predeterminada (menor número de prioridad) entre
   // TODAS las recetas de tejido activas del producto — interno o
   // subcontratado — sin preferir interno por default. Si un producto tiene
@@ -13432,7 +13501,7 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
   if (!receta) return null;
 
   if (receta.tipo === 'tejido_subcontrato') {
-    return await planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, receta, acc);
+    return await planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, receta, acc, origenRowId);
   }
 
   // Crear OP
@@ -13461,7 +13530,8 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
     cantidad_prog: cantidad, lote_produccion: `LOTE-${numero}`,
     estado: 'borrador', costo_total: parseFloat(costoMP.toFixed(4)),
     ov_id: ovId,
-    notas: `Generado automáticamente desde ${origen_tipo} ${origen_id}`,
+    oc_id: (origen_tipo === 'OC-SUB' || origen_tipo === 'OC') ? origenRowId : null,
+    notas: `Generado automáticamente desde ${formatOrigenCascada(origen_tipo, origen_id)}`,
   }).select().single();
 
   if (error) { console.error('Error creando OP:', error); return null; }
@@ -13469,10 +13539,11 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
   toast(`OP ${numero} generada para ${prod.code} — ${cantidad} kg`);
   if (acc) acc.push({ tipo: 'OP', id: opData.id, numero, label: `Tejido Interno — ${prod.code} ${cantidad} kg` });
 
-  // Planificar insumos en cascada
+  // Planificar insumos en cascada — el origen para SUS insumos es esta OP
+  // recién creada (origenRowId = opData.id), no la que originó esta misma OP.
   for (const l of lineas) {
     const cantInsumo = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad;
-    await planificarAbastecimiento(l.insumo_id, cantInsumo, fecha, 'OP', numero, ovId, acc);
+    await planificarAbastecimiento(l.insumo_id, cantInsumo, fecha, 'OP', numero, ovId, acc, opData.id);
   }
 
   await loadAll();
@@ -13480,7 +13551,7 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
 }
 
 // ── Ruta: COMPRAR → genera OC ──────────────────────────────────
-async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc = null) {
+async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc = null, origenRowId = null) {
   const provId = proveedorPredeterminado(prod);
   const prov   = state.proveedores.find(p => p.id === provId);
 
@@ -13496,7 +13567,8 @@ async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, o
     fecha, entrega: fecha,
     status: 'borrador', tipo_oc: 'compra',
     ov_id: ovId,
-    notas: `Generado automáticamente desde ${origen_tipo} ${origen_id}`,
+    op_id: origen_tipo === 'OP' ? origenRowId : null,
+    notas: `Generado automáticamente desde ${formatOrigenCascada(origen_tipo, origen_id)}`,
   }).select().single();
 
   if (error) { console.error('Error creando OC:', error); return null; }
@@ -13523,7 +13595,7 @@ async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, o
 }
 
 // ── Ruta: SUBCONTRATAR → OC servicio + OC reabastecimiento MP ──
-async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, recetaOverride = null, acc = null) {
+async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, recetaOverride = null, acc = null, origenRowId = null) {
   // Buscar receta de subcontrato con mayor prioridad
   const receta = recetaOverride || (state.recetas||[])
     .filter(r => r.producto_id === prod.id && esSubcontrato(r.tipo) && r.activa !== false)
@@ -13549,7 +13621,8 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
     numero: null, proveedor_id: provSubId||null,
     fecha, entrega: fecha, status: 'borrador',
     tipo_oc: 'subcontrato', ov_id: ovId, receta_id: receta.id,
-    notas: `Servicio ${OP_TIPO_LABEL[receta.tipo]||receta.tipo} — ${prod.code} ${cantidad} kg | desde ${origen_tipo} ${origen_id}`,
+    op_id: origen_tipo === 'OP' ? origenRowId : null,
+    notas: `Servicio ${OP_TIPO_LABEL[receta.tipo]||receta.tipo} — ${prod.code} ${cantidad} kg | desde ${formatOrigenCascada(origen_tipo, origen_id)}`,
   }).select().single();
 
   if (e1) console.error('Error creando OC servicio de subcontrato:', e1);
@@ -13586,7 +13659,9 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
     const insumo = state.productos.find(p => p.id === l.insumo_id);
     if (!insumo?.ruta_obtener_bajo_pedido) continue;
     const cantMP = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad;
-    await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', refServ, ovId, acc);
+    // El origen para ESTOS insumos es la OC de servicio recién creada
+    // (ocServ.id), no la que originó la subcontratación en sí.
+    await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', refServ, ovId, acc, ocServ?.id);
   }
 
   await loadAll();
@@ -19104,8 +19179,15 @@ async function editOC(id) {
   document.getElementById('oc-status').value = o.status||'borrador';
   document.getElementById('oc-notas').value  = o.notas||'';
   document.getElementById('oc-representante').value = o.representante || window._currentUser?.email?.split('@')[0] || '';
+  // CAMBIO (20/Ago/2026, a pedido explícito — "allí debes colocar siempre
+  // la referencia de la orden que la solicitó"): antes este campo solo
+  // mostraba la Solicitud de Compra (erp_sc) formal — que es un flujo
+  // aparte y poco usado. Ahora, si la OC no viene de una SC, también
+  // revisa erp_oc.op_id (la OP que la generó vía el motor de rutas) para
+  // mostrar SIEMPRE la referencia real de origen, sea SC u OP.
   const sc = state.sc.find(x=>x.id===o.sc_id);
-  document.getElementById('oc-sc-ref').value = sc?sc.numero:'';
+  const opOrigenOC = state.op.find(x=>x.id===o.op_id);
+  document.getElementById('oc-sc-ref').value = sc ? sc.numero : (opOrigenOC ? opOrigenOC.numero : '');
   document.getElementById('oc-lines').innerHTML='';
   ocLineCount=0;
   populateProvSelect('oc-proveedor', o.proveedor_id);
@@ -20093,7 +20175,7 @@ async function saveOC() {
       const insumo = state.productos.find(p => p.id === l.insumo_id);
       if (!insumo?.ruta_obtener_bajo_pedido) continue;
       const cantMP = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidadOC;
-      const res = await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', refServ, null);
+      const res = await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', refServ, null, null, ocId);
       if (res) seGeneroAlgo = true;
     }
     cascadaMsg = seGeneroAlgo ? ' — insumos planificados (ver abajo)' : '';
