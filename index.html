@@ -20007,6 +20007,43 @@ async function saveOC() {
   const lines = getOCLines();
   if (!lines.length) { toast('Agrega al menos un producto','error'); return; }
 
+  // RUTA DEL PRODUCTO (19/Ago/2026, a pedido explícito — "todo esto en
+  // base a la estructura establecida en la ficha de rutas del producto"):
+  // la ficha de rutas de cada producto (Comprar/Fabricar/Subcontratar/
+  // Obtener bajo pedido) es la fuente única de verdad — misma que ya usa
+  // el motor automático (planificarAbastecimiento/planificarSubcontrato).
+  // Antes, "Nueva OC" (armada a mano) ignoraba esto por completo: guardaba
+  // SIEMPRE tipo_oc='compra' sin receta_id, sin importar qué producto se
+  // eligiera. Bug real reportado en vivo: una OC a subcontratista por
+  // C-028-00 (que tiene ruta_subcontratar=true, ruta_comprar=false) se
+  // guardó como compra normal — sin botón de Reabastecer para el insumo
+  // GF-028 que esa receta necesita, y sin generar la OP para fabricarlo.
+  // Ahora, si el producto de la línea tiene ruta_subcontratar activa, esta
+  // OC se trata como servicio de subcontrato: se vincula tipo_oc/receta_id
+  // y se corre la misma cascada de reabastecimiento de insumos que ya usa
+  // planificarSubcontrato() para las OC que genera el sistema solo.
+  const prodsSub = lines
+    .map(l => state.productos.find(p=>p.id===l.producto_id))
+    .filter(p => p?.ruta_subcontratar);
+  const esSubOC = prodsSub.length > 0;
+
+  if (esSubOC && lines.length > 1) {
+    toast('Una OC de servicio de subcontrato solo puede tener UN producto — separá los demás en otra OC de compra','error');
+    return;
+  }
+
+  let recetaSub = null;
+  if (esSubOC) {
+    const prodSub = prodsSub[0];
+    recetaSub = (state.recetas||[])
+      .filter(r => r.producto_id === prodSub.id && esSubcontrato(r.tipo) && r.activa !== false)
+      .sort((a,b) => (a.prioridad||99) - (b.prioridad||99))[0];
+    if (!recetaSub) {
+      toast(`${prodSub.codigo_interno||prodSub.code||prodSub.description} tiene ruta de subcontrato pero no una receta activa configurada — creála en Recetas antes de generar esta OC`, 'error');
+      return;
+    }
+  }
+
   const estadoElegido = document.getElementById('oc-status').value;
   // CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): el número real solo
   // se asigna la primera vez que la OC deja de ser 'borrador' — ya sea vía
@@ -20027,8 +20064,10 @@ async function saveOC() {
     status:         estadoElegido,
     notas:          document.getElementById('oc-notas').value.trim(),
     representante:  document.getElementById('oc-representante').value.trim()||null,
+    ...(esSubOC ? { tipo_oc: 'subcontrato', receta_id: recetaSub.id } : {}),
   };
   let ocId = id, err;
+  const esNueva = !id;
   if (id) {
     ({error:err} = await sb.from('erp_oc').update(row).eq('id',id));
     if (!err) await sb.from('erp_oc_items').delete().eq('oc_id',id);
@@ -20039,7 +20078,28 @@ async function saveOC() {
   }
   if (err) { toast('Error: '+err.message,'error'); return; }
   await sb.from('erp_oc_items').insert(lines.map(l=>({...l, oc_id:ocId})));
-  toast(numero ? `OC ${numero} guardada` : 'Borrador de OC guardado');
+
+  // Cascada de reabastecimiento de insumos de la receta de subcontrato —
+  // SOLO al crear la OC (esNueva), nunca al editar/re-guardar, para no
+  // duplicar OPs/OCs cada vez que alguien vuelva a guardar la misma OC.
+  // Mismo motor (planificarAbastecimiento) que ya usa planificarSubcontrato.
+  let cascadaMsg = '';
+  if (esSubOC && esNueva) {
+    const cantidadOC   = Number(lines[0].cantidad||0);
+    const lineasReceta = (state.recetaLineas||[]).filter(l => l.receta_id === recetaSub.id);
+    const refServ       = numero || `OC-borrador-${ocId.slice(0,8)}`;
+    let seGeneroAlgo = false;
+    for (const l of lineasReceta) {
+      const insumo = state.productos.find(p => p.id === l.insumo_id);
+      if (!insumo?.ruta_obtener_bajo_pedido) continue;
+      const cantMP = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidadOC;
+      const res = await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', refServ, null);
+      if (res) seGeneroAlgo = true;
+    }
+    cascadaMsg = seGeneroAlgo ? ' — insumos planificados (ver abajo)' : '';
+  }
+
+  toast(numero ? `OC ${numero} guardada${esSubOC?' — servicio de subcontrato vinculado a receta'+cascadaMsg:''}` : 'Borrador de OC guardado');
   closeModal('modal-oc');
   await loadAll();
 }
