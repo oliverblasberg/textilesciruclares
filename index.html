@@ -4238,6 +4238,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <button class="modal-close" onclick="closeModal('modal-movs-lote')">✕</button>
     </div>
     <div class="modal-body">
+      <div id="movs-lote-rollos"></div>
       <table style="width:100%;border-collapse:collapse">
         <thead><tr style="background:var(--surface2)">
           <th style="padding:8px 12px;text-align:left;font-size:11px">Fecha</th>
@@ -5232,6 +5233,20 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
              distintos (ej. C-xxx desde DF o directo desde GF según la
              ruta), y cada una necesita su propia bodega default. Se movió
              al nivel de Receta — ver modal-receta. -->
+
+        <!-- AGRUPACIÓN DE PRODUCTO (20/Ago/2026, a pedido explícito): Sí =
+             recibir/despachar productos de esta categoría exige elegir
+             bultos/rollos específicos por checkbox (ej. Tela Cruda — ya
+             se ingresan rollo por rollo en Recepción de Tela). No = solo
+             se captura el peso neto, como funciona hoy (ej. Hilo). -->
+        <div class="form-section-title">Comportamiento de Inventario</div>
+        <div class="field">
+          <label>Agrupación de Producto</label>
+          <select id="cat-agrupacion">
+            <option value="false">No — solo peso neto</option>
+            <option value="true">Sí — por bultos/rollos</option>
+          </select>
+        </div>
 
         <div class="field field-full">
           <label>Notas</label>
@@ -12216,6 +12231,15 @@ function renderRecepcionTelaModal() {
       const bod = (state.bodegas||[]).find(b=>b.id===r.bodega_id);
       const eliminado = r.estado === 'eliminado';
       const rowAttrs = eliminado ? ' style="opacity:0.45;text-decoration:line-through"' : '';
+      // Guard visual (20/Ago/2026): un rollo consumido por despacho o
+      // reabastecimiento tiene su propio movimiento/asiento de salida —
+      // no se puede volver a eliminar desde acá (ver eliminarRolloOP).
+      const ESTADO_ETIQUETA = { despachado: 'Despachado', reabastecido: `Reabastecido${r.reabastecido_en_numero?' — '+r.reabastecido_en_numero:''}` };
+      const accionCol = eliminado
+        ? '<span style="font-size:11px;color:var(--text3);text-decoration:none">Eliminado</span>'
+        : ESTADO_ETIQUETA[r.estado]
+          ? `<span style="font-size:11px;color:var(--accent3);text-decoration:none">${ESTADO_ETIQUETA[r.estado]}</span>`
+          : `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="eliminarRolloOP('${r.id}')">✕</button>`;
       return `<tr${rowAttrs}>
         <td class="td-mono">${r.numero_rollo}</td>
         <td class="td-mono" style="text-align:right">${fmtNum(r.peso_kg)} kg</td>
@@ -12224,9 +12248,7 @@ function renderRecepcionTelaModal() {
         <td style="font-size:12px">${r.maquina||'—'}</td>
         <td style="font-size:12px">${bod?.nombre||'—'}</td>
         <td style="font-size:12px">${r.fecha_hora?new Date(r.fecha_hora).toLocaleString('es-GT',{dateStyle:'short',timeStyle:'short'}):(r.created_at?fmtDate(r.created_at.slice(0,10)):'—')}</td>
-        <td style="text-align:right">${eliminado
-          ? '<span style="font-size:11px;color:var(--text3);text-decoration:none">Eliminado</span>'
-          : `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="eliminarRolloOP('${r.id}')">✕</button>`}</td>
+        <td style="text-align:right">${accionCol}</td>
       </tr>`;
     }).join('')}</tbody></table>
   ` : '<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">Sin rollos registrados todavía</div>';
@@ -12323,6 +12345,17 @@ async function eliminarRolloOP(rolloId) {
   const rollo = (state.rollos||[]).find(r=>r.id===rolloId);
   if (!rollo) return;
   if (rollo.estado === 'eliminado') { toast('Este rollo ya está eliminado','error'); return; }
+  // Guard (20/Ago/2026): un rollo ya despachado a cliente o reabastecido a
+  // una OC/OP tiene su PROPIO movimiento y asiento de salida posteados por
+  // ese proceso. Eliminarlo acá revertiría solo la entrada original y
+  // dejaría esa salida huérfana (inventario descuadrado, asiento sin
+  // contrapartida). Hay que revertir primero el despacho/reabastecimiento
+  // que lo consumió.
+  if (rollo.estado !== 'disponible') {
+    const ESTADO_MSG = { despachado: 'ya fue despachado a un cliente', reabastecido: `ya fue usado en el reabastecimiento ${rollo.reabastecido_en_numero||''}` };
+    toast(`No se puede eliminar — este rollo ${ESTADO_MSG[rollo.estado]||('está en estado '+rollo.estado)}. Revertí primero ese movimiento.`,'error');
+    return;
+  }
   if (!confirm(`¿Eliminar el rollo ${rollo.numero_rollo}? Esto revierte el movimiento de inventario y el asiento contable asociados. El rollo se conserva en la lista, marcado como eliminado, para trazabilidad.`)) return;
 
   // Mismo costo unitario con el que se creó el rollo — se busca en el
@@ -14824,6 +14857,42 @@ function abrirReabastecimiento(tipoDoc, docId) {
   openModal('modal-reabastecimiento');
 }
 
+// Selector de bultos/rollos para Reabastecimiento (20/Ago/2026, a pedido
+// explícito): para insumos cuya categoría usa Agrupación de Producto (ej.
+// GF, ya se ingresa rollo por rollo en Recepción de Tela), en vez de
+// capturar una cantidad manual por lote, se despliegan en cascada los
+// rollos disponibles (estado='disponible') de ese lote+bodega — el
+// operador marca por checkbox exactamente qué bultos va a usar. Mismo
+// patrón ya usado en Despacho a cliente (renderDespachoRollos).
+function renderReabRollosPicker(idx, insumoId, bodegaId, lotes, insumo) {
+  const bloques = lotes.map(l => {
+    const rollos = (state.rollos||[]).filter(r =>
+      r.producto_id === insumoId && r.lote === l.lote &&
+      r.estado === 'disponible' && r.bodega_id === bodegaId);
+    if (!rollos.length) return '';
+    return `
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:4px">Lote ${l.lote} — ${fmtMoney(l.costo)}/${insumo?.unidad||'kg'}</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th style="width:30px"></th><th>Rollo</th><th style="text-align:right">Peso</th></tr></thead>
+            <tbody>${rollos.map(r => `
+              <tr>
+                <td style="text-align:center"><input type="checkbox" class="reab-rollo-check" data-idx="${idx}" data-lote="${l.lote}" data-id="${r.id}" data-peso="${r.peso_kg}" data-costo="${l.costo}" style="width:15px;height:15px"/></td>
+                <td class="td-mono">${r.numero_rollo||'—'}</td>
+                <td class="td-mono" style="text-align:right">${fmtNum(r.peso_kg)} ${insumo?.unidad||'kg'}</td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }).join('');
+
+  if (!bloques.trim()) {
+    return '<div style="color:var(--red);font-size:12px">Sin bultos/rollos disponibles en esta bodega.</div>';
+  }
+  return bloques + `<button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="confirmarAsignacionLotes(${idx}, '${insumoId}')">Asignar bultos seleccionados</button>`;
+}
+
 function renderReabastecimientoModal() {
   const { tipoDoc, docId, numero, receta, cantidadBase } = reabCurrentDoc;
   const estado = estadoReabastecimiento(tipoDoc, docId, receta, cantidadBase);
@@ -14862,6 +14931,7 @@ function renderReabastecimientoModal() {
         ${pendiente <= 0.0001 ? '<div style="color:var(--green);font-size:12px;font-weight:600">✓ Cubierto</div>' :
           !bodegaId ? '<div style="color:var(--text3);font-size:12px">Elegí una bodega para ver los lotes disponibles.</div>' :
           !lotes.length ? '<div style="color:var(--red);font-size:12px">Sin stock disponible en esta bodega.</div>' :
+          productoTieneAgrupacion(d.insumo_id) ? renderReabRollosPicker(idx, d.insumo_id, bodegaId, lotes, insumo) :
           `<div class="table-wrap">
             <table>
               <thead><tr><th>Lote</th><th style="text-align:right">Disponible</th><th style="text-align:right">Costo Unit.</th><th style="text-align:right">Asignar</th></tr></thead>
@@ -14889,32 +14959,104 @@ async function confirmarAsignacionLotes(idx, insumoId) {
   const { tipoDoc, docId, numero } = reabCurrentDoc;
   const bodegaId = document.getElementById(`reab-bodega-${idx}`)?.value;
   if (!bodegaId) { toast('Elegí una bodega primero','error'); return; }
-  const lotes = calcStockPorLote(insumoId, bodegaId).filter(l => l.saldo > 0.0001);
 
-  const asignaciones = [];
-  for (let li = 0; li < lotes.length; li++) {
-    const input = document.getElementById(`reab-cant-${idx}-${li}`);
-    const cant  = parseFloat(input?.value)||0;
-    if (cant <= 0) continue;
-    if (cant > lotes[li].saldo + 0.0001) { toast(`La cantidad excede el saldo disponible del lote ${lotes[li].lote}`,'error'); return; }
-    asignaciones.push({ lote: lotes[li].lote, cantidad: cant, costo: lotes[li].costo });
+  const agrupa = productoTieneAgrupacion(insumoId);
+  let asignaciones = []; // { lote, cantidad, costo, rolloId? }
+
+  if (agrupa) {
+    // Agrupación de Producto = Sí: la selección viene de los checkboxes de
+    // bultos/rollos (renderReabRollosPicker), no de una cantidad manual.
+    const checks = [...document.querySelectorAll(`.reab-rollo-check[data-idx="${idx}"]:checked`)];
+    if (!checks.length) { toast('Seleccioná al menos un bulto/rollo','error'); return; }
+    asignaciones = checks.map(c => ({
+      lote: c.dataset.lote,
+      cantidad: parseFloat(c.dataset.peso)||0,
+      costo: parseFloat(c.dataset.costo)||0,
+      rolloId: c.dataset.id,
+    }));
+  } else {
+    const lotes = calcStockPorLote(insumoId, bodegaId).filter(l => l.saldo > 0.0001);
+    for (let li = 0; li < lotes.length; li++) {
+      const input = document.getElementById(`reab-cant-${idx}-${li}`);
+      const cant  = parseFloat(input?.value)||0;
+      if (cant <= 0) continue;
+      if (cant > lotes[li].saldo + 0.0001) { toast(`La cantidad excede el saldo disponible del lote ${lotes[li].lote}`,'error'); return; }
+      asignaciones.push({ lote: lotes[li].lote, cantidad: cant, costo: lotes[li].costo });
+    }
+    if (!asignaciones.length) { toast('Ingresá una cantidad para al menos un lote','error'); return; }
   }
-  if (!asignaciones.length) { toast('Ingresá una cantidad para al menos un lote','error'); return; }
 
+  let totalCostoAsignado = 0;
   for (const a of asignaciones) {
     const { error } = await sb.from('erp_reabastecimiento').insert({
       op_id: tipoDoc==='op' ? docId : null,
       oc_id: tipoDoc==='oc' ? docId : null,
       insumo_id: insumoId, lote: a.lote, cantidad: a.cantidad,
       costo_unitario: a.costo, bodega_id: bodegaId,
+      rollo_id: a.rolloId || null,
     });
     if (error) { toast('Error asignando lote: '+error.message,'error'); continue; }
 
+    const rolloRef = a.rolloId ? (state.rollos||[]).find(r=>r.id===a.rolloId) : null;
     await crearMovimiento({
       tipo: 'salida', producto_id: insumoId, cantidad: a.cantidad, costo_unitario: a.costo,
       referencia_tipo: 'REABASTECIMIENTO', referencia_id: numero,
-      notas: `Reabastecimiento ${numero} — lote ${a.lote}`,
+      notas: rolloRef ? `Reabastecimiento ${numero} — lote ${a.lote} — rollo ${rolloRef.numero_rollo||''}` : `Reabastecimiento ${numero} — lote ${a.lote}`,
       fecha: today(), bodega_id: bodegaId, lote: a.lote,
+    });
+    totalCostoAsignado += a.cantidad * a.costo;
+
+    // Trazabilidad de bulto (20/Ago/2026, a pedido explícito): una vez
+    // usado el rollo para reabastecer, se marca 'reabastecido' (ya no
+    // puede volverse a seleccionar — no es 'disponible') y se anota en el
+    // propio rollo el documento que lo consumió. El registro NUNCA se
+    // elimina, mismo criterio que el soft-delete de Recepción de Tela.
+    if (a.rolloId) {
+      const { error: rErr } = await sb.from('erp_rollos').update({
+        estado: 'reabastecido',
+        reabastecido_en_tipo: tipoDoc,
+        reabastecido_en_id: docId,
+        reabastecido_en_numero: numero,
+      }).eq('id', a.rolloId);
+      if (rErr) console.error('confirmarAsignacionLotes: error marcando rollo reabastecido:', rErr.message);
+    }
+  }
+
+  // MP entregada a subcontratista → Inventario en Proceso (20/Ago/2026, a
+  // pedido explícito: "en la subcontrata debes contabilizar el movimiento
+  // de la MP entregada para conversión. Ya que la estás metiendo al
+  // inventario de producto en proceso"). Para OP esto ya lo posteaba
+  // registrarMovimientosOP (Asiento 1) al "Iniciar Producción", usando
+  // estas mismas filas de erp_reabastecimiento — para OC no había ningún
+  // paso equivalente: el movimiento de salida de arriba bajaba el stock de
+  // la MP, pero el valor no entraba a ninguna cuenta contable, se perdía de
+  // los libros. Se postea acá mismo, al momento de asignar el lote — mismo
+  // momento en que ya se movía la cantidad físicamente. Solo para OC
+  // (tipoDoc==='oc'); para OP se sigue posteando en bloque como siempre,
+  // NO acá, para no duplicar el Asiento 1.
+  if (tipoDoc === 'oc' && totalCostoAsignado > 0) {
+    const ctaProcesoReab = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
+    const ctaInsumoReab  = getCtaValoracionProducto(insumoId);
+    const insumoProdReab = state.productos.find(p=>p.id===insumoId);
+    await crearAsiento({
+      diario: DIARIO_MANUFACTURA, fecha: today(),
+      descripcion: `Reabastecimiento ${numero} — MP entregada a subcontratista (${insumoProdReab?.codigo_interno||insumoProdReab?.code||insumoProdReab?.description||''})`,
+      referencia: numero, referencia_id: docId,
+      moneda: 'GTQ', tipo_cambio: 1,
+      lineas: [
+        {
+          cuenta_id: ctaProcesoReab?.id||null, cuenta_codigo: CTA_INV_PROCESO,
+          cuenta_nombre: ctaProcesoReab?.nombre||'Inventario en Proceso',
+          debe: totalCostoAsignado, haber: 0,
+          descripcion: `MP a WIP — ${insumoProdReab?.description||''} (${asignaciones.map(a=>a.lote).join(', ')})`,
+        },
+        {
+          cuenta_id: ctaInsumoReab?.id||null, cuenta_codigo: ctaInsumoReab?.codigo||'',
+          cuenta_nombre: ctaInsumoReab?.nombre||'Inventario MP',
+          debe: 0, haber: totalCostoAsignado,
+          descripcion: `Salida MP — lotes asignados a ${numero}`,
+        },
+      ],
     });
   }
 
@@ -17046,6 +17188,15 @@ function calcStock(bodegaId = null) {
 }
 
 
+// Agrupación de Producto (20/Ago/2026): true si la categoría del producto
+// exige elegir bultos/rollos específicos al recibir/despachar, en vez de
+// solo capturar el peso neto. Ver modal-categoria (cat-agrupacion).
+function productoTieneAgrupacion(prodId) {
+  const prod = state.productos.find(p => p.id === prodId);
+  const cat  = prod ? (state.categorias||[]).find(c => c.id === prod.categoria) : null;
+  return !!(cat && cat.agrupacion_producto);
+}
+
 function calcStockPorLote(productoId, bodegaId = null) {
   const movs = state.movimientos.filter(m =>
     m.producto_id === productoId &&
@@ -17093,6 +17244,49 @@ function openMovsLote(productoId, lote) {
 
   document.getElementById('movs-lote-title').textContent = 'Lote: ' + lote;
   document.getElementById('movs-lote-sub').textContent   = (prod?.codigo_interno||prod?.code||'') + ' — ' + (prod?.description||'');
+
+  // Cascada de bultos/rollos (20/Ago/2026, a pedido explícito): si la
+  // categoría del producto usa Agrupación de Producto, mostrar los rollos
+  // de este producto+lote (incluye eliminados/reabastecidos/despachados,
+  // tachados, para trazabilidad — mismo criterio que Recepción de Tela).
+  const rollosDiv = document.getElementById('movs-lote-rollos');
+  if (rollosDiv) {
+    if (productoTieneAgrupacion(productoId)) {
+      const rollosLote = (state.rollos||[])
+        .filter(r => r.producto_id === productoId && (r.lote||'(sin lote)') === lote)
+        .sort((a,b) => (a.numero_rollo||'').localeCompare(b.numero_rollo||''));
+      const ESTADO_LABEL = { disponible:'Disponible', despachado:'Despachado', reabastecido:'Reabastecido', eliminado:'Eliminado' };
+      const ESTADO_COLOR = { disponible:'var(--green)', despachado:'var(--accent)', reabastecido:'var(--accent3)', eliminado:'var(--red)' };
+      rollosDiv.innerHTML = !rollosLote.length ? '' : `
+        <div style="margin-bottom:14px">
+          <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-bottom:6px">Bultos / Rollos de este lote</div>
+          <div class="table-wrap">
+            <table style="width:100%;border-collapse:collapse">
+              <thead><tr style="background:var(--surface2)">
+                <th style="padding:6px 12px;text-align:left;font-size:11px">Rollo</th>
+                <th style="padding:6px 12px;text-align:right;font-size:11px">Peso</th>
+                <th style="padding:6px 12px;text-align:left;font-size:11px">Estado</th>
+                <th style="padding:6px 12px;text-align:left;font-size:11px">Uso / Referencia</th>
+              </tr></thead>
+              <tbody>${rollosLote.map(r => {
+                const tachado = r.estado === 'eliminado' ? 'opacity:0.5;text-decoration:line-through' : '';
+                const refTxt  = r.estado === 'despachado' ? 'Despacho a cliente'
+                  : r.estado === 'reabastecido' ? `Reabastecimiento — ${r.reabastecido_en_numero||''}`
+                  : '—';
+                return `<tr style="${tachado}">
+                  <td class="td-mono" style="padding:6px 12px;font-size:12px">${r.numero_rollo||'—'}</td>
+                  <td class="td-mono" style="padding:6px 12px;text-align:right;font-size:12px">${fmtNum(r.peso_kg)} kg</td>
+                  <td style="padding:6px 12px;font-size:11px;font-weight:600;color:${ESTADO_COLOR[r.estado]||'var(--text3)'}">${ESTADO_LABEL[r.estado]||r.estado||'—'}</td>
+                  <td style="padding:6px 12px;font-size:11px;color:var(--text3)">${refTxt}</td>
+                </tr>`;
+              }).join('')}</tbody>
+            </table>
+          </div>
+        </div>`;
+    } else {
+      rollosDiv.innerHTML = '';
+    }
+  }
 
   const MOV_COLOR = { entrada:'var(--green)', salida:'var(--red)', ajuste_positivo:'var(--green)', ajuste_negativo:'var(--red)', devolucion:'var(--accent)' };
   const MOV_LABEL = { entrada:'Entrada', salida:'Salida', ajuste_positivo:'Ajuste +', ajuste_negativo:'Ajuste −', devolucion:'Devolución', consignacion:'Consignación' };
@@ -20199,13 +20393,41 @@ async function saveOC() {
   }
 
   const estadoElegido = document.getElementById('oc-status').value;
+
+  // REABASTECIMIENTO (20/Ago/2026, a pedido explícito — "mejor nos curamos
+  // que el usuario pueda cometer algún error"): el dropdown de Estado de
+  // este formulario permitía saltar directo a 'confirmada' sin pasar por
+  // el candado de completitud de reabastecimiento que sí aplica el botón
+  // dedicado Confirmar (confirmarOC). Mismo criterio y mismo patrón que ya
+  // usa saveOP() para 'en_proceso': si la OC es de subcontrato y todavía
+  // no existe en la base (sin id), no puede tener reabastecimiento
+  // asignado de antemano — se guarda primero como borrador (así consigue
+  // un id real al que atar la asignación de lotes) y se detiene ahí. Si ya
+  // existe, se valida que el reabastecimiento que la receta requiera esté
+  // completo antes de dejar pasar 'confirmada'.
+  let estadoFinal = estadoElegido;
+  let bloqueadoPorReabastecimientoOC = false;
+  if (estadoFinal === 'confirmada' && esSubOC) {
+    if (!id) {
+      toast('Primero se guarda como borrador — asigná el reabastecimiento y volvé a confirmar','error');
+      estadoFinal = 'borrador';
+      bloqueadoPorReabastecimientoOC = true;
+    } else {
+      const estOC = estadoReabastecimiento('oc', id, recetaSub, Number(lines[0]?.cantidad||0));
+      if (estOC.requiere && !estOC.completo) {
+        toast('Faltan insumos por reabastecer — asigná los lotes pendientes antes de confirmar','error');
+        return;
+      }
+    }
+  }
+
   // CAMBIO DE DISEÑO (13/Ago/2026, a pedido explícito): el número real solo
   // se asigna la primera vez que la OC deja de ser 'borrador' — ya sea vía
   // el botón dedicado Confirmar (confirmarOC) o cambiando el estado
   // directamente aquí en el formulario de edición. Un borrador guardado o
   // descartado nunca "quema" un número.
   const numeroActual = document.getElementById('oc-num').value.trim();
-  const numero = (!numeroActual && estadoElegido !== 'borrador') ? await nextOCNum() : (numeroActual || null);
+  const numero = (!numeroActual && estadoFinal !== 'borrador') ? await nextOCNum() : (numeroActual || null);
 
   const row = {
     numero,
@@ -20215,7 +20437,7 @@ async function saveOC() {
     terminos_pago:  document.getElementById('oc-terminos')?.value||null,
     dias_credito:   (() => { const sel = document.getElementById('oc-terminos'); return sel?.value ? (parseInt(sel.options[sel.selectedIndex]?.getAttribute('data-dias'))||0) : null; })(),
     incoterms:      document.getElementById('oc-incoterms')?.value||null,
-    status:         estadoElegido,
+    status:         estadoFinal,
     notas:          document.getElementById('oc-notas').value.trim(),
     representante:  document.getElementById('oc-representante').value.trim()||null,
     ...(esSubOC ? { tipo_oc: 'subcontrato', receta_id: recetaSub.id } : {}),
@@ -20232,6 +20454,17 @@ async function saveOC() {
   }
   if (err) { toast('Error: '+err.message,'error'); return; }
   await sb.from('erp_oc_items').insert(lines.map(l=>({...l, oc_id:ocId})));
+
+  // Si se bajó a 'borrador' porque faltaba reabastecer (arriba), no sigue
+  // el camino normal (cascada de insumos + cierre de modal) — en vez de
+  // eso lleva al usuario directo al panel de la OC recién creada, donde ya
+  // está visible el botón "🔄 Reabastecer".
+  if (bloqueadoPorReabastecimientoOC) {
+    await loadAll();
+    closeModal('modal-oc');
+    showOCPanel(ocId);
+    return;
+  }
 
   // Cascada de reabastecimiento de insumos de la receta de subcontrato —
   // SOLO al crear la OC (esNueva), nunca al editar/re-guardar, para no
@@ -20758,6 +20991,26 @@ async function saveRecepcion() {
     const monedaOC = items[0]?.moneda || 'GTQ';
     const recItems = [];
 
+    // SUBCONTRATO — recibir producto (20/Ago/2026, a pedido explícito): "en
+    // la subcontrata debes contabilizar el movimiento de la MP entregada
+    // para conversión... entonces ingresaría a inv prod proceso MP y
+    // saldría a inventario producto siguiente MP + Costo servicio de
+    // conversión." La MP ya entró a Proceso al momento de asignar el lote
+    // (ver confirmarAsignacionLotes) — acá, al recibir la tela ya
+    // convertida, sale de Proceso (por el costo de la MP) y entra al
+    // producto siguiente por MP + conversión. El costo de conversión por kg
+    // ya vive en `item.costo_unit` (viene de la línea de la OC,
+    // costoServPorKg) — el de MP se prorratea desde el total ya asignado en
+    // erp_reabastecimiento para esta OC, entre la cantidad total pedida.
+    const esSubOC = oc?.tipo_oc === 'subcontrato';
+    let costoMPPorKgOC = 0;
+    if (esSubOC) {
+      const reabOC       = (state.reabastecimiento||[]).filter(r => r.oc_id === ocId);
+      const totalMPAsigOC = reabOC.reduce((s,r) => s + Number(r.cantidad||0)*Number(r.costo_unitario||0), 0);
+      const cantidadOCTot = Number(items[0]?.cantidad||0);
+      costoMPPorKgOC = cantidadOCTot > 0 ? totalMPAsigOC / cantidadOCTot : 0;
+    }
+
     // Read from new lote rows: rec-lote-val-N, rec-qty-{prod}-N, rec-pl-val-N
     // (el No. de Packing List se ingresa por lote, no un único valor de header).
     document.querySelectorAll('[id^="rec-lote-val-"]').forEach(el => {
@@ -20836,14 +21089,65 @@ async function saveRecepcion() {
 
     // Create items + inventory movements
     for (const item of recItems) {
-      await crearMovimientoConAsiento({
-        tipo: 'entrada', producto_id: item.producto_id,
-        cantidad: item.cantidad, costo_unitario: item.costo_unit,
-        referencia_tipo: 'OC', referencia_id: numero,
-        notas: `Recepción ${numero}${item.lote?' | Lote:'+item.lote:''}`,
-        fecha, lote: item.lote, poliza: item.poliza,
-        moneda: monedaOC, bodega_id: bodega_id||null,
-      });
+      if (esSubOC) {
+        // Recepción de subcontrato: costo total = MP + conversión. El
+        // movimiento de inventario entra al costo TOTAL (así el stock/kardex
+        // del producto recibido queda bien valorado); el asiento se arma a
+        // mano (3 líneas) en vez de usar crearMovimientoConAsiento, porque
+        // esa función genérica solo sabe hacer el asiento estándar de
+        // compra (Debe Valoración / Haber Entrada) — acá hace falta separar
+        // la contrapartida entre Proceso (MP) y el proveedor (conversión).
+        const montoMP    = parseFloat((item.cantidad * costoMPPorKgOC).toFixed(4));
+        const montoConv  = parseFloat((item.cantidad * item.costo_unit).toFixed(4));
+        const montoTotal = parseFloat((montoMP + montoConv).toFixed(4));
+        await crearMovimiento({
+          tipo: 'entrada', producto_id: item.producto_id,
+          cantidad: item.cantidad, costo_unitario: parseFloat((costoMPPorKgOC + item.costo_unit).toFixed(4)),
+          referencia_tipo: 'OC', referencia_id: numero,
+          notas: `Recepción ${numero} — subcontrato: MP Q${montoMP.toFixed(2)} + conversión Q${montoConv.toFixed(2)}${item.lote?' | Lote:'+item.lote:''}`,
+          fecha, lote: item.lote, poliza: item.poliza,
+          moneda: monedaOC, bodega_id: bodega_id||null,
+        });
+        if (montoTotal > 0) {
+          const ctaValoracionRec = getCtaValoracionProducto(item.producto_id);
+          const ctaProcesoRec    = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
+          const ctaPorPagarRec   = state.nomenclatura.find(n => n.tipo === 'Por pagar');
+          const provSubRec       = state.proveedores.find(p => p.id === oc.proveedor_id);
+          const lineasRec = [
+            {
+              cuenta_id: ctaValoracionRec?.id||null, cuenta_codigo: ctaValoracionRec?.codigo||'',
+              cuenta_nombre: ctaValoracionRec?.nombre||'Inventario', debe: montoTotal, haber: 0,
+              descripcion: `${item.cantidad} kg recibidos — MP + conversión`,
+            },
+          ];
+          if (montoMP > 0) lineasRec.push({
+            cuenta_id: ctaProcesoRec?.id||null, cuenta_codigo: CTA_INV_PROCESO,
+            cuenta_nombre: ctaProcesoRec?.nombre||'Inventario en Proceso', debe: 0, haber: montoMP,
+            descripcion: 'Cierre WIP — MP entregada a subcontratista',
+          });
+          if (montoConv > 0) lineasRec.push({
+            cuenta_id: ctaPorPagarRec?.id||null, cuenta_codigo: ctaPorPagarRec?.codigo||'',
+            cuenta_nombre: provSubRec?.name||'Servicio de conversión', debe: 0, haber: montoConv,
+            descripcion: `Servicio de conversión — ${provSubRec?.name||'sin proveedor'}`,
+          });
+          await crearAsiento({
+            diario: DIARIO_MANUFACTURA, fecha,
+            descripcion: `Recepción ${numero} — subcontrato: MP (Q${montoMP.toFixed(2)}) + conversión (Q${montoConv.toFixed(2)})`,
+            referencia: numero, referencia_id: ocId,
+            moneda: 'GTQ', tipo_cambio: 1,
+            lineas: lineasRec,
+          });
+        }
+      } else {
+        await crearMovimientoConAsiento({
+          tipo: 'entrada', producto_id: item.producto_id,
+          cantidad: item.cantidad, costo_unitario: item.costo_unit,
+          referencia_tipo: 'OC', referencia_id: numero,
+          notas: `Recepción ${numero}${item.lote?' | Lote:'+item.lote:''}`,
+          fecha, lote: item.lote, poliza: item.poliza,
+          moneda: monedaOC, bodega_id: bodega_id||null,
+        });
+      }
       const { error:e2 } = await sb.from('erp_oc_recepcion_items').insert({
         recepcion_id: rec.id,
         producto_id:  item.producto_id,
@@ -22878,6 +23182,7 @@ function openNewCategoria() {
   document.getElementById('cat-nombre').value          = '';
   document.getElementById('cat-metodo-coste').value    = 'precio_estandar';
   document.getElementById('cat-valoracion').value      = 'manual';
+  document.getElementById('cat-agrupacion').value      = 'false';
   onCatValoracionChange();
   document.getElementById('cat-cta-ingresos').value = '';
   document.getElementById('cat-cta-gasto').value = '';
@@ -22899,6 +23204,7 @@ function editCategoria(id) {
   document.getElementById('cat-nombre').value          = c.nombre||'';
   document.getElementById('cat-metodo-coste').value    = c.metodo_coste||'precio_estandar';
   document.getElementById('cat-valoracion').value      = c.valoracion||'manual';
+  document.getElementById('cat-agrupacion').value      = c.agrupacion_producto ? 'true' : 'false';
   onCatValoracionChange();
   document.getElementById('cat-notas').value           = c.notas||'';
   document.getElementById('modal-categoria-title').textContent = 'Editar Categoría';
@@ -22936,6 +23242,7 @@ async function saveCategoria() {
     nombre,
     metodo_coste:        document.getElementById('cat-metodo-coste').value,
     valoracion:          document.getElementById('cat-valoracion').value,
+    agrupacion_producto: document.getElementById('cat-agrupacion').value === 'true',
     cta_ingresos: document.getElementById('cat-cta-ingresos').value,
     cta_gasto:    document.getElementById('cat-cta-gasto').value,
     cta_valoracion: document.getElementById('cat-cta-valoracion').value,
