@@ -4807,8 +4807,8 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <div class="field"><label>Cantidad a Producir (kg) *</label>
             <input type="number" id="op-cantidad-prog" step="0.001" min="0" placeholder="0.000" oninput="calcOPConsumosEstimados()"/>
           </div>
-          <div class="field"><label>Lote de Producción *</label>
-            <input type="text" id="op-lote" placeholder="Ej. LOTE-2026-001" style="text-transform:uppercase"/>
+          <div class="field"><label>Lote de Producción</label>
+            <input type="text" id="op-lote" readonly style="background:var(--surface2);color:var(--text2);font-family:'DM Mono',monospace"/>
           </div>
         </div>
 
@@ -4946,9 +4946,17 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     </div>
     <div class="modal-body">
       <input type="hidden" id="recep-tela-op-id"/>
+      <input type="hidden" id="recep-tela-lote-activo"/>
       <div id="recep-tela-info" style="margin-bottom:20px"></div>
 
-      <div class="form-section-title" style="margin-bottom:12px">Agregar Rollo</div>
+      <div class="form-section-title" style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <span>Agregar Rollo</span>
+        <span style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:normal;font-weight:400">
+          <span style="font-size:11px;color:var(--text3)">Lote de tela actual:</span>
+          <span class="td-mono" id="recep-tela-lote-display" style="font-size:12px;font-weight:700;color:var(--accent)">—</span>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="nuevoLoteRecepcionTela()" title="Generá un lote nuevo cuando cambie el lote de hilo que estás tejiendo">🧶 Nuevo Lote</button>
+        </span>
+      </div>
       <div class="form-grid form-grid-2" style="margin-bottom:10px">
         <div class="field"><label>Número / Código de Rollo *</label><input type="text" id="recep-tela-rollo-numero"/></div>
         <div class="field"><label>Peso (kg) *</label><input type="number" step="0.0001" min="0" id="recep-tela-rollo-peso" placeholder="0.000"/></div>
@@ -10845,6 +10853,22 @@ async function nextOPNum() {
   const nums = (data||[]).map(o => parseInt((o.numero||'').slice(-4))||0);
   return `OP-${y}-${String((nums.length ? Math.max(...nums) : 0)+1).padStart(4,'0')}`;
 }
+
+// CAMBIO (20/Ago/2026, a pedido explícito — "Lote de Producción, haz que
+// este sea un correlativo"): antes era texto libre que el operador escribía
+// a mano ("Ej. LOTE-2026-001"). Mismo patrón que el resto de correlativos
+// del sistema (nextOCNum/nextOPNum/nextOVNum) — calculado en vivo como
+// MAX(existente)+1 por año, sin secuencia aparte en la base. El motor
+// automático (planificarFabricacion) antes armaba el lote como
+// `LOTE-${numero de OP}` (ej. "LOTE-OP-2026-0001", con doble prefijo) — se
+// homologa acá también para que todos los lotes, manuales o automáticos,
+// sigan el mismo formato LOTE-YYYY-NNNN.
+async function nextLoteNum() {
+  const y = new Date().getFullYear();
+  const { data } = await sb.from('erp_op').select('lote_produccion').ilike('lote_produccion', `LOTE-${y}-%`);
+  const nums = (data||[]).map(o => parseInt((o.lote_produccion||'').slice(-4))||0);
+  return `LOTE-${y}-${String((nums.length ? Math.max(...nums) : 0)+1).padStart(4,'0')}`;
+}
 function nextRecNum() {
   const nums = (state.recetas||[]).map(r => parseInt((r.codigo||'').replace('REC-',''))||0);
   return `REC-${String((nums.length ? Math.max(...nums) : 0)+1).padStart(4,'0')}`;
@@ -11586,7 +11610,7 @@ function refrescarBotonReabastecerOP() {
 async function openNewOP() {
   document.getElementById('op-id').value            = '';
   document.getElementById('op-cantidad-prog').value  = '';
-  document.getElementById('op-lote').value           = '';
+  document.getElementById('op-lote').value           = await nextLoteNum(); // preview — mismo patrón que op-numero-preview, se recalcula al guardar
   document.getElementById('op-fecha-inicio').value   = today();
   document.getElementById('op-fecha-fin').value      = '';
   document.getElementById('op-notas').value          = '';
@@ -11663,10 +11687,16 @@ async function saveOP(estado = 'borrador') {
   const numeroPreservado = id ? (state.op||[]).find(o=>o.id===id)?.numero : null;
   const receta_id    = document.getElementById('op-receta').value;
   const cantidad_prog = parseFloat(document.getElementById('op-cantidad-prog').value);
-  const lote         = document.getElementById('op-lote').value.trim().toUpperCase();
+  // CAMBIO (20/Ago/2026, a pedido explícito): "Lote de Producción" dejó de
+  // ser texto libre que el operador escribe — ahora es un correlativo real
+  // (LOTE-YYYY-NNNN, ver nextLoteNum). Mismo patrón que numeroPreservado dos
+  // líneas arriba: se conserva el lote ya asignado si es edición; solo se
+  // calcula uno nuevo al crear.
+  const lotePreservado = id ? (state.op||[]).find(o=>o.id===id)?.lote_produccion : null;
+  const lote          = lotePreservado || await nextLoteNum();
 
-  if (!receta_id || isNaN(cantidad_prog) || cantidad_prog <= 0 || !lote) {
-    toast('Receta, cantidad y lote son requeridos','error'); return;
+  if (!receta_id || isNaN(cantidad_prog) || cantidad_prog <= 0) {
+    toast('Receta y cantidad son requeridos','error'); return;
   }
 
   const receta    = (state.recetas||[]).find(r=>r.id===receta_id);
@@ -11781,6 +11811,7 @@ async function saveOP(estado = 'borrador') {
   if (bloqueadoPorReabastecimiento) {
     document.getElementById('op-id').value = opId;
     document.getElementById('op-numero-preview').textContent = numeroPreservado || row.numero;
+    document.getElementById('op-lote').value = lotePreservado || row.lote_produccion;
     await loadAll();
     refrescarBotonReabastecerOP();
     return;
@@ -12126,6 +12157,7 @@ function abrirRecepcionTela(opId) {
   if (!op) { toast('OP no encontrada','error'); return; }
   if (!op.bodega_salida) { toast('Esta OP no tiene bodega de salida configurada','error'); return; }
   document.getElementById('recep-tela-op-id').value = opId;
+  document.getElementById('recep-tela-lote-activo').value = ''; // fuerza a recalcular el lote activo de ESTA OP, no arrastrar el de una OP anterior
   renderRecepcionTelaModal();
   openModal('modal-recepcion-tela');
 }
@@ -12156,6 +12188,22 @@ function renderRecepcionTelaModal() {
   document.getElementById('recep-tela-tejedor').value      = '';
   document.getElementById('recep-tela-maquina').value      = '';
 
+  // LOTE POR CAMBIO DE HILO (20/Ago/2026, a pedido explícito — "pueden
+  // haber varios lotes para una misma orden de producción... el lote
+  // cambia si cambia el lote de hilo"): cada rollo lleva su propio
+  // erp_rollos.lote — ya NO se fuerza siempre al op.lote_produccion. El
+  // "lote activo" por defecto es el del último rollo NO eliminado que ya
+  // se registró en esta OP (así, si reabrís el modal otro día, seguís en el
+  // mismo lote donde quedaste) — o el lote inicial de la OP si todavía no
+  // hay ningún rollo. El botón "🧶 Nuevo Lote" lo cambia manualmente cuando
+  // el tejedor arranca con un lote de hilo distinto.
+  const rollosActivos = rollos.filter(r => r.estado !== 'eliminado');
+  const loteActivo = document.getElementById('recep-tela-lote-activo').value ||
+    (rollosActivos.length ? rollosActivos[rollosActivos.length-1].lote : null) ||
+    op.lote_produccion;
+  document.getElementById('recep-tela-lote-activo').value = loteActivo;
+  document.getElementById('recep-tela-lote-display').textContent = loteActivo;
+
   // CAMBIO (20/Ago/2026, a pedido explícito — "no elimines el registro de
   // la lista de rollos, solo lo marcas como eliminado... para poder ver
   // que está eliminado"): un rollo con estado:'eliminado' se sigue
@@ -12163,7 +12211,7 @@ function renderRecepcionTelaModal() {
   // eliminado — no hay acción que repetir). Los asientos/movimiento de
   // reversa ya se hicieron en eliminarRolloOP; esto es solo visual.
   document.getElementById('recep-tela-lista').innerHTML = rollos.length ? `
-    <table><thead><tr><th>Rollo</th><th style="text-align:right">Peso</th><th>Tejedor</th><th>Máquina</th><th>Bodega</th><th>Fecha y Hora</th><th></th></tr></thead>
+    <table><thead><tr><th>Rollo</th><th style="text-align:right">Peso</th><th>Lote</th><th>Tejedor</th><th>Máquina</th><th>Bodega</th><th>Fecha y Hora</th><th></th></tr></thead>
     <tbody>${rollos.map(r=>{
       const bod = (state.bodegas||[]).find(b=>b.id===r.bodega_id);
       const eliminado = r.estado === 'eliminado';
@@ -12171,6 +12219,7 @@ function renderRecepcionTelaModal() {
       return `<tr${rowAttrs}>
         <td class="td-mono">${r.numero_rollo}</td>
         <td class="td-mono" style="text-align:right">${fmtNum(r.peso_kg)} kg</td>
+        <td class="td-mono" style="font-size:11px">${r.lote||'—'}</td>
         <td style="font-size:12px">${r.tejedor||'—'}</td>
         <td style="font-size:12px">${r.maquina||'—'}</td>
         <td style="font-size:12px">${bod?.nombre||'—'}</td>
@@ -12181,6 +12230,16 @@ function renderRecepcionTelaModal() {
       </tr>`;
     }).join('')}</tbody></table>
   ` : '<div style="text-align:center;padding:16px;color:var(--text3);font-size:12px">Sin rollos registrados todavía</div>';
+}
+
+// Genera un lote nuevo (correlativo LOTE-YYYY-NNNN) y lo vuelve el lote
+// activo para los próximos rollos que se agreguen en esta OP — a usar
+// cuando el tejedor cambia a un lote de hilo distinto a mitad de la orden.
+async function nuevoLoteRecepcionTela() {
+  const nuevo = await nextLoteNum();
+  document.getElementById('recep-tela-lote-activo').value = nuevo;
+  document.getElementById('recep-tela-lote-display').textContent = nuevo;
+  toast(`Lote activo cambiado a ${nuevo} — los próximos rollos que agregues van a usar este lote`);
 }
 
 async function confirmarRollo() {
@@ -12197,6 +12256,13 @@ async function confirmarRollo() {
   if (!maquina) { toast('Seleccioná la máquina','error'); return; }
   if ((state.rollos||[]).some(r=>r.numero_rollo===numero)) { toast('Ya existe un rollo con ese número','error'); return; }
 
+  // LOTE POR CAMBIO DE HILO (20/Ago/2026, a pedido explícito): ya no se usa
+  // op.lote_produccion a ciegas — cada rollo lleva el lote ACTIVO del
+  // momento (ver renderRecepcionTelaModal/nuevoLoteRecepcionTela), que
+  // normalmente es el mismo lote de la OP pero puede cambiar a mitad de
+  // producción si cambia el lote de hilo que se está tejiendo.
+  const loteActivo = document.getElementById('recep-tela-lote-activo').value || op.lote_produccion;
+
   // 17/Ago/2026, a pedido explícito: la fecha/hora ya NO es editable — el
   // timestamp real es el momento exacto del click en "Agregar Rollo", no
   // algo que el operador escriba. Se toma acá, no de un input.
@@ -12212,7 +12278,7 @@ async function confirmarRollo() {
 
   const { error: rolloErr } = await sb.from('erp_rollos').insert({
     numero_rollo: numero, producto_id: op.producto_id, peso_kg: peso,
-    bodega_id: op.bodega_salida, estado: 'disponible', op_id: opId, lote: op.lote_produccion,
+    bodega_id: op.bodega_salida, estado: 'disponible', op_id: opId, lote: loteActivo,
     tejedor, maquina, fecha_hora: fechaHoraISO,
   });
   if (rolloErr) { toast('Error creando rollo: '+rolloErr.message,'error'); return; }
@@ -12222,7 +12288,7 @@ async function confirmarRollo() {
     costo_unitario: parseFloat(costoUnit.toFixed(4)),
     referencia_tipo: 'OP-ROLLO', referencia_id: numero,
     notas: `Recepción de tela — OP ${op.numero} — rollo ${numero} — Tejedor: ${tejedor} — Máquina: ${maquina}`,
-    fecha: fechaMov, bodega_id: op.bodega_salida, lote: op.lote_produccion,
+    fecha: fechaMov, bodega_id: op.bodega_salida, lote: loteActivo,
   });
 
   const ctaProceso = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
@@ -13524,10 +13590,16 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
     costoMP   += cant * cu;
   });
 
+  // CAMBIO (20/Ago/2026, a pedido explícito): antes el lote se armaba como
+  // `LOTE-${numero de OP}` (ej. "LOTE-OP-2026-0001", con doble prefijo).
+  // Ahora usa el mismo correlativo real (nextLoteNum) que ya usa saveOP()
+  // para las OP creadas a mano — mismo formato LOTE-YYYY-NNNN sin importar
+  // si la OP la creó el operador o el motor de rutas.
+  const loteOP = await nextLoteNum();
   const { data: opData, error } = await sb.from('erp_op').insert({
     numero, tipo: 'tejido_interno', receta_id: receta.id,
     producto_id: prod.id, fecha_inicio: fecha,
-    cantidad_prog: cantidad, lote_produccion: `LOTE-${numero}`,
+    cantidad_prog: cantidad, lote_produccion: loteOP,
     estado: 'borrador', costo_total: parseFloat(costoMP.toFixed(4)),
     ov_id: ovId,
     oc_id: (origen_tipo === 'OC-SUB' || origen_tipo === 'OC') ? origenRowId : null,
