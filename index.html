@@ -3240,6 +3240,11 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <input type="number" id="pago-monto" step="0.01" min="0" placeholder="0.00"
             oninput="onPagoMontoChange()"/>
         </div>
+        <div class="field" id="pago-retencion-isr-wrap" style="display:none">
+          <label>Retención ISR <span style="font-weight:400;text-transform:none;letter-spacing:normal;color:var(--text3)">(automático — editable)</span></label>
+          <input type="number" id="pago-retencion-isr" step="0.01" min="0" placeholder="0.00"
+            oninput="renderPagoApuntesPreview()"/>
+        </div>
         <div class="field field-full" id="pago-prov-title-wrap" style="margin-top:6px">
           <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3)">Información Proveedor</div>
         </div>
@@ -8273,6 +8278,45 @@ function bancoNomenclatura(cuentaId) {
 // pudiendo distinguir a qué banco pertenece cada pago sin necesitar una
 // cuenta contable por banco. Mismo patrón que "Outstanding Payments" /
 // "Outstanding Receipts" de Odoo.
+// ═══════════════════════════════════════════════════
+// RETENCIÓN ISR — Art. 39 Decreto 10-2012. 5%/7% sobre el NETO (sin IVA)
+// de la factura del proveedor, por FACTURA INDIVIDUAL (no acumulado
+// mensual). Solo aplica si el proveedor está en Régimen Opcional
+// Simplificado Y la factura indica "Sujeto a Retención ISR" (no "Pagos
+// Directos"). Verificado con ejemplo real del contador (Robert Cardona):
+// factura Q35,000 (con IVA) → neto Q31,250 → retención Q1,587.50.
+// Los subcontratistas de producción (tejido/tintura/acabado) están
+// exentos por Decreto 29-89 — quedan fuera automáticamente porque su
+// regimen_isr es 'exento_29_89', no 'opcional_simplificado'.
+// ═══════════════════════════════════════════════════
+function calcRetencionISR(neto) {
+  const n = Number(neto || 0);
+  if (n <= 2500) return 0;
+  if (n <= 30000) return parseFloat((n * 0.05).toFixed(2));
+  return parseFloat((30000 * 0.05 + (n - 30000) * 0.07).toFixed(2));
+}
+
+// Retención ISR que corresponde a una factura de OC específica, o 0 si no
+// aplica. El neto se toma de erp_compras.valor_neto (el mismo valor real
+// que ya quedó grabado en el Libro de Compras al generar la factura —
+// misma fuente que usa asientoFacturaCompra(), nunca se recalcula el IVA
+// de nuevo aquí).
+function retencionISRFactura(facturaId) {
+  const f = (state.ocFacturas||[]).find(x => x.id === facturaId);
+  if (!f || !f.sujeto_retencion_isr) return 0;
+  const oc   = (state.oc||[]).find(o => o.id === f.oc_id);
+  const prov = (state.proveedores||[]).find(p => p.id === oc?.proveedor_id);
+  if (prov?.regimen_isr !== 'opcional_simplificado') return 0;
+  const compra = (state.compras||[]).find(c => c.factura_id === facturaId);
+  const neto   = compra ? Number(compra.valor_neto||0) : 0;
+  return calcRetencionISR(neto);
+}
+
+// Cuenta de nomenclatura "Retenciones - ISR por pagar - proveedores" (21104002).
+function ctaRetencionISR() {
+  return (state.nomenclatura||[]).find(n => n.codigo === '21104002');
+}
+
 function transitoriaNomenclatura(moneda, direccion) {
   const codigos = {
     pago:  { GTQ: '21102051', USD: '21102052' }, // Pagos Pendientes
@@ -8347,10 +8391,25 @@ function buildLineasPago() {
     const ocSingle   = state.oc.find(o => o.id === f.oc_id);
     const provSingle = state.proveedores.find(p => p.id === ocSingle?.proveedor_id);
     const descCxP    = [provSingle?.name, f.serie, f.numero].filter(Boolean).join(' - ');
-    return [
+    // Retención ISR — lee el campo editable (pre-poblado automático en
+    // openPagoOC() vía retencionISRFactura()); si el campo está oculto/vacío
+    // no hay retención. La CxP se extingue por el monto completo, pero el
+    // efectivo que sale (vía Pagos Pendientes) es el monto MENOS la retención,
+    // y la retención va a la cuenta 21104002.
+    const retIsrEl = document.getElementById('pago-retencion-isr');
+    const retencion = Math.min(
+      (retIsrEl && retIsrEl.closest('#pago-retencion-isr-wrap')?.style.display !== 'none') ? (parseFloat(retIsrEl.value)||0) : 0,
+      monto
+    );
+    const lineas = [
       { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: monto, haber: 0, descripcion: descCxP },
-      { cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: 0, haber: monto, descripcion: `Pendiente de confirmar — ${cuentaBancaria?.name||''}` },
     ];
+    if (retencion > 0) {
+      const ctaRetIsr = ctaRetencionISR();
+      lineas.push({ cuenta_id: ctaRetIsr?.id||null, cuenta_codigo: ctaRetIsr?.codigo||'21104002', cuenta_nombre: ctaRetIsr?.nombre||'Retenciones ISR por Pagar', debe: 0, haber: retencion, descripcion: `Retención ISR — ${descCxP}` });
+    }
+    lineas.push({ cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: 0, haber: monto - retencion, descripcion: `Pendiente de confirmar — ${cuentaBancaria?.name||''}` });
+    return lineas;
   }
 
   // Multi-factura — una línea de CxP por factura (puede caer en cuentas
@@ -8376,7 +8435,15 @@ function buildLineasPago() {
     const descCxP   = [provMulti?.name, f?.serie, f?.numero].filter(Boolean).join(' - ');
     return { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: d.monto, haber: 0, descripcion: descCxP };
   });
-  lineas.push({ cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: 0, haber: monto, descripcion: `Pago múltiple — pendiente de confirmar (${cuentaBancaria?.name||''})` });
+  // Retención ISR — calculada automáticamente por factura (no editable en
+  // modo múltiple, a diferencia del modo single; cada factura puede tener
+  // su propia retención según su régimen/neto). Se agrupa en una sola línea.
+  const totalRetencion = distribs.reduce((s, d) => s + Math.min(retencionISRFactura(d.factura_id), d.monto), 0);
+  if (totalRetencion > 0) {
+    const ctaRetIsr = ctaRetencionISR();
+    lineas.push({ cuenta_id: ctaRetIsr?.id||null, cuenta_codigo: ctaRetIsr?.codigo||'21104002', cuenta_nombre: ctaRetIsr?.nombre||'Retenciones ISR por Pagar', debe: 0, haber: parseFloat(totalRetencion.toFixed(2)), descripcion: 'Retención ISR — pago múltiple' });
+  }
+  lineas.push({ cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: 0, haber: parseFloat((monto - totalRetencion).toFixed(2)), descripcion: `Pago múltiple — pendiente de confirmar (${cuentaBancaria?.name||''})` });
   return lineas;
 }
 
@@ -8572,6 +8639,16 @@ function openPagoOC(facturaId) {
   document.getElementById('pago-monto').value      = pend > 0 ? pend.toFixed(2) : '';
   document.getElementById('pago-referencia').value = '';
   document.getElementById('pago-notas').value      = '';
+  // Retención ISR — automática, editable. Solo se muestra el campo si el
+  // proveedor está en Régimen Opcional Simplificado y la factura quedó
+  // marcada "Sujeto a Retención ISR" al generarse.
+  const retIsr = retencionISRFactura(facturaId);
+  const retIsrWrap  = document.getElementById('pago-retencion-isr-wrap');
+  const retIsrInput = document.getElementById('pago-retencion-isr');
+  if (retIsrWrap && retIsrInput) {
+    retIsrWrap.style.display = retIsr > 0 ? '' : 'none';
+    retIsrInput.value = retIsr > 0 ? retIsr.toFixed(2) : '';
+  }
   _pagoSetMoneda(monedaOC);
   _pagoSetCuentaOrigen(monedaOC);
   document.getElementById('pago-cuenta').innerHTML = _pagoCtaOptsProveedor(prov?.id);
@@ -8588,6 +8665,11 @@ function openPagoProveedor(ocId) {
   const oc   = state.oc.find(o=>o.id===ocId);
   if (!oc) return;
   const prov = state.proveedores.find(p=>p.id===oc.proveedor_id);
+  // Modo multi: la retención (si aplica) se calcula automáticamente por
+  // factura dentro de buildLineasPago() — no hay un único campo editable
+  // porque cada factura puede tener su propia retención.
+  const retIsrWrapMulti = document.getElementById('pago-retencion-isr-wrap');
+  if (retIsrWrapMulti) retIsrWrapMulti.style.display = 'none';
 
   // Get ALL pending facturas for this proveedor
   const provOCs    = (state.oc||[]).filter(o=>o.proveedor_id===oc.proveedor_id);
@@ -14064,6 +14146,8 @@ function openPagoDesdeCompras() {
   const _numPago3 = nextNumPago();
   document.getElementById('pago-num-correlativo').textContent = _numPago3;
   document.getElementById('pago-modo').value         = 'multi';
+  const retIsrWrapMulti3 = document.getElementById('pago-retencion-isr-wrap');
+  if (retIsrWrapMulti3) retIsrWrapMulti3.style.display = 'none';
   document.getElementById('pago-factura-id').value   = '';
   document.getElementById('pago-factura-id').dataset.tipo = 'OC';
   document.getElementById('pago-factura-id').dataset.numPago = _numPago3;
