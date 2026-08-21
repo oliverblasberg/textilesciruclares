@@ -4011,7 +4011,11 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div class="form-grid form-grid-2" style="margin-bottom:20px">
         <div class="field"><label>No. OC (auto)</label><input type="text" id="oc-num" readonly placeholder="Se asigna al confirmar" style="background:var(--surface2);color:var(--text2)"/></div>
         <div class="field"><label>Proveedor *</label><select id="oc-proveedor" onchange="onOCProveedorChange()"><option value="">— Seleccionar —</option></select></div>
-        <div class="field"><label>Fecha *</label><input type="date" id="oc-fecha"/></div>
+        <!-- Fecha = siempre la fecha del día en que se generó la OC
+             (20/Ago/2026, a pedido explícito) — ya no es editable. Se fija
+             sola a hoy cuando se crea (openNewOC) y, al editar, muestra la
+             fecha original (editOC lee o.fecha) — nunca cambia después. -->
+        <div class="field"><label>Fecha</label><input type="date" id="oc-fecha" readonly disabled style="background:var(--surface2);color:var(--text2);cursor:not-allowed"/></div>
         <div class="field"><label>Entrega Estimada</label><input type="date" id="oc-entrega"/></div>
         <div class="field"><label>Lugar de Entrega (Bodega)</label>
           <select id="oc-bodega">
@@ -4834,7 +4838,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <!-- Reabastecer — visible solo si la receta lo requiere (15/Ago/2026,
            a pedido explícito). Ver refrescarBotonReabastecerOP(). -->
       <button class="btn btn-ghost" id="btn-op-reabastecer" style="display:none;margin-right:auto" onclick="abrirReabastecimiento('op', document.getElementById('op-id').value)">🔄 Reabastecer</button>
-      <div id="op-reab-hint" style="display:none;font-size:11px;color:var(--red);align-self:center;margin-right:8px"></div>
+      <div id="op-reab-hint" style="display:none;font-size:11px;color:var(--accent3);align-self:center;margin-right:8px"></div>
       <button class="btn btn-ghost" onclick="closeModal('modal-op')">Cancelar</button>
       <button class="btn btn-secondary" onclick="saveOP('borrador')">Guardar Borrador</button>
       <button class="btn btn-primary" id="btn-op-iniciar" onclick="saveOP('en_proceso')">▶ Iniciar Producción</button>
@@ -5326,6 +5330,14 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
               <option value="">— Solo moneda principal —</option>
               <option value="GTQ">GTQ — Quetzal</option>
               <option value="USD">USD — Dólar</option>
+            </select>
+          </div>
+          <div class="form-section-title">Régimen Fiscal</div>
+          <div class="field field-full"><label>Régimen ISR <span style="font-weight:400;color:var(--text3)">(para retención de ISR en pagos)</span></label>
+            <select id="prov-regimen-isr">
+              <option value="general">Régimen General / Sobre Utilidades — sin retención</option>
+              <option value="opcional_simplificado">Régimen Opcional Simplificado / Sobre Ingresos — sujeto a retención 5%/7%</option>
+              <option value="exento_29_89">Exento — Decreto 29-89 / Maquila — sin retención</option>
             </select>
           </div>
           <div class="form-section-title">Datos Bancarios</div>
@@ -10592,6 +10604,7 @@ function openNewProveedor() {
   document.getElementById('prov-pais').value = 'GT';
   document.getElementById('prov-moneda').value  = 'GTQ';
   document.getElementById('prov-moneda2').value = '';
+  document.getElementById('prov-regimen-isr').value = 'general';
   document.getElementById('prov-incoterms').innerHTML = incotermsOpts();
   document.getElementById('prov-terminos').innerHTML  = terminosPagoOpts();
   provTab('general');
@@ -10643,6 +10656,7 @@ function editProveedor(id) {
   document.getElementById('prov-num-cuenta').value  = p.num_cuenta||'';
   document.getElementById('prov-moneda').value   = p.moneda||'GTQ';
   document.getElementById('prov-moneda2').value  = p.moneda2||'';
+  document.getElementById('prov-regimen-isr').value = p.regimen_isr||'general';
   onProvMonedaChange();
   if (p.moneda2) document.getElementById('prov-moneda2').value = p.moneda2;
   document.getElementById('modal-proveedor-title').textContent = 'Editar Proveedor';
@@ -10729,6 +10743,7 @@ async function saveProveedor() {
     const row = {
       nit, name, moneda,
       moneda2:      moneda2 || null,
+      regimen_isr:  document.getElementById('prov-regimen-isr')?.value || 'general',
       address:      document.getElementById('prov-address').value.trim(),
       address2:     document.getElementById('prov-address2').value.trim(),
       estado:       document.getElementById('prov-estado').value.trim(),
@@ -11570,15 +11585,20 @@ function calcOPConsumosEstimados() {
   refrescarBotonReabastecerOP();
 }
 
-// Muestra/oculta el botón Reabastecer y habilita/deshabilita Iniciar
-// Producción según si la receta elegida lo requiere y, si lo requiere, si
-// ya está completo (15/Ago/2026, a pedido explícito). Se llama cada vez
-// que cambia la receta o la cantidad del formulario de OP.
+// Muestra/oculta el botón Reabastecer y el aviso de estado, según si la
+// receta elegida lo requiere y, si lo requiere, si ya está completo.
+// CAMBIO (20/Ago/2026, a pedido explícito — "yo debo poder ir enviando MP
+// conforme se va produciendo... si tengo que esperar a que esté todo
+// listo... me retrasa mucho"): "Iniciar Producción" YA NO se deshabilita
+// por reabastecimiento incompleto — el aviso de acá abajo es solo
+// informativo. Se llama cada vez que cambia la receta o la cantidad del
+// formulario de OP, y también después de cada asignación de lotes.
 function refrescarBotonReabastecerOP() {
   const btnReab = document.getElementById('btn-op-reabastecer');
   const btnIni  = document.getElementById('btn-op-iniciar');
   const hint    = document.getElementById('op-reab-hint');
   if (!btnReab || !btnIni) return;
+  btnIni.disabled = false; // nunca se bloquea por reabastecimiento
 
   const opId     = document.getElementById('op-id').value;
   const recetaId = document.getElementById('op-receta').value;
@@ -11588,7 +11608,6 @@ function refrescarBotonReabastecerOP() {
   if (!receta || !cantProg) {
     btnReab.style.display = 'none';
     hint.style.display = 'none';
-    btnIni.disabled = false;
     return;
   }
 
@@ -11596,7 +11615,6 @@ function refrescarBotonReabastecerOP() {
   if (!est.requiere) {
     btnReab.style.display = 'none';
     hint.style.display = 'none';
-    btnIni.disabled = false;
     return;
   }
 
@@ -11604,19 +11622,16 @@ function refrescarBotonReabastecerOP() {
   if (!opId) {
     btnReab.textContent = '🔄 Reabastecer (guardá primero)';
     btnReab.disabled = true;
-    btnIni.disabled = false; // el propio saveOP('en_proceso') se encarga de guardar como borrador primero
     hint.style.display = 'none';
   } else {
     btnReab.disabled = false;
     if (est.completo) {
       btnReab.textContent = '✓ Reabastecido';
-      btnIni.disabled = false;
       hint.style.display = 'none';
     } else {
       const cubiertos = est.detalle.filter(d=>d.completo).length;
       btnReab.textContent = `🔄 Reabastecer (${cubiertos}/${est.detalle.length})`;
-      btnIni.disabled = true;
-      hint.textContent = 'Faltan insumos por reabastecer';
+      hint.textContent = 'Reabastecimiento parcial — podés seguir produciendo e ir completándolo';
       hint.style.display = 'block';
     }
   }
@@ -11633,6 +11648,7 @@ async function openNewOP() {
   document.getElementById('op-numero-preview').textContent = await nextOPNum();
   document.getElementById('op-consumos-estimados-section').style.display = 'none';
   document.getElementById('op-producto-display').textContent = '— Selecciona una receta —';
+  document.getElementById('btn-op-iniciar').textContent = '▶ Iniciar Producción';
 
   // Populate recetas and bodegas
   onOPTipoChange();
@@ -11667,6 +11683,13 @@ async function editOP(id) {
   document.getElementById('op-fecha-fin').value     = op.fecha_fin||'';
   document.getElementById('op-notas').value         = op.notas||'';
   document.getElementById('op-numero-preview').textContent = op.numero||'';
+  // 20/Ago/2026: si la OP ya está en_proceso, "Iniciar Producción" pasa a
+  // ser simplemente "Guardar Cambios" — sigue siendo el mismo botón
+  // (saveOP('en_proceso')), pero ya no vuelve a registrar consumos ni
+  // costos de conversión (ver guard yaEnProceso en saveOP). Reabastecer
+  // sigue disponible para seguir asignando MP conforme se va produciendo.
+  document.getElementById('btn-op-iniciar').textContent =
+    op.estado === 'en_proceso' ? '💾 Guardar Cambios' : '▶ Iniciar Producción';
 
   // Bodegas: se pueblan las opciones ANTES de disparar onOPRecetaChange()
   // (que intenta auto-seleccionar un default por categoría — ver punto 7)
@@ -11720,27 +11743,23 @@ async function saveOP(estado = 'borrador') {
   const tipoOP    = document.getElementById('op-tipo').value;
   const esSub_op  = esSubcontrato(tipoOP);
 
-  // REABASTECIMIENTO (15/Ago/2026, a pedido explícito): no se puede
-  // Iniciar Producción hasta haber asignado manualmente los lotes reales
-  // de cada insumo que la receta necesite reabastecer. Una OP que todavía
-  // no existe en la base (sin `id`) nunca puede tener reabastecimiento
-  // asignado de antemano — en ese caso se guarda primero como borrador
-  // (así consigue un id real al que atar la asignación de lotes) y se
-  // detiene ahí, en vez de dejar avanzar a 'en_proceso' a medias.
-  let bloqueadoPorReabastecimiento = false;
-  if (estado === 'en_proceso') {
-    if (!id) {
-      toast('Primero se guarda como borrador — asigná el reabastecimiento y volvé a Iniciar Producción','error');
-      estado = 'borrador';
-      bloqueadoPorReabastecimiento = true;
-    } else {
-      const estReab = estadoReabastecimiento('op', id, receta, cantidad_prog);
-      if (estReab.requiere && !estReab.completo) {
-        toast('Faltan insumos por reabastecer — asigná los lotes pendientes antes de iniciar producción','error');
-        return;
-      }
-    }
-  }
+  // REABASTECIMIENTO (candado ELIMINADO 20/Ago/2026, a pedido explícito:
+  // "yo puedo confirmar una OP, una OC aunque no haya reabastecido materia
+  // prima... si tengo que esperar a que esté todo listo para hacer el
+  // siguiente paso, me retrasa mucho"). Hasta hoy, Iniciar Producción
+  // exigía tener el 100% del reabastecimiento asignado ANTES de poder
+  // arrancar — bloqueaba con un toast si faltaba algo. Ahora se puede
+  // Iniciar Producción con reabastecimiento parcial o incluso en cero; el
+  // operador va asignando lotes de MP conforme los va teniendo, incluso
+  // DESPUÉS de que la OP ya está en_proceso (ver 🔄 Reabastecer, que ya no
+  // se oculta ni se bloquea por estado). Cada asignación contabiliza su
+  // propio consumo al momento (ver confirmarAsignacionLotes) — ya no
+  // depende de que "Iniciar Producción" dispare todo en bloque.
+  //
+  // Si esta OP nunca se guardó (sin `id`) y el operador aprieta directo
+  // "Iniciar Producción", ya no hace falta el paso intermedio de guardar
+  // como borrador primero — se crea directo en estado 'en_proceso'.
+  const yaEnProceso = id ? (state.op||[]).find(o=>o.id===id)?.estado === 'en_proceso' : false;
 
   // Calculate costs using absorption formula (merma absorbed into unit cost)
   const lineas = (state.recetaLineas||[]).filter(l=>l.receta_id===receta_id);
@@ -11820,37 +11839,19 @@ async function saveOP(estado = 'borrador') {
     if (seGeneroInsumoOP) toast(`OP ${row.numero} guardada — insumos de la receta planificados (revisa OC/OP generadas)`);
   }
 
-  // Si se bajó a 'borrador' porque faltaba reabastecer (arriba), refresca
-  // el modal con el id real recién asignado y el botón Reabastecer, en vez
-  // de seguir como si el usuario hubiera pedido guardar un borrador normal.
-  if (bloqueadoPorReabastecimiento) {
-    document.getElementById('op-id').value = opId;
-    document.getElementById('op-numero-preview').textContent = numeroPreservado || row.numero;
-    document.getElementById('op-lote').value = lotePreservado || row.lote_produccion;
-    await loadAll();
-    refrescarBotonReabastecerOP();
-    return;
-  }
-
-  // If starting production, register consumos in DB
-  if (estado === 'en_proceso') {
-    // 15/Ago/2026, a pedido explícito: ya no se calcula con stockMap
-    // (FIFO estimado) — se usan las filas reales que el operador ya
-    // asignó en el módulo de Reabastecimiento (lote, costo y bodega
-    // reales, no un promedio). Puede haber más de un lote por insumo.
+  // Al iniciar producción por primera vez (transición real a 'en_proceso'
+  // — NO se repite si la OP ya estaba en_proceso y el operador vuelve a
+  // guardar/reabrir): registra costos de conversión (si aplica) y los
+  // movimientos de entrada/rollo para rutas subcontratadas (registrarMovimientosOP).
+  // 20/Ago/2026, a pedido explícito: el registro de erp_op_consumos y el
+  // asiento de "MP a WIP" YA NO se hacen acá en bloque — se hacen insumo
+  // por insumo, en confirmarAsignacionLotes(), en el momento real en que
+  // se asigna cada lote de MP (antes, durante o después de este paso). Acá
+  // solo queda lo que de verdad depende del instante de "Iniciar
+  // Producción": costos de conversión y (para rutas no internas) la
+  // entrada de producto terminado.
+  if (estado === 'en_proceso' && !yaEnProceso) {
     const reabAsignado = (state.reabastecimiento||[]).filter(r => r.op_id === opId);
-    const consumoRows = reabAsignado.map(r => ({
-      op_id: opId,
-      insumo_id: r.insumo_id,
-      cantidad_prog: r.cantidad,
-      cantidad_real: r.cantidad,
-      costo_unitario: r.costo_unitario,
-      costo_total: parseFloat((r.cantidad * r.costo_unitario).toFixed(4)),
-      lote: r.lote,
-      bodega_id: r.bodega_id,
-      unidad: state.productos.find(p=>p.id===r.insumo_id)?.unidad || 'kg',
-    }));
-    if (consumoRows.length) await sb.from('erp_op_consumos').insert(consumoRows);
 
     // Register cost rows — 15/Ago/2026: una sola fila desde el costo de
     // conversión configurado en la ficha del producto (ver comentario más
@@ -11867,13 +11868,13 @@ async function saveOP(estado = 'borrador') {
       }]);
     }
 
-    // Register inventory movements: add WIP/PT + asientos, con el costo
-    // real del reabastecimiento (la salida del insumo ya se movió al
-    // asignar el lote — acá no se repite).
+    // Register inventory movements: entrada de producto terminado + rollo
+    // (solo rutas no internas) — el consumo de MP ya no se postea acá,
+    // ver comentario arriba.
     await registrarMovimientosOP(opId, opId, lineas, cantidad_prog, reabAsignado, row, lote);
   }
 
-  toast(estado==='en_proceso'?'OP iniciada — consumos registrados':'OP guardada como borrador');
+  toast(estado==='en_proceso'?(yaEnProceso?'OP actualizada':'OP iniciada'):'OP guardada como borrador');
   closeModal('modal-op');
   await loadAll();
 
@@ -12025,32 +12026,19 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, reabAs
     prev.detalle.push(`${fmtNum(d.cantConMerma)} kg`);
     origenPorCategoria.set(key, prev);
   });
-  const lineasOrigen = Array.from(origenPorCategoria.values()).map(o => ({
-    cuenta_id:     o.cuenta?.id || null,
-    cuenta_codigo: o.cuenta?.codigo || '',
-    cuenta_nombre: o.cuenta?.nombre || 'Inventario MP',
-    debe: 0, haber: o.monto,
-    descripcion: `Salida MP — ${o.detalle.join(', ')}`,
-  }));
-
-  // ASIENTO 1: Consumo de MP → WIP
-  await crearAsiento({
-    diario: DIARIO_MANUFACTURA,
-    fecha: opRow.fecha_inicio || today(),
-    descripcion: `OP ${opRow.numero} — Consumo MP a WIP | ${OP_TIPO_LABEL[tipoOP]||tipoOP}`,
-    referencia: opRow.numero, referencia_id: opId,
-    moneda: 'GTQ', tipo_cambio: 1,
-    lineas: [
-      {
-        cuenta_id:    ctaProceso?.id||null,
-        cuenta_codigo: CTA_INV_PROCESO,
-        cuenta_nombre: ctaProceso?.nombre||'Inventario en Proceso',
-        debe: costoMPConMerma, haber: 0,
-        descripcion: `MP a WIP — ${cantidad_prog} kg (incl. ${esInter?'merma absorbida':'merma + subcontrato'})`,
-      },
-      ...lineasOrigen,
-    ],
-  });
+  // ASIENTO 1: Consumo de MP → WIP — ELIMINADO de acá (20/Ago/2026, a
+  // pedido explícito: "yo debo poder ir enviando MP conforme se va
+  // produciendo"). Antes se posteaba UNA sola vez, en bloque, justo acá,
+  // usando lo que estuviera asignado en erp_reabastecimiento en el
+  // instante de "Iniciar Producción" — lo que obligaba a tener TODO el
+  // reabastecimiento listo de antemano (o dejaba el WIP incompleto si no
+  // lo estaba, sin ninguna forma de completarlo después). Ahora este
+  // asiento se postea insumo por insumo, lote por lote, en
+  // confirmarAsignacionLotes() — en el momento real en que el operador
+  // asigna cada lote, sea antes, durante o después de este paso. `lineasOrigen`
+  // y `consumoData` (arriba) quedan disponibles por si se necesitan para
+  // otros cálculos de esta función (costoUnitFabricado, etc.) pero ya no
+  // generan un asiento acá.
 
   // ASIENTO 2: Costos de conversión → WIP (SOLO subcontrato)
   // Para manufactura interna: MO y energía van al Estado de Resultados
@@ -15020,27 +15008,53 @@ async function confirmarAsignacionLotes(idx, insumoId) {
       }).eq('id', a.rolloId);
       if (rErr) console.error('confirmarAsignacionLotes: error marcando rollo reabastecido:', rErr.message);
     }
+
+    // erp_op_consumos (20/Ago/2026, a pedido explícito — "debo poder ir
+    // enviando MP conforme se va produciendo"): antes esta tabla solo se
+    // llenaba en bloque, una sola vez, al hacer "Iniciar Producción"
+    // (saveOP), con lo que ya estuviera asignado en ese momento — obligaba
+    // a tener TODO el reabastecimiento listo antes de arrancar. Ahora se
+    // llena acá, insumo por insumo, en el momento real en que se asigna
+    // cada lote — antes, durante o después de "Iniciar Producción", sin
+    // ningún candado. saveOP ya NO inserta esto (ver comentario ahí).
+    if (tipoDoc === 'op') {
+      const { error: cErr } = await sb.from('erp_op_consumos').insert({
+        op_id: docId, insumo_id: insumoId,
+        cantidad_prog: a.cantidad, cantidad_real: a.cantidad,
+        costo_unitario: a.costo, costo_total: parseFloat((a.cantidad*a.costo).toFixed(4)),
+        lote: a.lote, bodega_id: bodegaId,
+        unidad: (state.productos||[]).find(p=>p.id===insumoId)?.unidad || 'kg',
+      });
+      if (cErr) console.error('confirmarAsignacionLotes: error insertando op_consumo:', cErr.message);
+    }
   }
 
-  // MP entregada a subcontratista → Inventario en Proceso (20/Ago/2026, a
-  // pedido explícito: "en la subcontrata debes contabilizar el movimiento
-  // de la MP entregada para conversión. Ya que la estás metiendo al
-  // inventario de producto en proceso"). Para OP esto ya lo posteaba
-  // registrarMovimientosOP (Asiento 1) al "Iniciar Producción", usando
-  // estas mismas filas de erp_reabastecimiento — para OC no había ningún
-  // paso equivalente: el movimiento de salida de arriba bajaba el stock de
-  // la MP, pero el valor no entraba a ninguna cuenta contable, se perdía de
-  // los libros. Se postea acá mismo, al momento de asignar el lote — mismo
-  // momento en que ya se movía la cantidad físicamente. Solo para OC
-  // (tipoDoc==='oc'); para OP se sigue posteando en bloque como siempre,
-  // NO acá, para no duplicar el Asiento 1.
-  if (tipoDoc === 'oc' && totalCostoAsignado > 0) {
+  // MP entregada a producción/subcontratista → Inventario en Proceso
+  // (20/Ago/2026, a pedido explícito, primero para OC: "en la subcontrata
+  // debes contabilizar el movimiento de la MP entregada para conversión.
+  // Ya que la estás metiendo al inventario de producto en proceso"; luego
+  // extendido a OP, mismo día: "yo debo poder ir enviando MP conforme se
+  // va produciendo. Si tengo que esperar a que esté todo listo... me
+  // retrasa mucho"). Se postea ACÁ, al momento de asignar cada lote —
+  // mismo momento en que ya se mueve la cantidad físicamente — para AMBOS
+  // tipos de documento (OP y OC), no en un solo bloque al final.
+  //
+  // Este asiento reemplaza por completo lo que antes posteaba
+  // registrarMovimientosOP() como "Asiento 1" al hacer Iniciar Producción
+  // — esa función YA NO postea Asiento 1 (ver su propio comentario), para
+  // no duplicar. Si alguna OP vieja quedó con Asiento 1 posteado bajo el
+  // modelo anterior (bloque único en Iniciar Producción) y ahora se le
+  // sigue asignando reabastecimiento, esa asignación adicional postea acá
+  // sin problema — son eventos independientes, cada uno por su propio
+  // monto, no hay superposición.
+  if (totalCostoAsignado > 0) {
     const ctaProcesoReab = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
     const ctaInsumoReab  = getCtaValoracionProducto(insumoId);
     const insumoProdReab = state.productos.find(p=>p.id===insumoId);
+    const destinoTxt = tipoDoc === 'op' ? 'producción' : 'subcontratista';
     await crearAsiento({
       diario: DIARIO_MANUFACTURA, fecha: today(),
-      descripcion: `Reabastecimiento ${numero} — MP entregada a subcontratista (${insumoProdReab?.codigo_interno||insumoProdReab?.code||insumoProdReab?.description||''})`,
+      descripcion: `Reabastecimiento ${numero} — MP entregada a ${destinoTxt} (${insumoProdReab?.codigo_interno||insumoProdReab?.code||insumoProdReab?.description||''})`,
       referencia: numero, referencia_id: docId,
       moneda: 'GTQ', tipo_cambio: 1,
       lineas: [
@@ -17840,10 +17854,15 @@ function showOCPanel(ocId) {
 
   // Reabastecer (15/Ago/2026, a pedido explícito): solo aplica a OC de
   // servicio de subcontrato con receta asociada (planificarSubcontrato ya
-  // guarda receta_id al generarla). Si la receta requiere reabastecimiento
-  // y todavía no está completo, Confirmar queda deshabilitado — mismo
-  // criterio que Iniciar Producción en la OP.
+  // guarda receta_id al generarla). CAMBIO (20/Ago/2026, a pedido
+  // explícito — "yo puedo confirmar una OP, una OC aunque no haya
+  // reabastecido materia prima"): Confirmar YA NO se deshabilita por
+  // reabastecimiento incompleto. El botón Reabastecer queda visible
+  // siempre que la receta lo requiera, esté o no completo, y esté o no
+  // ya confirmada la OC — así se puede seguir asignando MP conforme se
+  // va enviando, incluso después de confirmar.
   const btnReabOC = document.getElementById('btn-oc-reabastecer');
+  if (btnConf) btnConf.disabled = false;
   if (btnReabOC) {
     const recetaOC = (state.recetas||[]).find(r=>r.id===oc.receta_id);
     const cantidadOC = Number(ocItems[0]?.cantidad||0);
@@ -17852,10 +17871,8 @@ function showOCPanel(ocId) {
       btnReabOC.style.display = '';
       const cubiertos = estOC.detalle.filter(d=>d.completo).length;
       btnReabOC.textContent = estOC.completo ? '✓ Reabastecido' : `🔄 Reabastecer (${cubiertos}/${estOC.detalle.length})`;
-      if (btnConf) btnConf.disabled = isBorrador && !estOC.completo;
     } else {
       btnReabOC.style.display = 'none';
-      if (btnConf) btnConf.disabled = false;
     }
   }
 
@@ -17890,16 +17907,19 @@ async function confirmarOC() {
   const ocItems  = state.ocItems.filter(i => i.oc_id === currentOCId);
   const esServicio = ocItems.every(i => state.productos.find(p=>p.id===i.producto_id)?.tipo === 'servicio');
 
-  // REABASTECIMIENTO (15/Ago/2026, a pedido explícito): mismo criterio que
-  // Iniciar Producción en la OP — no se puede confirmar hasta haber
-  // asignado los lotes reales de los insumos que la receta requiera.
+  // REABASTECIMIENTO (candado ELIMINADO 20/Ago/2026, a pedido explícito:
+  // "yo puedo confirmar una OP, una OC aunque no haya reabastecido materia
+  // prima"). Antes bloqueaba Confirmar hasta tener el 100% de los insumos
+  // asignados — ahora se puede confirmar con reabastecimiento parcial o en
+  // cero, y se sigue asignando MP después con 🔄 Reabastecer (cada
+  // asignación contabiliza su propio consumo al momento, ver
+  // confirmarAsignacionLotes). Solo se avisa, no se bloquea.
   const recetaOC = (state.recetas||[]).find(r=>r.id===oc.receta_id);
   const cantidadOC = Number(ocItems[0]?.cantidad||0);
   if (recetaOC && cantidadOC) {
     const estOC = estadoReabastecimiento('oc', currentOCId, recetaOC, cantidadOC);
     if (estOC.requiere && !estOC.completo) {
-      toast('Faltan insumos por reabastecer — asigná los lotes pendientes antes de confirmar','error');
-      return;
+      if (!confirm('Todavía falta reabastecimiento por asignar para esta OC. ¿Confirmar de todas formas? Podés seguir asignando lotes después.')) return;
     }
   }
 
@@ -20394,30 +20414,21 @@ async function saveOC() {
 
   const estadoElegido = document.getElementById('oc-status').value;
 
-  // REABASTECIMIENTO (20/Ago/2026, a pedido explícito — "mejor nos curamos
-  // que el usuario pueda cometer algún error"): el dropdown de Estado de
-  // este formulario permitía saltar directo a 'confirmada' sin pasar por
-  // el candado de completitud de reabastecimiento que sí aplica el botón
-  // dedicado Confirmar (confirmarOC). Mismo criterio y mismo patrón que ya
-  // usa saveOP() para 'en_proceso': si la OC es de subcontrato y todavía
-  // no existe en la base (sin id), no puede tener reabastecimiento
-  // asignado de antemano — se guarda primero como borrador (así consigue
-  // un id real al que atar la asignación de lotes) y se detiene ahí. Si ya
-  // existe, se valida que el reabastecimiento que la receta requiera esté
-  // completo antes de dejar pasar 'confirmada'.
+  // REABASTECIMIENTO (candado agregado 20/Ago/2026 — "mejor nos curamos
+  // que el usuario pueda cometer algún error" — y ELIMINADO ese mismo día,
+  // pocos minutos después, a pedido explícito: "yo puedo confirmar una OP,
+  // una OC aunque no haya reabastecido materia prima... si tengo que
+  // esperar a que esté todo listo para hacer el siguiente paso, me
+  // retrasa mucho"). El dropdown de Estado ya no fuerza 'borrador' ni
+  // bloquea 'confirmada' por reabastecimiento incompleto — solo avisa. Se
+  // puede seguir asignando lotes después con 🔄 Reabastecer, esté o no ya
+  // confirmada la OC (cada asignación contabiliza su propio consumo al
+  // momento, ver confirmarAsignacionLotes).
   let estadoFinal = estadoElegido;
-  let bloqueadoPorReabastecimientoOC = false;
-  if (estadoFinal === 'confirmada' && esSubOC) {
-    if (!id) {
-      toast('Primero se guarda como borrador — asigná el reabastecimiento y volvé a confirmar','error');
-      estadoFinal = 'borrador';
-      bloqueadoPorReabastecimientoOC = true;
-    } else {
-      const estOC = estadoReabastecimiento('oc', id, recetaSub, Number(lines[0]?.cantidad||0));
-      if (estOC.requiere && !estOC.completo) {
-        toast('Faltan insumos por reabastecer — asigná los lotes pendientes antes de confirmar','error');
-        return;
-      }
+  if (estadoFinal === 'confirmada' && esSubOC && id) {
+    const estOC = estadoReabastecimiento('oc', id, recetaSub, Number(lines[0]?.cantidad||0));
+    if (estOC.requiere && !estOC.completo) {
+      if (!confirm('Todavía falta reabastecimiento por asignar para esta OC. ¿Guardar como Confirmada de todas formas? Podés seguir asignando lotes después.')) return;
     }
   }
 
@@ -20454,17 +20465,6 @@ async function saveOC() {
   }
   if (err) { toast('Error: '+err.message,'error'); return; }
   await sb.from('erp_oc_items').insert(lines.map(l=>({...l, oc_id:ocId})));
-
-  // Si se bajó a 'borrador' porque faltaba reabastecer (arriba), no sigue
-  // el camino normal (cascada de insumos + cierre de modal) — en vez de
-  // eso lleva al usuario directo al panel de la OC recién creada, donde ya
-  // está visible el botón "🔄 Reabastecer".
-  if (bloqueadoPorReabastecimientoOC) {
-    await loadAll();
-    closeModal('modal-oc');
-    showOCPanel(ocId);
-    return;
-  }
 
   // Cascada de reabastecimiento de insumos de la receta de subcontrato —
   // SOLO al crear la OC (esNueva), nunca al editar/re-guardar, para no
