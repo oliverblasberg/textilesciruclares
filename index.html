@@ -4423,6 +4423,20 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           </div>
         </div>
 
+        <!-- Sección: Retención ISR -->
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Retención ISR</div>
+        <div class="form-grid form-grid-2" style="margin-bottom:20px">
+          <div class="field field-full" style="padding:10px 12px;background:var(--surface2);border-radius:8px">
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:0">
+              <input type="checkbox" id="foc-retencion-isr" style="width:16px;height:16px;accent-color:var(--green)"/>
+              <div>
+                <div style="font-size:13px;font-weight:500">Factura indica "Sujeto a Retención ISR"</div>
+                <div id="foc-retencion-isr-nota" style="font-size:11px;color:var(--text3)"></div>
+              </div>
+            </label>
+          </div>
+        </div>
+
         <!-- Sección 3: Detalle -->
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);margin-bottom:12px">Detalle de Factura</div>
         <div id="foc-items-display" style="border:1.5px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px"></div>
@@ -21674,6 +21688,22 @@ function openFacturaOC() {
   if (focBadge) focBadge.innerHTML = '';
   document.getElementById('foc-header-sub').textContent = `${oc?.numero||''} — ${prov?.name||''}`;
   document.getElementById('foc-proveedor-nombre').value = prov?.name||'';
+  // Retención ISR: solo tiene sentido marcarla por defecto si el proveedor
+  // está en Régimen Opcional Simplificado — los de Régimen General y los
+  // exentos por Decreto 29-89 (subcontratistas de producción, coexportan)
+  // nunca están sujetos. Queda editable porque el dato real de si aplica
+  // "Sujeto a Retención ISR" vs. "Pagos Directos" viene impreso en la
+  // factura física del proveedor, no es un hecho fijo garantizado por régimen.
+  const focRetIsr = document.getElementById('foc-retencion-isr');
+  const focRetIsrNota = document.getElementById('foc-retencion-isr-nota');
+  if (focRetIsr) focRetIsr.checked = prov?.regimen_isr === 'opcional_simplificado';
+  if (focRetIsrNota) {
+    focRetIsrNota.textContent = prov?.regimen_isr === 'opcional_simplificado'
+      ? 'Proveedor en Régimen Opcional Simplificado — normalmente sí aplica, salvo que la factura indique "Pagos Directos".'
+      : prov?.regimen_isr === 'exento_29_89'
+        ? 'Proveedor exento (Decreto 29-89) — normalmente no aplica.'
+        : 'Proveedor en Régimen General — normalmente no aplica.';
+  }
   const numInterno = nextFacturaInterna();
   document.getElementById('foc-num-interno').value          = numInterno;
   document.getElementById('foc-num-interno-display').textContent = numInterno;
@@ -21764,6 +21794,7 @@ async function saveFacturaOC() {
   const total          = parseFloat(document.getElementById('foc-total').value);
   const notas          = document.getElementById('foc-notas').value.trim();
   const num_interno    = document.getElementById('foc-num-interno').value;
+  const sujeto_retencion_isr = document.getElementById('foc-retencion-isr')?.checked || false;
 
   if (!numero||!fecha) { toast('Número y fecha son requeridos','error'); return; }
 
@@ -21811,6 +21842,7 @@ async function saveFacturaOC() {
     dias_credito:   diasCredito,
     tc,
     num_interno,
+    sujeto_retencion_isr,
   }).select();
   if (e1) {
     toast('Error: '+e1.message,'error');
