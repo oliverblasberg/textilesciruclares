@@ -14677,7 +14677,7 @@ async function saveProducto() {
       ruta_comprar:    tipo === 'servicio' ? false : document.getElementById('prod-ruta-comprar')?.checked || false,
       ruta_fabricar:   tipo === 'servicio' ? false : document.getElementById('prod-ruta-fabricar')?.checked || false,
       ruta_subcontratar: tipo === 'servicio' ? false : document.getElementById('prod-ruta-subcontrata')?.checked || false,
-      proveedores_compra: tipo === 'servicio' ? [] : provLines,
+      proveedores_compra: provLines,
     };
 
     const esServicio = tipo === 'servicio';
