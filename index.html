@@ -9190,7 +9190,12 @@ async function autoMatchConciliacion(cuentaIdParam) {
     if (!pendientesExt.length) continue;
 
     const yaVinculados = new Set((state.extractoBancario||[]).filter(l=>l.pago_id).map(l=>l.pago_id));
-    const candidatosPago = (state.pagos||[]).filter(p=>p.cuenta_id===ctaId && !yaVinculados.has(p.id))
+    // Candidatos: dinero que entra (erp_pagos, cobros) Y dinero que sale
+    // (erp_pagos_oc, pagos a proveedores) — antes solo se buscaba en
+    // erp_pagos, así que ninguna salida a proveedor podía conciliarse
+    // automáticamente contra el extracto bancario.
+    const candidatosPago = [...(state.pagos||[]), ...(state.pagosOC||[])]
+      .filter(p=>p.cuenta_id===ctaId && !yaVinculados.has(p.id))
       .map(p => ({ pago: p, signed: signedPagoMonto(p) }));
 
     const usados = new Set();
@@ -9404,7 +9409,10 @@ function openConciliarManual(extractoId) {
 
   const yaVinculados = new Set((state.extractoBancario||[]).filter(l=>l.pago_id).map(l=>l.pago_id));
   const montoLinea = Number(linea.monto||0);
-  const candidatos = (state.pagos||[]).filter(p=>p.cuenta_id===linea.cuenta_id && !yaVinculados.has(p.id))
+  // Mismo fix que autoMatchConciliacion(): incluir pagos a proveedores
+  // (erp_pagos_oc), no solo cobros a clientes (erp_pagos).
+  const candidatos = [...(state.pagos||[]), ...(state.pagosOC||[])]
+    .filter(p=>p.cuenta_id===linea.cuenta_id && !yaVinculados.has(p.id))
     .map(p => ({ pago:p, signed: signedPagoMonto(p) }))
     .filter(c => Math.abs((new Date(linea.fecha) - new Date(c.pago.fecha))/86400000) <= 45)
     .sort((a,b) => {
@@ -9481,7 +9489,10 @@ function _lineasConfirmacionBancaria(cuenta, ctaBanco, ctaTransitoria, monto, es
 // vigente. No genera nada si no se puede determinar la dirección del pago
 // (evita adivinar y dejar un asiento mal formado).
 async function asientoConfirmacionBancaria(pagoId, fechaConfirmacion) {
-  const pago = (state.pagos||[]).find(p => p.id === pagoId);
+  // Busca en ambas tablas — el pago puede ser un cobro (erp_pagos) o un
+  // pago a proveedor (erp_pagos_oc). Antes solo buscaba en erp_pagos, así
+  // que la confirmación bancaria nunca se generaba para pagos a proveedores.
+  const pago = (state.pagos||[]).find(p => p.id === pagoId) || (state.pagosOC||[]).find(p => p.id === pagoId);
   if (!pago) return;
   if (_saldoConfirmacionPago(pagoId) > 0) return;
 
@@ -9512,7 +9523,7 @@ async function asientoConfirmacionBancaria(pagoId, fechaConfirmacion) {
 // se edita ni se borra el asiento original) — es la práctica contable
 // correcta y mantiene el rastro de auditoría completo.
 async function reversoConfirmacionBancaria(pagoId, fecha) {
-  const pago = (state.pagos||[]).find(p => p.id === pagoId);
+  const pago = (state.pagos||[]).find(p => p.id === pagoId) || (state.pagosOC||[]).find(p => p.id === pagoId);
   if (!pago) return;
   if (_saldoConfirmacionPago(pagoId) <= 0) return;
 
@@ -9628,7 +9639,13 @@ async function registrarGastoBancario() {
 function calcSaldoLibros(cuentaId, fechaCorte) {
   const cuenta = (state.cuentas||[]).find(c=>c.id===cuentaId);
   let saldo = Number(cuenta?.saldo_inicial||0);
-  (state.pagos||[]).filter(p=>p.cuenta_id===cuentaId && (!fechaCorte || p.fecha<=fechaCorte))
+  // Dinero que ENTRA (cobros a clientes, erp_pagos) y que SALE (pagos a
+  // proveedores, erp_pagos_oc) — la conciliación bancaria debe cuadrar
+  // ambos flujos, no solo cobros. signedPagoMonto() ya distinguía el signo
+  // correcto para ambos (negativo si el factura_id pertenece a
+  // erp_oc_facturas), pero antes solo se recorría state.pagos.
+  [...(state.pagos||[]), ...(state.pagosOC||[])]
+    .filter(p=>p.cuenta_id===cuentaId && (!fechaCorte || p.fecha<=fechaCorte))
     .forEach(p => saldo += signedPagoMonto(p));
   (state.ocAnticipos||[]).filter(a=>a.cuenta_id===cuentaId && (!fechaCorte || a.fecha<=fechaCorte))
     .forEach(a => saldo -= Number(a.monto||0));
@@ -18788,9 +18805,12 @@ function verFacturaOC(facturaId) {
     const qty = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(f.oc_id, i.producto_id);
     const precioUnit = Number(i.precio_unit||0);
     const precioTotal = qty * precioUnit;
-    const neto = precioTotal;
-    const iva  = neto * ivaRatio;
-    const lineaTotal = neto + iva;
+    // precioTotal YA incluye IVA (criterio Guatemala) — hay que EXTRAER
+    // el neto, no agregar IVA encima. ivaRatio=iva/neto (facturaIvaRatio),
+    // total=neto*(1+ivaRatio) -> neto=total/(1+ivaRatio).
+    const neto = ivaRatio > 0 ? precioTotal / (1 + ivaRatio) : precioTotal;
+    const iva  = precioTotal - neto;
+    const lineaTotal = precioTotal;
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 12px;font-size:13px">${prod?.description||'—'}</td>
       <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${qty.toFixed(3)}</td>
@@ -18965,9 +18985,12 @@ function imprimirFacturaOC(facturaId) {
     const qty = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(f.oc_id, i.producto_id);
     const precioUnit = Number(i.precio_unit||0);
     const precioTotal = qty * precioUnit;
-    const neto = precioTotal;
-    const iva  = neto * ivaRatio;
-    const lineaTotal = neto + iva;
+    // precioTotal YA incluye IVA (criterio Guatemala) — hay que EXTRAER
+    // el neto, no agregar IVA encima. ivaRatio=iva/neto (facturaIvaRatio),
+    // total=neto*(1+ivaRatio) -> neto=total/(1+ivaRatio).
+    const neto = ivaRatio > 0 ? precioTotal / (1 + ivaRatio) : precioTotal;
+    const iva  = precioTotal - neto;
+    const lineaTotal = precioTotal;
     return `<tr>
       <td>${prod?.description||'—'}</td>
       <td class="num">${qty.toFixed(3)}</td>
