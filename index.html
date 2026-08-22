@@ -1829,12 +1829,16 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <tbody id="oc-panel-facturas"></tbody>
         </table>
       </div>
-      <!-- Anticipos -->
-      <div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Anticipos</div>
+      <!-- Reabastecimientos (21/Ago/2026, a pedido explícito — reemplaza a
+           Anticipos en esta vista de detalle): cada asignación de lotes
+           confirmada genera un correlativo REA-YYYY-NNNN propio, visible
+           acá — mismo concepto que Recepciones (clic en el título abre el
+           detalle de solo lectura con Imprimir Albarán / Editar). -->
+      <div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Reabastecimientos</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Fecha</th><th style="text-align:right">Monto</th><th>Cuenta</th><th>Notas</th></tr></thead>
-          <tbody id="oc-panel-anticipos"></tbody>
+          <thead><tr><th>No.</th><th>Fecha</th><th>Insumo</th><th style="text-align:right">Cantidad</th></tr></thead>
+          <tbody id="oc-panel-reabastecimientos"></tbody>
         </table>
       </div>
     </div>
@@ -5562,6 +5566,26 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="editarRecepcionDesdeVista()">✏️ Editar</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-ver-recepcion')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- VER REABASTECIMIENTO (REA) MODAL — solo lectura, mismo patrón que
+     modal-ver-recepcion (21/Ago/2026, a pedido explícito: "utiliza el
+     mismo concepto de Recepciones"). -->
+<div class="modal-overlay" id="modal-ver-reabastecimiento">
+  <div class="modal modal-lg" style="max-width:800px;width:95vw">
+    <div class="modal-header">
+      <div class="modal-title" id="vrea-title">Reabastecimiento</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="imprimirReabastecimiento(currentVerReabastecimientoNum)">🖨 Imprimir Albarán</button>
+        <button class="modal-close" onclick="closeModal('modal-ver-reabastecimiento')">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" id="vrea-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="editarReabastecimientoDesdeVista()">✏️ Editar</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-ver-reabastecimiento')">Cerrar</button>
     </div>
   </div>
 </div>
@@ -15120,6 +15144,11 @@ async function confirmarAsignacionLotes(idx, insumoId) {
   }
 
   let totalCostoAsignado = 0;
+  // Correlativo REA-YYYY-NNNN — uno por cada confirmación (esta llamada =
+  // un insumo confirmado), compartido por todas las filas que se insertan
+  // en este mismo ciclo. Da visibilidad de qué se envió a cada orden.
+  const numeroReab = nextReabastecimientoNum();
+  const fechaReab   = today();
   for (const a of asignaciones) {
     const { error } = await sb.from('erp_reabastecimiento').insert({
       op_id: tipoDoc==='op' ? docId : null,
@@ -15127,6 +15156,7 @@ async function confirmarAsignacionLotes(idx, insumoId) {
       insumo_id: insumoId, lote: a.lote, cantidad: a.cantidad,
       costo_unitario: a.costo, bodega_id: bodegaId,
       rollo_id: a.rolloId || null,
+      numero: numeroReab, fecha: fechaReab,
     });
     if (error) { toast('Error asignando lote: '+error.message,'error'); continue; }
 
@@ -17726,6 +17756,20 @@ function nextRecepcionNum() {
   return `REC-${year}-${String(next).padStart(4,'0')}`;
 }
 
+// Mismo patrón que nextRecepcionNum() (21/Ago/2026, a pedido explícito —
+// "cada vez que hagamos un reabastecimiento, generemos un correlativo
+// REA-..."). Cada llamada a confirmarAsignacionLotes() (una por insumo
+// confirmado) genera UN numero nuevo, compartido por todas las filas de
+// erp_reabastecimiento que esa llamada inserte.
+function nextReabastecimientoNum() {
+  const year = new Date().getFullYear();
+  const nums = (state.reabastecimiento||[])
+    .filter(r => (r.numero||'').startsWith(`REA-${year}`))
+    .map(r => parseInt((r.numero||'').slice(-4))||0);
+  const next = (nums.length ? Math.max(...nums) : 0) + 1;
+  return `REA-${year}-${String(next).padStart(4,'0')}`;
+}
+
 function nextCorrelativo(prefix, list, field='numero') {
   const year  = new Date().getFullYear();
   const nums  = list.filter(x=>(x[field]||'').startsWith(`${prefix}-${year}`))
@@ -19223,17 +19267,23 @@ function renderOCPanel(ocId) {
     </tr>`;
   }).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:12px">Sin facturas</td></tr>';
 
-  // Anticipos
-  const ants = state.ocAnticipos.filter(a=>a.oc_id===ocId);
-  document.getElementById('oc-panel-anticipos').innerHTML = ants.map(a=>{
-    const cta = state.cuentas.find(c=>c.id===a.cuenta_id);
-    return `<tr>
-      <td>${fmtDate(a.fecha)}</td>
-      <td class="td-mono" style="color:var(--green)">${fmtMoney(a.monto)}</td>
-      <td>${cta?.name||'—'}</td>
-      <td style="font-size:12px;color:var(--text2)">${a.notas||'—'}</td>
+  // Reabastecimientos — agrupados por numero (REA-YYYY-NNNN): cada
+  // confirmación de asignación de lotes (una por insumo, ver
+  // confirmarAsignacionLotes) inserta varias filas de erp_reabastecimiento
+  // que comparten el mismo numero — se agrupan acá en una sola fila
+  // clickeable, igual patrón que Recepciones agrupa por lote.
+  const reabsOC = (state.reabastecimiento||[]).filter(r=>r.oc_id===ocId && r.numero);
+  const reabNumeros = [...new Set(reabsOC.map(r=>r.numero))];
+  document.getElementById('oc-panel-reabastecimientos').innerHTML = reabNumeros.map(num=>{
+    const rows = reabsOC.filter(r=>r.numero===num);
+    const totalCant = rows.reduce((s,r)=>s+Number(r.cantidad||0),0);
+    return `<tr style="cursor:pointer" onclick="verReabastecimiento('${num}')">
+      <td class="td-mono" style="font-size:12px;font-weight:700;color:var(--accent)">${num}</td>
+      <td style="font-size:12px">${fmtDate(rows[0]?.fecha)}</td>
+      <td style="font-size:12px">${prodName(rows[0]?.insumo_id)}</td>
+      <td class="td-mono" style="text-align:right;font-size:12px;font-weight:600">${totalCant.toFixed(3)}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:12px">Sin anticipos</td></tr>';
+  }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:12px">Sin reabastecimientos</td></tr>';
 }
 
 // ── SC LINES ──
@@ -20921,6 +20971,188 @@ function imprimirRecepcion(recepcionId) {
     <div class="section-title" style="border-top:none;padding-top:0">Lotes Recibidos</div>
     <table>
       <thead><tr><th>Lote</th><th>Producto</th><th>No. Packing List</th><th style="text-align:right">Cantidad</th></tr></thead>
+      <tbody>${loteRows}</tbody>
+    </table>
+
+    <div class="firmas">
+      <div class="firma-linea">Entregado por</div>
+      <div class="firma-linea">Recibido por</div>
+    </div>
+
+  </body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
+}
+
+// currentVerReabastecimientoNum — el numero (REA-YYYY-NNNN) actualmente
+// mostrado en modal-ver-reabastecimiento (mismo patrón que
+// currentVerRecepcionId, pero agrupado por numero en vez de id porque
+// erp_reabastecimiento no tiene tabla de encabezado propia — cada REA es
+// un grupo de filas que comparten el mismo numero).
+let currentVerReabastecimientoNum = null;
+
+// Vista de solo lectura del detalle de un REA (21/Ago/2026, a pedido
+// explícito: "utiliza el mismo concepto de Recepciones. Si hago click
+// sobre el título me muestra el detalle" — mismo patrón que
+// verRecepcion()).
+function verReabastecimiento(numero) {
+  const rows = (state.reabastecimiento||[]).filter(r => r.numero === numero);
+  if (!rows.length) { toast('Reabastecimiento no encontrado','error'); return; }
+  currentVerReabastecimientoNum = numero;
+  const primero = rows[0];
+  const tipoDoc = primero.oc_id ? 'oc' : 'op';
+  const oc = tipoDoc==='oc' ? state.oc.find(o=>o.id===primero.oc_id) : null;
+  const op = tipoDoc==='op' ? state.op.find(o=>o.id===primero.op_id) : null;
+  const bodega = state.bodegas.find(b=>b.id===primero.bodega_id);
+  const insumo = state.productos.find(p=>p.id===primero.insumo_id);
+  const totalCant = rows.reduce((s,r)=>s+Number(r.cantidad||0),0);
+
+  const loteRows = rows.map(r => {
+    const rollo = r.rollo_id ? (state.rollos||[]).find(x=>x.id===r.rollo_id) : null;
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 12px;font-size:13px;font-family:'DM Mono',monospace;color:var(--accent)">${r.lote||'—'}</td>
+      <td style="padding:8px 12px;font-size:13px">${rollo?.numero_rollo||'—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">${Number(r.cantidad||0).toFixed(3)}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:13px">${fmtMoney(r.costo_unitario)}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('vrea-title').textContent = numero;
+  document.getElementById('vrea-body').innerHTML = `
+    <div style="padding:20px 24px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+        <div style="padding:12px 16px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Fecha</div>
+          <div style="font-size:14px;font-weight:500">${fmtDate(primero.fecha)}</div>
+        </div>
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">${tipoDoc==='oc'?'Orden de Compra':'Orden de Producción'}</div>
+          <div style="font-size:14px;font-weight:500;font-family:'DM Mono',monospace">${oc?.numero||op?.numero||'—'}</div>
+        </div>
+        <div style="padding:12px 16px;border-right:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Insumo</div>
+          <div style="font-size:14px;font-weight:500">${insumo?.description||insumo?.code||'—'}</div>
+        </div>
+        <div style="padding:12px 16px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Bodega</div>
+          <div style="font-size:14px;font-weight:500">${bodega ? (bodega.codigo?bodega.codigo+' — ':'')+bodega.nombre : '—'}</div>
+        </div>
+        <div style="padding:12px 16px;border-top:1px solid var(--border);grid-column:1 / -1">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Cantidad Total</div>
+          <div style="font-size:16px;font-weight:700">${totalCant.toFixed(3)} ${insumo?.unidad||''}</div>
+        </div>
+      </div>
+
+      <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Lotes Asignados</div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="background:var(--surface2)">
+            <th style="padding:7px 12px;text-align:left;font-size:11px">Lote</th>
+            <th style="padding:7px 12px;text-align:left;font-size:11px">Rollo</th>
+            <th style="padding:7px 12px;text-align:right;font-size:11px">Cantidad</th>
+            <th style="padding:7px 12px;text-align:right;font-size:11px">Costo Unit.</th>
+          </tr></thead>
+          <tbody>${loteRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  openModal('modal-ver-reabastecimiento');
+}
+
+// Botón "✏️ Editar" del visor de solo lectura. IMPORTANTE — a diferencia de
+// Recepciones, un REA ya confirmado no tiene un formulario de edición
+// propio: los lotes ya fueron consumidos (movimiento de inventario +
+// asiento contable ya posteados). Este botón reabre el flujo normal de
+// Reabastecer para el documento (OC u OP) al que pertenece este REA, por
+// si falta asignar más insumos — no permite modificar las líneas de ESTE
+// REA específico ya confirmado.
+function editarReabastecimientoDesdeVista() {
+  const rows = (state.reabastecimiento||[]).filter(r => r.numero === currentVerReabastecimientoNum);
+  if (!rows.length) return;
+  const primero = rows[0];
+  closeModal('modal-ver-reabastecimiento');
+  if (primero.oc_id) abrirReabastecimiento('oc', primero.oc_id);
+  else abrirReabastecimiento('op', primero.op_id);
+}
+
+// Imprime el Albarán de un reabastecimiento — mismo patrón que
+// imprimirRecepcion().
+function imprimirReabastecimiento(numero) {
+  const rows = (state.reabastecimiento||[]).filter(r => r.numero === numero);
+  if (!rows.length) { toast('Reabastecimiento no encontrado','error'); return; }
+  const primero = rows[0];
+  const tipoDoc = primero.oc_id ? 'oc' : 'op';
+  const oc = tipoDoc==='oc' ? state.oc.find(o=>o.id===primero.oc_id) : null;
+  const op = tipoDoc==='op' ? state.op.find(o=>o.id===primero.op_id) : null;
+  const prov = oc ? state.proveedores.find(p=>p.id===oc.proveedor_id) : null;
+  const bodega = state.bodegas.find(b=>b.id===primero.bodega_id);
+  const insumo = state.productos.find(p=>p.id===primero.insumo_id);
+  const totalCant = rows.reduce((s,r)=>s+Number(r.cantidad||0),0);
+
+  const loteRows = rows.map(r => {
+    const rollo = r.rollo_id ? (state.rollos||[]).find(x=>x.id===r.rollo_id) : null;
+    return `<tr>
+      <td>${r.lote||'—'}</td>
+      <td>${rollo?.numero_rollo||'—'}</td>
+      <td class="num">${Number(r.cantidad||0).toFixed(3)} ${insumo?.unidad||''}</td>
+    </tr>`;
+  }).join('');
+
+  const win = window.open('','_blank','width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8"/>
+    <title>Albarán ${numero}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Inter',sans-serif;font-size:12px;color:#1A1C21;padding:32px;background:#fff}
+      .doc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;padding-bottom:18px;border-bottom:2px solid #101820}
+      .brand{font-size:11px;color:#5E6470;margin-top:4px}
+      .doc-num{font-size:26px;font-weight:700;color:#C84B2F;font-family:monospace}
+      .two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin:20px 0}
+      .info-row{display:flex;flex-direction:column;margin-bottom:6px}
+      .info-label{font-size:9px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9EA4B0;margin-bottom:1px}
+      .info-val{font-size:12px;font-weight:500;color:#1A1C21}
+      .section-title{font-size:9px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:#9EA4B0;margin:24px 0 8px;padding-top:16px;border-top:2px solid #101820}
+      table{width:100%;border-collapse:collapse;margin-bottom:12px}
+      thead th{background:#F4F5F7;padding:6px 10px;text-align:left;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5E6470;border-bottom:1px solid #E2E4E9}
+      tbody td{padding:6px 10px;border-bottom:1px solid #F0F1F3;font-size:11px}
+      tbody tr:last-child td{border-bottom:none}
+      .num{text-align:right;font-family:monospace}
+      .firmas{display:grid;grid-template-columns:1fr 1fr;gap:48px;margin-top:64px}
+      .firma-linea{border-top:1px solid #1A1C21;padding-top:6px;text-align:center;font-size:10px;color:#5E6470}
+      @media print{body{padding:16px} @page{margin:12mm}}
+    </style>
+  </head><body>
+
+    <div class="doc-header">
+      <div>
+        <h1 style="font-size:20px;font-weight:700">Albarán de Reabastecimiento</h1>
+        <div class="brand">TEXTILES CIRCULARES, S.A.</div>
+      </div>
+      <div style="text-align:right">
+        <div class="doc-num">${numero}</div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div>
+        <div class="info-row"><div class="info-label">Fecha</div><div class="info-val">${fmtDate(primero.fecha)}</div></div>
+        <div class="info-row"><div class="info-label">${tipoDoc==='oc'?'Orden de Compra':'Orden de Producción'}</div><div class="info-val">${oc?.numero||op?.numero||'—'}</div></div>
+        ${prov ? `<div class="info-row"><div class="info-label">Subcontratista</div><div class="info-val">${prov.name}</div></div>` : ''}
+      </div>
+      <div>
+        <div class="info-row"><div class="info-label">Insumo</div><div class="info-val">${insumo?.description||insumo?.code||'—'}</div></div>
+        <div class="info-row"><div class="info-label">Bodega de origen</div><div class="info-val">${bodega ? (bodega.codigo?bodega.codigo+' — ':'')+bodega.nombre : '—'}</div></div>
+        <div class="info-row"><div class="info-label">Cantidad Total</div><div class="info-val">${totalCant.toFixed(3)} ${insumo?.unidad||''}</div></div>
+      </div>
+    </div>
+
+    <div class="section-title" style="border-top:none;padding-top:0">Lotes Asignados</div>
+    <table>
+      <thead><tr><th>Lote</th><th>Rollo</th><th style="text-align:right">Cantidad</th></tr></thead>
       <tbody>${loteRows}</tbody>
     </table>
 
