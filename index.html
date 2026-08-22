@@ -5813,7 +5813,7 @@ function enterModule(hub) {
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
          sc, scI, oc, ocI, ocR, ocRI, plC, ocF, pagosOC, ocA, asi, asiL, dj, bod, tc,
-         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll] = await Promise.all([
+         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
     sb.from('erp_ov').select('*').order('order_number', {ascending:false}),
@@ -5857,6 +5857,7 @@ async function loadAll() {
     sb.from('erp_envios_terceros').select('*').order('created_at', {ascending:false}),
     sb.from('erp_envios_terceros_items').select('*'),
     sb.from('erp_rollos').select('*').order('created_at', {ascending:false}),
+    sb.from('erp_reabastecimiento_devoluciones').select('*').order('created_at', {ascending:false}),
   ]);
   // Antes esto fallaba en silencio: si Supabase devolvía un error (RLS, red,
   // columna renombrada, etc.) el resultado quedaba como `[]` sin avisar a
@@ -5875,6 +5876,7 @@ async function loadAll() {
     erp_op:op_, erp_op_consumos:opC, erp_op_costos:opCo, erp_reabastecimiento:reab,
     erp_extracto_lotes:extL, erp_extracto_bancario:extB, erp_envios_terceros:envT,
     erp_envios_terceros_items:envTI, erp_rollos:roll,
+    erp_reabastecimiento_devoluciones:reabDev,
   };
   const _loadErrors = Object.entries(_loadResults).filter(([, r]) => r?.error);
   if (_loadErrors.length) {
@@ -5919,6 +5921,7 @@ async function loadAll() {
   state.opConsumos         = opC.data  || [];
   state.opCostos           = opCo.data || [];
   state.reabastecimiento   = reab.data || [];
+  state.reabastecimientoDevoluciones = reabDev.data || [];
   state.extractoLotes      = extL.data || [];
   state.extractoBancario   = extB.data || [];
   state.enviosTerceros      = envT.data  || [];
@@ -11028,6 +11031,7 @@ state.op            = [];
 state.opConsumos    = [];
 state.opCostos      = [];
 state.reabastecimiento = [];
+state.reabastecimientoDevoluciones = [];
 
 // ── Correlativos ──
 // BUGFIX (debugging en vivo, 13/Ago/2026): antes leía state.op (cacheado en
@@ -11932,7 +11936,10 @@ async function saveOP(estado = 'borrador') {
   const reabPrevio = id ? (state.reabastecimiento||[]).filter(r => r.op_id === id) : [];
   let costoMPConMerma = 0;
   if (reabPrevio.length) {
-    costoMPConMerma = reabPrevio.reduce((s,r) => s + Number(r.cantidad||0) * Number(r.costo_unitario||0), 0);
+    // Cantidad NETA por línea (cantidad - lo ya devuelto), no la cantidad
+    // bruta original — una devolución parcial reduce el costo real
+    // reflejado acá sin necesidad de excluir la línea completa.
+    costoMPConMerma = reabPrevio.reduce((s,r) => s + Math.max(0, Number(r.cantidad||0)-cantidadDevueltaReab(r.id)) * Number(r.costo_unitario||0), 0);
   } else {
     lineas.forEach(l => {
       const cantConMerma = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad_prog;
@@ -12085,13 +12092,15 @@ async function registrarMovimientosOP(opId, opNum, lineas, cantidad_prog, reabAs
   // poder llegar hasta acá (bloqueado en saveOP si faltaba). Puede haber
   // más de una fila por insumo si se cubrió con varios lotes.
   let costoMPConMerma = 0;
-  const consumoData = (reabAsignado||[]).map(r => {
-    const cant  = Number(r.cantidad||0);
-    const costo = Number(r.costo_unitario||0);
-    const costoLinea = cant * costo;
-    costoMPConMerma += costoLinea;
-    return { insumo_id: r.insumo_id, cantConMerma: cant, costoUnit: costo, costoLinea };
-  });
+  const consumoData = (reabAsignado||[])
+    .map(r => ({ r, cant: Math.max(0, Number(r.cantidad||0) - cantidadDevueltaReab(r.id)) }))
+    .filter(x => x.cant > 0.0001)
+    .map(({r, cant}) => {
+      const costo = Number(r.costo_unitario||0);
+      const costoLinea = cant * costo;
+      costoMPConMerma += costoLinea;
+      return { insumo_id: r.insumo_id, cantConMerma: cant, costoUnit: costo, costoLinea };
+    });
 
   // ── Costos de conversión ──
   // Ruta interna: MO/energía van al Estado de Resultados, NO al inventario
@@ -14988,11 +14997,17 @@ function lineasQueRequierenReabastecimiento(receta) {
 function estadoReabastecimiento(tipoDoc, docId, receta, cantidadBase) {
   const lineasReq = lineasQueRequierenReabastecimiento(receta);
   if (!lineasReq.length) return { requiere: false, completo: true, detalle: [] };
+  // Cantidad NETA por línea — las devoluciones ahora pueden ser parciales
+  // (21/Ago/2026, a pedido explícito: "debemos poder devolver cantidades
+  // específicas de cada lote"), así que ya no basta con excluir filas
+  // marcadas devuelto=true por completo — cada línea aporta
+  // (cantidad - lo ya devuelto de esa línea específica) a lo asignado.
   const asignados = (state.reabastecimiento||[]).filter(r =>
     tipoDoc === 'op' ? r.op_id === docId : r.oc_id === docId);
   const detalle = lineasReq.map(l => {
     const requerido = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidadBase;
-    const asignado  = asignados.filter(a => a.insumo_id === l.insumo_id).reduce((s,a) => s + Number(a.cantidad||0), 0);
+    const asignado  = asignados.filter(a => a.insumo_id === l.insumo_id)
+      .reduce((s,a) => s + Math.max(0, Number(a.cantidad||0) - cantidadDevueltaReab(a.id)), 0);
     return { insumo_id: l.insumo_id, requerido, asignado, completo: asignado >= requerido - 0.0001 };
   });
   return { requiere: true, completo: detalle.every(d => d.completo), detalle };
@@ -19289,9 +19304,12 @@ function renderOCPanel(ocId) {
   document.getElementById('oc-panel-reabastecimientos').innerHTML = reabNumeros.map(num=>{
     const rows = reabsOC.filter(r=>r.numero===num);
     const totalCant = rows.reduce((s,r)=>s+Number(r.cantidad||0),0);
-    const devuelto = rows[0]?.devuelto;
+    const totalDevuelto = rows.reduce((s,r)=>s+cantidadDevueltaReab(r.id),0);
+    const badge = totalDevuelto <= 0.0001 ? ''
+      : totalDevuelto >= totalCant - 0.0001 ? ' <span style="color:#DC2626;font-weight:600">↩️ devuelto</span>'
+      : ' <span style="color:#D97706;font-weight:600">↩️ devuelto parcial</span>';
     return `<tr style="cursor:pointer" onclick="verReabastecimiento('${num}')">
-      <td class="td-mono" style="font-size:12px;font-weight:700;color:var(--accent)">${num}${devuelto?' <span style="color:#DC2626;font-weight:600">↩️ devuelto</span>':''}</td>
+      <td class="td-mono" style="font-size:12px;font-weight:700;color:var(--accent)">${num}${badge}</td>
       <td style="font-size:12px">${fmtDate(rows[0]?.fecha)}</td>
       <td style="font-size:12px">${prodName(rows[0]?.insumo_id)}</td>
       <td class="td-mono" style="text-align:right;font-size:12px;font-weight:600">${totalCant.toFixed(3)}</td>
@@ -20481,11 +20499,29 @@ function onOCProveedorChange() {
 }
 
 // ── DEVOLUCIONES ────────────────────────────────────────────────
+// Suma cuánto ya se devolvió de una línea específica de recepción — las
+// devoluciones quedan como filas propias (estado='devuelto', cantidad
+// negativa, item_origen_id apuntando a la línea original), nunca se toca
+// la línea original.
+function cantidadDevueltaRecepcionItem(itemId) {
+  return (state.ocRecepcionItems||[])
+    .filter(x => x.estado === 'devuelto' && x.item_origen_id === itemId)
+    .reduce((s,x) => s + Math.abs(Number(x.cantidad||0)), 0);
+}
+
 function openDevolucion(itemId, recepcionId, ocId) {
   const item   = state.ocRecepcionItems.find(x => x.id === itemId);
   const rec    = state.ocRecepciones.find(x => x.id === recepcionId);
   const ocItem = state.ocItems.find(i => i.oc_id === ocId && i.producto_id === item?.producto_id);
   if (!item) return;
+
+  // CAMBIO (21/Ago/2026, a pedido explícito — "mismo criterio en todo el
+  // sistema"): el máximo a devolver ahora es lo DISPONIBLE (cantidad
+  // original menos lo ya devuelto en devoluciones previas de esta misma
+  // línea), no la cantidad original completa — antes permitía capturar
+  // más de lo que realmente quedaba, si ya se había devuelto algo antes.
+  const yaDevuelto = cantidadDevueltaRecepcionItem(itemId);
+  const disponible = Math.max(0, Number(item.cantidad||0) - yaDevuelto);
 
   document.getElementById('dev-item-id').value       = itemId;
   document.getElementById('dev-recepcion-id').value  = recepcionId;
@@ -20494,9 +20530,9 @@ function openDevolucion(itemId, recepcionId, ocId) {
   document.getElementById('dev-moneda').value        = ocItem?.moneda || 'GTQ';
   document.getElementById('dev-oc-id').value         = ocId;
   document.getElementById('dev-producto-nombre').textContent     = prodName(item.producto_id);
-  document.getElementById('dev-cantidad-recibida').textContent   = `${Number(item.cantidad||0).toFixed(3)} ${item.unidad||''}`;
+  document.getElementById('dev-cantidad-recibida').textContent   = `${disponible.toFixed(3)} ${item.unidad||''}${yaDevuelto>0.0001?` (de ${Number(item.cantidad||0).toFixed(3)} — ya devuelto ${yaDevuelto.toFixed(3)})`:''}`;
   document.getElementById('dev-cantidad').value      = '';
-  document.getElementById('dev-cantidad').max        = Number(item.cantidad||0);
+  document.getElementById('dev-cantidad').max        = disponible;
   document.getElementById('dev-packing').value       = '';
   document.getElementById('dev-lote').value          = item.lote||'';
   document.getElementById('dev-lote-display').textContent   = item.lote||'—';
@@ -20527,7 +20563,8 @@ async function saveDevolucion() {
     const item = state.ocRecepcionItems.find(x => x.id === itemId);
     const rec  = state.ocRecepciones.find(x => x.id === recepcionId);
     if (!item) { alert('No se encontró el item. ID: ' + itemId); return; }
-    if (cantidad > Number(item.cantidad||0)) { toast('La cantidad no puede ser mayor a lo recibido', 'error'); return; }
+    const disponible = Math.max(0, Number(item.cantidad||0) - cantidadDevueltaRecepcionItem(itemId));
+    if (cantidad > disponible + 0.0001) { toast(`La cantidad no puede ser mayor a lo disponible (${disponible.toFixed(3)})`, 'error'); return; }
 
     // Generate DEV correlativo — based on existing devolucion lines
     const devLines = (state.ocRecepcionItems||[]).filter(x => x.estado === 'devuelto' && x.numero_devolucion);
@@ -20582,6 +20619,10 @@ async function saveDevolucion() {
 
     closeModal('modal-devolucion');
     toast(`Devolución registrada — ${cantidad.toFixed(3)} ${item.unidad||''} devueltos al proveedor`);
+    // Refresca la vista de "Ver Recepción" si es de ahí de donde se abrió
+    // (21/Ago/2026: openDevolucion ahora se dispara desde verRecepcion(),
+    // que queda debajo del modal de devolución mientras se captura).
+    if (recepcionId) verRecepcion(recepcionId);
     showOCPanel(ocId);
 
   } catch(e) {
@@ -20759,6 +20800,26 @@ async function guardarRecepcionBorrador() {
       }
     });
 
+    // + grupos de rollos (productos con agrupación) — en borrador todavía
+    // NO se crea el erp_rollos real (eso pasa recién al confirmar, en
+    // saveRecepcion) — se persiste solo cantidad/lote/no. de rollo como
+    // texto, para no perder lo capturado si el usuario cierra y reabre.
+    document.querySelectorAll('.rec-rollo-group').forEach(grp => {
+      const gid    = grp.id.replace('rec-rollo-group-','');
+      const prodId = grp.dataset.prod;
+      const unidad = grp.dataset.unidad || '';
+      const costo  = parseFloat(grp.dataset.costo)||0;
+      const lote   = document.getElementById(`rec-rollogrp-lote-${gid}`)?.value.trim() || '';
+      grp.querySelectorAll(`[id^="rec-rollo-numero-${gid}-"]`).forEach(numEl => {
+        const rid  = numEl.id.replace(`rec-rollo-numero-${gid}-`,'');
+        const peso = parseFloat(document.getElementById(`rec-rollo-peso-${gid}-${rid}`)?.value)||0;
+        const pl   = document.getElementById(`rec-rollo-pl-${gid}-${rid}`)?.value.trim() || '';
+        if (peso > 0) {
+          rowsData.push({ lote, prodId, unidad, costo, qty: peso, packing: pl });
+        }
+      });
+    });
+
     // El No. de PL del header queda como un resumen (valores distintos de
     // cada lote) — solo informativo, ya que la fuente real ahora es por línea.
     const packingRollup = [...new Set(rowsData.map(r=>r.packing).filter(Boolean))].join(', ') || null;
@@ -20841,18 +20902,25 @@ function verRecepcion(recepcionId) {
   const STATUS_REC_LABEL = { borrador:'Borrador', en_proceso:'En Proceso', completada:'Completada', cancelada:'Cancelada' };
   const STATUS_REC_COLOR_HEX = { borrador:'#9CA3AF', en_proceso:'#D97706', completada:'#16A34A', cancelada:'#DC2626' };
 
-  const ri = (state.ocRecepcionItems||[]).filter(x => x.recepcion_id === recepcionId);
-  const lotes = [...new Set(ri.map(x => x.lote).filter(Boolean))];
-  const loteRows = lotes.map(lote => {
-    const lineas = ri.filter(x => x.lote === lote);
-    const qty = lineas.reduce((s,x) => s+Number(x.cantidad||0), 0);
+  // Solo las líneas originalmente recibidas (estado='recibido') — las de
+  // devolución (estado='devuelto', cantidad negativa) se muestran como
+  // "Ya Devuelto" restado de cada línea original, no como filas propias.
+  const originales = ri.filter(x => x.estado === 'recibido');
+  const loteRows = originales.map(item => {
+    const devuelta = cantidadDevueltaRecepcionItem(item.id);
+    const disponible = Math.max(0, Number(item.cantidad||0) - devuelta);
+    const btnDev = disponible > 0.0001
+      ? `<button class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:11px" onclick="openDevolucion('${item.id}','${recepcionId}','${oc?.id}')">↩️ Devolver</button>`
+      : `<span style="font-size:11px;color:var(--red);font-weight:600">Devuelto completo</span>`;
     return `<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:8px 12px;font-size:13px;font-family:'DM Mono',monospace;color:var(--accent)">${lote}</td>
-      <td style="padding:8px 12px;font-size:13px">${prodName(lineas[0]?.producto_id)}</td>
-      <td style="padding:8px 12px;font-size:13px">${lineas[0]?.packing_num||'—'}</td>
-      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">${qty.toFixed(3)} ${lineas[0]?.unidad||''}</td>
+      <td style="padding:8px 12px;font-size:13px;font-family:'DM Mono',monospace;color:var(--accent)">${item.lote||'—'}</td>
+      <td style="padding:8px 12px;font-size:13px">${prodName(item.producto_id)}</td>
+      <td style="padding:8px 12px;font-size:13px">${item.packing_num||'—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">${Number(item.cantidad||0).toFixed(3)} ${item.unidad||''}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:12px;color:var(--text3)">${devuelta>0.0001?devuelta.toFixed(3):'—'}</td>
+      <td style="padding:8px 12px;text-align:right">${btnDev}</td>
     </tr>`;
-  }).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:12px">Sin lotes registrados</td></tr>`;
+  }).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:12px">Sin lotes registrados</td></tr>`;
 
   document.getElementById('vrec-title').textContent = rec.numero || '—';
   document.getElementById('vrec-body').innerHTML = `
@@ -20890,6 +20958,8 @@ function verRecepcion(recepcionId) {
             <th style="padding:7px 12px;text-align:left;font-size:11px">Producto</th>
             <th style="padding:7px 12px;text-align:left;font-size:11px">No. Packing List</th>
             <th style="padding:7px 12px;text-align:right;font-size:11px">Cantidad</th>
+            <th style="padding:7px 12px;text-align:right;font-size:11px">Ya Devuelto</th>
+            <th style="padding:7px 12px;text-align:right;font-size:11px"></th>
           </tr></thead>
           <tbody>${loteRows}</tbody>
         </table>
@@ -21009,6 +21079,19 @@ let currentVerReabastecimientoNum = null;
 // explícito: "utiliza el mismo concepto de Recepciones. Si hago click
 // sobre el título me muestra el detalle" — mismo patrón que
 // verRecepcion()).
+// Suma cuánto ya se ha devuelto de UNA línea específica de
+// erp_reabastecimiento (21/Ago/2026, a pedido explícito — "debemos poder
+// devolver incluso cantidades específicas de cada lote... no
+// necesariamente todo el lote, o todos los lotes"). Vive en su propia
+// tabla (erp_reabastecimiento_devoluciones) — nunca se sobreescribe la
+// fila original, cada devolución (parcial o total) queda como su propio
+// registro, mismo criterio que el resto del sistema.
+function cantidadDevueltaReab(reabId) {
+  return (state.reabastecimientoDevoluciones||[])
+    .filter(d => d.reabastecimiento_id === reabId)
+    .reduce((s,d) => s + Number(d.cantidad||0), 0);
+}
+
 function verReabastecimiento(numero) {
   const rows = (state.reabastecimiento||[]).filter(r => r.numero === numero);
   if (!rows.length) { toast('Reabastecimiento no encontrado','error'); return; }
@@ -21021,27 +21104,47 @@ function verReabastecimiento(numero) {
   const insumo = state.productos.find(p=>p.id===primero.insumo_id);
   const totalCant = rows.reduce((s,r)=>s+Number(r.cantidad||0),0);
 
+  // Por línea: cantidad ya devuelta y disponible para devolver ahora.
+  // CRITERIO (21/Ago/2026, a pedido explícito — "el rollo es una unidad
+  // definitiva... no se puede devolver medio rollo"): si la línea viene de
+  // un rollo específico (r.rollo_id), se devuelve completo o nada — un
+  // checkbox, sin cantidad editable. Solo los lotes SUELTOS (sin rollo,
+  // insumos que no usan agrupación por bulto/rollo) permiten devolver una
+  // cantidad parcial editable.
   const loteRows = rows.map(r => {
     const rollo = r.rollo_id ? (state.rollos||[]).find(x=>x.id===r.rollo_id) : null;
+    const devuelta = cantidadDevueltaReab(r.id);
+    const disponible = Math.max(0, Number(r.cantidad||0) - devuelta);
+    let inputCell;
+    if (disponible <= 0.0001) {
+      inputCell = `<span style="font-size:11px;color:var(--red);font-weight:600">Devuelto completo</span>`;
+    } else if (r.rollo_id) {
+      // Unidad indivisible — checkbox, siempre por el peso completo del rollo.
+      inputCell = `<label style="display:flex;align-items:center;gap:6px;justify-content:flex-end;cursor:pointer">
+        <span style="font-size:11px;color:var(--text3)">${disponible.toFixed(3)}</span>
+        <input type="checkbox" id="reab-dev-cant-${r.id}" data-rollo="1" data-max="${disponible}" style="width:16px;height:16px;accent-color:var(--red)"/>
+      </label>`;
+    } else {
+      inputCell = `<input type="number" id="reab-dev-cant-${r.id}" data-max="${disponible}" min="0" max="${disponible}" step="0.001" value="${disponible.toFixed(3)}"
+           style="width:90px;text-align:right;font-family:'DM Mono',monospace;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px"/>`;
+    }
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 12px;font-size:13px;font-family:'DM Mono',monospace;color:var(--accent)">${r.lote||'—'}</td>
       <td style="padding:8px 12px;font-size:13px">${rollo?.numero_rollo||'—'}</td>
       <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">${Number(r.cantidad||0).toFixed(3)}</td>
-      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:13px">${fmtMoney(r.costo_unitario)}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:12px;color:var(--text3)">${devuelta>0.0001?devuelta.toFixed(3):'—'}</td>
+      <td style="padding:8px 12px;text-align:right">${inputCell}</td>
     </tr>`;
   }).join('');
 
+  const todoDevuelto = rows.every(r => Math.max(0, Number(r.cantidad||0) - cantidadDevueltaReab(r.id)) <= 0.0001);
+
   document.getElementById('vrea-title').textContent = numero;
   const btnDevolver = document.getElementById('vrea-btn-devolver');
-  if (btnDevolver) {
-    if (primero.devuelto) {
-      btnDevolver.style.display = 'none';
-    } else {
-      btnDevolver.style.display = '';
-    }
-  }
-  const badgeDevuelto = primero.devuelto
-    ? `<div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;letter-spacing:0.03em;margin-bottom:16px;background:#DC2626;color:#fff">↩️ Devuelto vía ${primero.devuelto_en_numero}</div>`
+  if (btnDevolver) btnDevolver.style.display = todoDevuelto ? 'none' : '';
+
+  const badgeDevuelto = todoDevuelto
+    ? `<div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;letter-spacing:0.03em;margin-bottom:16px;background:#DC2626;color:#fff">↩️ Devuelto por completo</div>`
     : '';
   document.getElementById('vrea-body').innerHTML = `
     <div style="padding:20px 24px">
@@ -21069,14 +21172,15 @@ function verReabastecimiento(numero) {
         </div>
       </div>
 
-      <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Lotes Asignados</div>
+      <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Lotes Asignados — cantidad a devolver editable por línea</div>
       <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
         <table style="width:100%;border-collapse:collapse">
           <thead><tr style="background:var(--surface2)">
             <th style="padding:7px 12px;text-align:left;font-size:11px">Lote</th>
             <th style="padding:7px 12px;text-align:left;font-size:11px">Rollo</th>
             <th style="padding:7px 12px;text-align:right;font-size:11px">Cantidad</th>
-            <th style="padding:7px 12px;text-align:right;font-size:11px">Costo Unit.</th>
+            <th style="padding:7px 12px;text-align:right;font-size:11px">Ya Devuelto</th>
+            <th style="padding:7px 12px;text-align:right;font-size:11px">Devolver Ahora</th>
           </tr></thead>
           <tbody>${loteRows}</tbody>
         </table>
@@ -21087,45 +21191,80 @@ function verReabastecimiento(numero) {
 }
 
 // Botón "↩️ Devolver" del visor de solo lectura (21/Ago/2026, a pedido
-// explícito — reemplaza al anterior "Editar", que solo reabría el flujo
-// general de Reabastecer sin poder actuar sobre ESTE reabastecimiento
-// específico. "Devolver" revierte de verdad: genera movimiento de entrada
-// (regresa la cantidad a la bodega/lote de origen), revierte el asiento
-// contable (MP ↔ Proceso, en sentido contrario al original), libera
-// cualquier rollo marcado 'reabastecido', y genera su propio correlativo
-// DEV-YYYY-NNNN — mismo patrón de trazabilidad que REC/REA. El REA
-// original NUNCA se borra ni se modifica — solo se marca devuelto=true,
-// devuelto_en_numero=<DEV> (mismo criterio "nunca borrar" que ya usan en
-// rollos/recepciones).
+// explícito). Procesa POR LÍNEA de lote, con cantidades editables — no
+// necesariamente todo el lote ni todos los lotes del REA (comentario
+// explícito: "debemos poder devolver incluso cantidades específicas de
+// cada lote"). Por cada línea con cantidad>0 en su input: genera
+// movimiento de entrada, revierte proporcionalmente el asiento contable
+// (MP ↔ Proceso), libera el rollo SOLO si con esta devolución la línea
+// queda 100% devuelta, y registra la devolución en su propia tabla
+// (erp_reabastecimiento_devoluciones) — el REA original NUNCA se borra ni
+// se modifica su cantidad/costo, solo queda trazado cuánto se ha devuelto
+// de cada línea a través de esa tabla (mismo criterio "nunca borrar" que
+// ya usan en rollos/recepciones). Todas las líneas devueltas en la misma
+// acción comparten un solo correlativo DEV-YYYY-NNNN.
 async function devolverReabastecimiento(numero) {
   const rows = (state.reabastecimiento||[]).filter(r => r.numero === numero);
   if (!rows.length) { toast('Reabastecimiento no encontrado','error'); return; }
-  if (rows[0].devuelto) { toast('Este reabastecimiento ya fue devuelto','error'); return; }
 
   const primero  = rows[0];
   const tipoDoc  = primero.oc_id ? 'oc' : 'op';
   const docId    = primero.oc_id || primero.op_id;
   const insumo   = state.productos.find(p=>p.id===primero.insumo_id);
-  const totalCant = rows.reduce((s,r)=>s+Number(r.cantidad||0),0);
-  const totalCosto = rows.reduce((s,r)=>s+Number(r.cantidad||0)*Number(r.costo_unitario||0),0);
 
-  if (!confirm(`¿Devolver ${numero}? Esto regresará ${totalCant.toFixed(3)} ${insumo?.unidad||''} de ${insumo?.description||insumo?.code||''} a inventario y revertirá el asiento contable. Esta acción no se puede deshacer.`)) return;
+  // Leer lo que el usuario capturó por línea — solo procesa las que
+  // tengan una cantidad > 0, y valida que ninguna exceda lo disponible.
+  // Líneas con rollo (checkbox) siempre devuelven el peso completo
+  // disponible — nunca una fracción (rollo = unidad indivisible).
+  const seleccion = [];
+  for (const r of rows) {
+    const input = document.getElementById(`reab-dev-cant-${r.id}`);
+    if (!input) continue; // línea ya devuelta por completo, sin input
+    const max = parseFloat(input.dataset.max) || 0;
+    let cant;
+    if (input.dataset.rollo) {
+      if (!input.checked) continue;
+      cant = max; // rollo completo, siempre
+    } else {
+      cant = parseFloat(input.value) || 0;
+      if (cant <= 0) continue;
+      if (cant > max + 0.0001) { toast(`La cantidad a devolver del lote ${r.lote} excede lo disponible (${max.toFixed(3)})`,'error'); return; }
+    }
+    seleccion.push({ row: r, cantidad: cant });
+  }
+  if (!seleccion.length) { toast('Seleccioná al menos un rollo o ingresá una cantidad a devolver','error'); return; }
+
+  const totalCant  = seleccion.reduce((s,x)=>s+x.cantidad,0);
+  const totalCosto = seleccion.reduce((s,x)=>s+x.cantidad*Number(x.row.costo_unitario||0),0);
+
+  if (!confirm(`¿Devolver ${totalCant.toFixed(3)} ${insumo?.unidad||''} de ${insumo?.description||insumo?.code||''} (${seleccion.length} lote${seleccion.length>1?'s':''})? Esto regresará la cantidad a inventario y revertirá proporcionalmente el asiento contable. Esta acción no se puede deshacer.`)) return;
 
   const numeroDev = nextDevolucionNum();
   const fechaDev  = today();
 
-  for (const r of rows) {
-    // Movimiento inverso — entrada, mismo lote/bodega de origen
+  for (const { row: r, cantidad } of seleccion) {
+    // Movimiento inverso — entrada, mismo lote/bodega de origen, solo por
+    // la cantidad seleccionada (no necesariamente toda la línea).
     await crearMovimiento({
-      tipo: 'entrada', producto_id: r.insumo_id, cantidad: r.cantidad, costo_unitario: r.costo_unitario,
+      tipo: 'entrada', producto_id: r.insumo_id, cantidad, costo_unitario: r.costo_unitario,
       referencia_tipo: 'DEVOLUCION_REABASTECIMIENTO', referencia_id: numeroDev,
       notas: `Devolución ${numeroDev} — reabastecimiento ${numero} — lote ${r.lote}`,
       fecha: fechaDev, bodega_id: r.bodega_id, lote: r.lote,
     });
 
-    // Libera el rollo, si este renglón consumió uno (mismo criterio
-    // "nunca borrar" — solo se revierte el estado y se limpia la marca).
-    if (r.rollo_id) {
+    // Registro de la devolución — nunca se toca la fila original de
+    // erp_reabastecimiento (cantidad/costo intactos para trazabilidad).
+    const { error: dErr } = await sb.from('erp_reabastecimiento_devoluciones').insert({
+      reabastecimiento_id: r.id, numero: numeroDev, cantidad, fecha: fechaDev,
+    });
+    if (dErr) console.error('devolverReabastecimiento: error insertando devolución:', dErr.message);
+
+    // El rollo solo se libera cuando la línea queda 100% devuelta —
+    // devolver parte del peso de un rollo catch-weight no lo vuelve a
+    // dejar disponible como unidad física completa.
+    const devueltaTotal = cantidadDevueltaReab(r.id) + cantidad; // incluye esta misma devolución
+    const quedaCompleta = devueltaTotal >= Number(r.cantidad||0) - 0.0001;
+    if (r.rollo_id && quedaCompleta) {
       const { error: rErr } = await sb.from('erp_rollos').update({
         estado: 'disponible',
         reabastecido_en_tipo: null, reabastecido_en_id: null, reabastecido_en_numero: null,
@@ -21133,35 +21272,29 @@ async function devolverReabastecimiento(numero) {
       if (rErr) console.error('devolverReabastecimiento: error liberando rollo:', rErr.message);
     }
 
-    // Reversa el consumo de OP con una línea NEGATIVA (nunca se borra el
-    // consumo original — mismo criterio que el resto del sistema).
+    // Reversa proporcional del consumo de OP con una línea NEGATIVA
+    // (nunca se borra el consumo original).
     if (tipoDoc === 'op') {
       const { error: cErr } = await sb.from('erp_op_consumos').insert({
         op_id: docId, insumo_id: r.insumo_id,
-        cantidad_prog: 0, cantidad_real: -r.cantidad,
-        costo_unitario: r.costo_unitario, costo_total: -parseFloat((r.cantidad*r.costo_unitario).toFixed(4)),
+        cantidad_prog: 0, cantidad_real: -cantidad,
+        costo_unitario: r.costo_unitario, costo_total: -parseFloat((cantidad*r.costo_unitario).toFixed(4)),
         lote: r.lote, bodega_id: r.bodega_id,
         unidad: insumo?.unidad || 'kg',
         notas: `Devolución ${numeroDev} de ${numero}`,
       });
       if (cErr) console.error('devolverReabastecimiento: error revirtiendo op_consumo:', cErr.message);
     }
-
-    // Marca el REA original como devuelto — nunca se borra ni modifica su
-    // data (lote/cantidad/costo quedan intactos para trazabilidad).
-    const { error: uErr } = await sb.from('erp_reabastecimiento').update({
-      devuelto: true, devuelto_en_numero: numeroDev,
-    }).eq('id', r.id);
-    if (uErr) console.error('devolverReabastecimiento: error marcando devuelto:', uErr.message);
   }
 
-  // Asiento inverso al original: MP regresa a inventario, sale de Proceso (WIP)
+  // Asiento inverso, proporcional a lo realmente devuelto en esta acción
+  // (no al total del REA original si fue una devolución parcial).
   if (totalCosto > 0) {
     const ctaProcesoDev = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
     const ctaInsumoDev  = getCtaValoracionProducto(primero.insumo_id);
     await crearAsiento({
       diario: DIARIO_MANUFACTURA, fecha: fechaDev,
-      descripcion: `Devolución ${numeroDev} — reversa de ${numero} (${insumo?.codigo_interno||insumo?.code||insumo?.description||''})`,
+      descripcion: `Devolución ${numeroDev} — reversa parcial/total de ${numero} (${insumo?.codigo_interno||insumo?.code||insumo?.description||''})`,
       referencia: numeroDev, referencia_id: docId,
       moneda: 'GTQ', tipo_cambio: 1,
       lineas: [
@@ -21337,6 +21470,7 @@ function renderRecLotes(items, ocId, existingItems=[]) {
     const prod      = state.productos.find(p=>p.id===i.producto_id);
     const recibido  = ocRecibidoQty(ocId, i.producto_id);
     const pendiente = Math.max(0, Number(i.cantidad||0) - recibido);
+    const agrupa    = productoTieneAgrupacion(i.producto_id);
 
     // Get lotes from existing saved items
     const savedItems = existingItems.filter(x=>x.producto_id===i.producto_id);
@@ -21351,6 +21485,7 @@ function renderRecLotes(items, ocId, existingItems=[]) {
         <div>
           <span style="font-weight:700;font-size:14px">${prod?.description||prodName(i.producto_id)}</span>
           <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent);margin-left:8px">${prod?.codigo_interno||prod?.code||''}</span>
+          ${agrupa?' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--surface3);color:var(--text3)">Por rollo/bulto</span>':''}
         </div>
         <div style="font-size:12px;color:var(--text3)">
           Pedido: <strong>${Number(i.cantidad||0).toFixed(3)} ${i.unidad||''}</strong>
@@ -21360,16 +21495,20 @@ function renderRecLotes(items, ocId, existingItems=[]) {
       </div>
       <div style="padding:12px 16px">
         <div id="rec-lotes-${i.producto_id}">
-          ${todosLotes.length > 0
-            ? todosLotes.map(lote => {
-                const savedItem = savedItems.find(x=>x.lote===lote);
-                const cajasLote = plCajas.filter(c=>c.lote===lote);
-                return renderRecLoteRow(i, lote, cajasLote, ocId, savedItem);
-              }).join('')
-            : renderRecLoteRow(i, '', [], ocId, null)
+          ${agrupa
+            ? (todosLotes.length > 0
+                ? todosLotes.map(lote => renderRecLoteRowRollos(i, lote, savedItems.filter(x=>x.lote===lote), ocId)).join('')
+                : renderRecLoteRowRollos(i, '', [], ocId))
+            : (todosLotes.length > 0
+                ? todosLotes.map(lote => {
+                    const savedItem = savedItems.find(x=>x.lote===lote);
+                    const cajasLote = plCajas.filter(c=>c.lote===lote);
+                    return renderRecLoteRow(i, lote, cajasLote, ocId, savedItem);
+                  }).join('')
+                : renderRecLoteRow(i, '', [], ocId, null))
           }
         </div>
-        <button class="btn btn-sm btn-ghost" onclick="addRecLote('${i.producto_id}','${i.unidad||''}','${i.precio_unit||0}')"
+        <button class="btn btn-sm btn-ghost" onclick="${agrupa?`addRecLoteRollos('${i.producto_id}','${i.unidad||''}','${i.precio_unit||0}')`:`addRecLote('${i.producto_id}','${i.unidad||''}','${i.precio_unit||0}')`}"
           style="margin-top:8px;font-size:11px">+ Agregar Lote</button>
       </div>
     </div>`;
@@ -21396,12 +21535,13 @@ function renderRecLoteRow(item, lote, cajasLote, ocId, savedItem=null) {
   const pendienteOC = Math.max(0, cantidadOrdenada - recibidoOC);
   const espValue   = savedItem?.cantidad_esperada ? Number(savedItem.cantidad_esperada).toFixed(3) : pendienteOC.toFixed(3);
   const plValue    = savedItem?.packing_num || '';
+  const requiereLote = state.productos.find(p=>p.id===item.producto_id)?.seguimiento === 'lote';
   return `
   <div id="rec-lote-row-${n}" style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr 1fr;gap:10px;align-items:end;padding:8px 0;border-bottom:1px solid var(--border)">
     <div>
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Lote</div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Lote${requiereLote?' <span style="color:var(--red)">*</span>':''}</div>
       <input type="text" id="rec-lote-val-${n}" value="${lote||''}" placeholder="Número de lote"
-        style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100%"
+        style="padding:6px 10px;border:1.5px solid ${requiereLote?'var(--red)':'var(--border)'};border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100%"
         data-prod="${item.producto_id}" data-unidad="${item.unidad||''}" data-costo="${item.precio_unit||0}"
         oninput="calcRecVerificacion()"/>
     </div>
@@ -21435,6 +21575,95 @@ function addRecLote(productoId, unidad, costo) {
   const div = document.createElement('div');
   div.innerHTML = renderRecLoteRow(item, '', [], currentOCId || document.getElementById('rec-oc-id')?.value);
   // Append all child nodes
+  while (div.firstChild) container.appendChild(div.firstChild);
+}
+
+// ── Recepción POR ROLLO/BULTO (21/Ago/2026, a pedido explícito — "los
+// productos que tienen agrupación por bulto o por rollo... debemos
+// recibirlos de esta manera... cada bulto o rollo es una unidad que tiene
+// un peso neto específico"). Solo para productos cuya categoría tiene
+// agrupacion_producto=true (hoy: Producto Terminado, Tela Cruda) — mismo
+// criterio y mismo look que renderRecLoteRow/addRecLote, pero en vez de un
+// único campo de cantidad, cada línea de lote tiene una lista de rollos
+// individuales (número + peso), y el total recibido es la suma de esos
+// pesos, no un valor capturado a mano.
+let _recRolloGrpCount = 0;
+let _recRolloRowCount = 0;
+
+function renderRecLoteRowRollos(item, lote, savedItemsDeEsteLote, ocId) {
+  _recRolloGrpCount++;
+  const gid = _recRolloGrpCount;
+  const rollosExistentes = savedItemsDeEsteLote.map(si => {
+    const rollo = si.rollo_id ? (state.rollos||[]).find(r => r.id === si.rollo_id) : null;
+    return { numero: rollo?.numero_rollo || '', peso: Number(si.cantidad||0), packing: si.packing_num || '' };
+  });
+  const filas = rollosExistentes.length ? rollosExistentes.map(r => renderRecRolloRow(gid, r)).join('') : renderRecRolloRow(gid, null);
+  const requiereLote = state.productos.find(p=>p.id===item.producto_id)?.seguimiento === 'lote';
+  return `
+  <div class="rec-rollo-group" id="rec-rollo-group-${gid}" data-prod="${item.producto_id}" data-unidad="${item.unidad||''}" data-costo="${item.precio_unit||0}"
+       style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--surface)">
+    <div style="display:flex;gap:10px;align-items:end;margin-bottom:8px">
+      <div style="flex:1">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Lote${requiereLote?' <span style="color:var(--red)">*</span>':''}</div>
+        <input type="text" id="rec-rollogrp-lote-${gid}" value="${lote||''}" placeholder="Número de lote"
+          style="padding:6px 10px;border:1.5px solid ${requiereLote?'var(--red)':'var(--border)'};border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100%"/>
+      </div>
+      <div style="font-size:12px;color:var(--text3);white-space:nowrap;padding-bottom:8px">
+        Total: <strong id="rec-rollogrp-total-${gid}" style="color:var(--accent);font-family:'DM Mono',monospace">${rollosExistentes.reduce((s,r)=>s+r.peso,0).toFixed(3)}</strong> ${item.unidad||''}
+      </div>
+    </div>
+    <div id="rec-rollos-list-${gid}">${filas}</div>
+    <button type="button" class="btn btn-sm btn-ghost" style="font-size:11px" onclick="addRecRolloRow(${gid})">+ Agregar Rollo</button>
+  </div>`;
+}
+
+function renderRecRolloRow(gid, r) {
+  _recRolloRowCount++;
+  const rid = _recRolloRowCount;
+  return `
+  <div id="rec-rollo-row-${gid}-${rid}" style="display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:8px;align-items:end;margin-bottom:6px">
+    <div>
+      <div style="font-size:9px;color:var(--text3)">No. Rollo</div>
+      <input type="text" id="rec-rollo-numero-${gid}-${rid}" value="${r?.numero||''}" placeholder="Ej. R-001"
+        style="padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-family:'DM Mono',monospace;font-size:12px;width:100%"/>
+    </div>
+    <div>
+      <div style="font-size:9px;color:var(--text3)">Peso (kg)</div>
+      <input type="number" id="rec-rollo-peso-${gid}-${rid}" step="0.001" min="0" value="${r?.peso?r.peso.toFixed(3):''}" placeholder="0.000"
+        style="padding:5px 8px;border:1.5px solid var(--accent);border-radius:5px;font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:var(--accent);width:100%"
+        oninput="calcRecRolloGrpTotal(${gid})"/>
+    </div>
+    <div>
+      <div style="font-size:9px;color:var(--text3)">No. Packing List</div>
+      <input type="text" id="rec-rollo-pl-${gid}-${rid}" value="${r?.packing||''}" placeholder="Opcional"
+        style="padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-family:'DM Mono',monospace;font-size:12px;width:100%"/>
+    </div>
+    <button type="button" class="btn btn-ghost btn-sm" style="padding:5px 8px;color:var(--red)" onclick="document.getElementById('rec-rollo-row-${gid}-${rid}').remove();calcRecRolloGrpTotal(${gid})">✕</button>
+  </div>`;
+}
+
+function addRecRolloRow(gid) {
+  const container = document.getElementById(`rec-rollos-list-${gid}`);
+  if (!container) return;
+  const div = document.createElement('div');
+  div.innerHTML = renderRecRolloRow(gid, null);
+  while (div.firstChild) container.appendChild(div.firstChild);
+}
+
+function calcRecRolloGrpTotal(gid) {
+  const total = [...document.querySelectorAll(`#rec-rollos-list-${gid} [id^="rec-rollo-peso-${gid}-"]`)]
+    .reduce((s,el) => s + (parseFloat(el.value)||0), 0);
+  const totalEl = document.getElementById(`rec-rollogrp-total-${gid}`);
+  if (totalEl) totalEl.textContent = total.toFixed(3);
+  calcRecVerificacion();
+}
+
+function addRecLoteRollos(productoId, unidad, costo) {
+  const item = { producto_id: productoId, unidad, precio_unit: costo };
+  const container = document.getElementById(`rec-lotes-${productoId}`);
+  if (!container) { toast('Error: no se encontró el contenedor del producto','error'); return; }
+  const div = document.createElement('div');
+  div.innerHTML = renderRecLoteRowRollos(item, '', [], currentOCId || document.getElementById('rec-oc-id')?.value);
   while (div.firstChild) container.appendChild(div.firstChild);
 }
 
@@ -21505,10 +21734,19 @@ function calcRecVerificacion() {
   items.forEach(i => {
     const prod = state.productos.find(p=>p.id===i.producto_id);
     const qtyPedido = Number(i.cantidad||0);
-    // Sum all lote rows for this product
+    // Sum all lote rows for this product (lotes sueltos)
     let qtyTotal = 0;
     document.querySelectorAll(`[id^="rec-qty-${i.producto_id}-"]`).forEach(el => {
       qtyTotal += parseFloat(el.value)||0;
+    });
+    // + pesos de rollos, para productos con agrupación (21/Ago/2026) —
+    // estos no usan rec-qty-*, viven en grupos .rec-rollo-group con
+    // data-prod=<producto_id>.
+    document.querySelectorAll(`.rec-rollo-group[data-prod="${i.producto_id}"]`).forEach(grp => {
+      const gid = grp.id.replace('rec-rollo-group-','');
+      grp.querySelectorAll(`[id^="rec-rollo-peso-${gid}-"]`).forEach(el => {
+        qtyTotal += parseFloat(el.value)||0;
+      });
     });
     const diff = qtyTotal - qtyPedido;
     const ok   = Math.abs(diff) < 0.001;
@@ -21694,7 +21932,7 @@ async function saveRecepcion() {
     let costoMPPorKgOC = 0;
     if (esSubOC) {
       const reabOC       = (state.reabastecimiento||[]).filter(r => r.oc_id === ocId);
-      const totalMPAsigOC = reabOC.reduce((s,r) => s + Number(r.cantidad||0)*Number(r.costo_unitario||0), 0);
+      const totalMPAsigOC = reabOC.reduce((s,r) => s + Math.max(0, Number(r.cantidad||0)-cantidadDevueltaReab(r.id))*Number(r.costo_unitario||0), 0);
       const cantidadOCTot = Number(items[0]?.cantidad||0);
       costoMPPorKgOC = cantidadOCTot > 0 ? totalMPAsigOC / cantidadOCTot : 0;
     }
@@ -21725,7 +21963,52 @@ async function saveRecepcion() {
       }
     });
 
+    // Read from rollo groups (productos con agrupación por bulto/rollo) —
+    // un recItem POR ROLLO, no agregado, cada uno con _numeroRollo marcado
+    // para que el loop de guardado más abajo cree su propio erp_rollos y
+    // lo ligue vía rollo_id (21/Ago/2026, a pedido explícito).
+    document.querySelectorAll('.rec-rollo-group').forEach(grp => {
+      const gid    = grp.id.replace('rec-rollo-group-','');
+      const prodId = grp.dataset.prod;
+      const unidad = grp.dataset.unidad || '';
+      const costo  = parseFloat(grp.dataset.costo)||0;
+      const lote   = document.getElementById(`rec-rollogrp-lote-${gid}`)?.value.trim() || null;
+      grp.querySelectorAll(`[id^="rec-rollo-numero-${gid}-"]`).forEach(numEl => {
+        const rid    = numEl.id.replace(`rec-rollo-numero-${gid}-`,'');
+        const numero = numEl.value.trim();
+        const peso   = parseFloat(document.getElementById(`rec-rollo-peso-${gid}-${rid}`)?.value)||0;
+        const pl     = document.getElementById(`rec-rollo-pl-${gid}-${rid}`)?.value.trim() || null;
+        if (peso > 0) {
+          recItems.push({
+            producto_id:  prodId,
+            unidad,
+            cantidad:     peso,
+            costo_unit:   costo,
+            lote,
+            poliza:       null,
+            envio_numero: envioHdr || null,
+            packing_num:  pl,
+            estado:       'recibido',
+            _numeroRollo: numero || null,
+          });
+        }
+      });
+    });
+
     if (!recItems.length) { toast('Ingresa al menos una cantidad a recibir','error'); return; }
+
+    // Lote obligatorio para productos con seguimiento por lote (21/Ago/2026,
+    // a pedido explícito — "si el producto tiene en su configuración
+    // seguimiento por lote, debemos ingresar el número de lote
+    // obligatoriamente"). erp_productos.seguimiento ya existía en la ficha
+    // de producto pero nunca se validaba en ningún flujo — se conecta acá.
+    for (const item of recItems) {
+      const prodSeg = state.productos.find(p => p.id === item.producto_id);
+      if (prodSeg?.seguimiento === 'lote' && !item.lote) {
+        toast(`${prodSeg.description||prodSeg.code||'Este producto'} requiere número de lote (configurado como "Por lote") — completá el campo Lote antes de recibir.`,'error');
+        return;
+      }
+    }
 
     // Resumen de No. de PL para el header (informativo — la fuente real es por línea).
     const packingRollup = [...new Set(recItems.map(it=>it.packing_num).filter(Boolean))].join(', ') || null;
@@ -21777,6 +22060,21 @@ async function saveRecepcion() {
 
     // Create items + inventory movements
     for (const item of recItems) {
+      // Si esta línea viene de un grupo de rollos (producto con
+      // agrupación), crear primero el rollo — mismo estado inicial que
+      // los rollos que produce una OP interna ('disponible') — y ligarlo
+      // vía rollo_id en el item de recepción (21/Ago/2026, a pedido
+      // explícito).
+      let rolloIdCreado = null;
+      if (item._numeroRollo) {
+        const { data: rolloData, error: rolloErr } = await sb.from('erp_rollos').insert({
+          numero_rollo: item._numeroRollo, producto_id: item.producto_id,
+          peso_kg: item.cantidad, bodega_id: bodega_id||null,
+          estado: 'disponible', lote: item.lote,
+        }).select().single();
+        if (rolloErr) { alert('Error creando rollo:\n' + rolloErr.message); throw new Error(rolloErr.message); }
+        rolloIdCreado = rolloData.id;
+      }
       if (esSubOC) {
         // Recepción de subcontrato: costo total = MP + conversión. El
         // movimiento de inventario entra al costo TOTAL (así el stock/kardex
@@ -21849,6 +22147,7 @@ async function saveRecepcion() {
         poliza_kg_mp: item.poliza_kg_mp,
         poliza_fv:    item.poliza_fv,
         estado:       'recibido',
+        rollo_id:     rolloIdCreado,
         ...(item.pl_cajas ? {
           pl_cajas:            item.pl_cajas,
           pl_total_conos:      item.pl_total_conos||null,
