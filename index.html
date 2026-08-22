@@ -5520,7 +5520,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 <!-- VER FACTURA OC (COMPRAS) MODAL -->
 <div class="modal-overlay" id="modal-ver-factura-oc">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg" style="max-width:90vw;width:90vw">
     <div class="modal-header">
       <div class="modal-title" id="vfoc-title">Factura</div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -13774,6 +13774,12 @@ async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, o
     status: 'borrador', tipo_oc: 'compra',
     ov_id: ovId,
     op_id: origen_tipo === 'OP' ? origenRowId : null,
+    // Mismo patrón que erp_op.oc_id (planificarFabricacion, arriba): cuando
+    // el origen del requerimiento es otra OC (ej. OC de tejido subcontratado
+    // que dispara la compra del hilo), se guarda aquí — antes solo quedaba
+    // en el texto libre de notas, sin campo estructurado ("Origen" en UI
+    // solo sabía resolver SC u OP, nunca otra OC).
+    oc_id: (origen_tipo === 'OC-SUB' || origen_tipo === 'OC') ? origenRowId : null,
     notas: `Generado automáticamente desde ${formatOrigenCascada(origen_tipo, origen_id)}`,
   }).select().single();
 
@@ -13828,6 +13834,8 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
     fecha, entrega: fecha, status: 'borrador',
     tipo_oc: 'subcontrato', ov_id: ovId, receta_id: receta.id,
     op_id: origen_tipo === 'OP' ? origenRowId : null,
+    // Mismo criterio que planificarCompra — ver comentario ahí.
+    oc_id: (origen_tipo === 'OC-SUB' || origen_tipo === 'OC') ? origenRowId : null,
     notas: `Servicio ${OP_TIPO_LABEL[receta.tipo]||receta.tipo} — ${prod.code} ${cantidad} kg | desde ${formatOrigenCascada(origen_tipo, origen_id)}`,
   }).select().single();
 
@@ -19581,7 +19589,7 @@ async function editOC(id) {
   const o = state.oc.find(x=>x.id===id);
   document.getElementById('oc-id').value     = o.id;
   document.getElementById('oc-num').value    = o.numero||'';
-  document.getElementById('oc-fecha').value  = fmtDate(o.fecha);
+  document.getElementById('oc-fecha').value  = o.fecha ? fmtDate(o.fecha) : today();
   document.getElementById('oc-entrega').value= fmtDate(o.entrega);
   document.getElementById('oc-status').value = o.status||'borrador';
   document.getElementById('oc-notas').value  = o.notas||'';
@@ -19592,9 +19600,17 @@ async function editOC(id) {
   // aparte y poco usado. Ahora, si la OC no viene de una SC, también
   // revisa erp_oc.op_id (la OP que la generó vía el motor de rutas) para
   // mostrar SIEMPRE la referencia real de origen, sea SC u OP.
+  // 21/Ago/2026, a pedido explícito: agregado erp_oc.oc_id — cuando el
+  // origen es OTRA OC (ej. OC de tejido subcontratado que generó esta OC
+  // de compra de hilo), antes solo quedaba en notas como texto libre, sin
+  // poder mostrarse aquí. Si la OC de origen sigue en borrador (sin
+  // número asignado todavía), se muestra el id corto como referencia.
   const sc = state.sc.find(x=>x.id===o.sc_id);
   const opOrigenOC = state.op.find(x=>x.id===o.op_id);
-  document.getElementById('oc-sc-ref').value = sc ? sc.numero : (opOrigenOC ? opOrigenOC.numero : '');
+  const ocOrigenOC = state.oc.find(x=>x.id===o.oc_id);
+  document.getElementById('oc-sc-ref').value = sc ? sc.numero
+    : (opOrigenOC ? opOrigenOC.numero
+    : (ocOrigenOC ? (ocOrigenOC.numero || `OC-borrador-${ocOrigenOC.id.slice(0,8)}`) : ''));
   document.getElementById('oc-lines').innerHTML='';
   ocLineCount=0;
   populateProvSelect('oc-proveedor', o.proveedor_id);
@@ -20491,8 +20507,16 @@ async function saveDevolucion() {
 async function saveOC() {
   const id           = document.getElementById('oc-id').value;
   const proveedor_id = document.getElementById('oc-proveedor').value;
-  const fecha        = document.getElementById('oc-fecha').value;
-  if (!proveedor_id||!fecha) { toast('Proveedor y fecha son requeridos','error'); return; }
+  // La Fecha de la OC siempre es la fecha en la que se genera — nunca se
+  // le exige al usuario que la haya ingresado. Si el campo llegó vacío
+  // (ej. una OC generada en cascada por el motor de planificación, sin
+  // pasar por openNewOC()), se usa hoy por default en vez de bloquear el
+  // guardado. Antes esto tronaba con "Proveedor y fecha son requeridos"
+  // incluso cuando el vacío era responsabilidad del sistema, no del
+  // usuario — reportado en vivo al confirmar una OC de subcontrato que
+  // dispara la generación automática de la OC de hilo.
+  const fecha        = document.getElementById('oc-fecha').value || today();
+  if (!proveedor_id) { toast('Proveedor es requerido','error'); return; }
   const lines = getOCLines();
   if (!lines.length) { toast('Agrega al menos un producto','error'); return; }
 
