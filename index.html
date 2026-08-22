@@ -1804,14 +1804,6 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <tbody id="oc-panel-lines"></tbody>
         </table>
       </div>
-      <!-- Recepciones -->
-      <div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Recepciones</div>
-      <div class="table-wrap" style="margin-bottom:18px">
-        <table>
-          <thead><tr><th>No.</th><th>Fecha</th><th>Envío</th><th>Packing List</th><th style="text-align:right">Cantidad</th><th>Estado</th></tr></thead>
-          <tbody id="oc-panel-recepciones"></tbody>
-        </table>
-      </div>
       <!-- Facturas OC -->
       <div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Facturas</div>
       <div class="table-wrap" style="margin-bottom:18px">
@@ -1827,6 +1819,14 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <th></th>
           </tr></thead>
           <tbody id="oc-panel-facturas"></tbody>
+        </table>
+      </div>
+      <!-- Recepciones -->
+      <div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Recepciones</div>
+      <div class="table-wrap" style="margin-bottom:18px">
+        <table>
+          <thead><tr><th>No.</th><th>Fecha</th><th>Envío</th><th>Packing List</th><th style="text-align:right">Cantidad</th><th>Estado</th></tr></thead>
+          <tbody id="oc-panel-recepciones"></tbody>
         </table>
       </div>
       <!-- Reabastecimientos (21/Ago/2026, a pedido explícito — reemplaza a
@@ -5584,7 +5584,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     </div>
     <div class="modal-body" id="vrea-body"></div>
     <div class="modal-footer">
-      <button class="btn btn-primary" onclick="editarReabastecimientoDesdeVista()">✏️ Editar</button>
+      <button class="btn btn-danger" id="vrea-btn-devolver" onclick="devolverReabastecimiento(currentVerReabastecimientoNum)">↩️ Devolver</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-ver-reabastecimiento')">Cerrar</button>
     </div>
   </div>
@@ -17770,6 +17770,18 @@ function nextReabastecimientoNum() {
   return `REA-${year}-${String(next).padStart(4,'0')}`;
 }
 
+// Mismo patrón — correlativo para devoluciones de reabastecimiento
+// (21/Ago/2026, a pedido explícito). Se escanea devuelto_en_numero, no
+// numero (ese campo sigue siendo el REA original, nunca se sobreescribe).
+function nextDevolucionNum() {
+  const year = new Date().getFullYear();
+  const nums = (state.reabastecimiento||[])
+    .filter(r => (r.devuelto_en_numero||'').startsWith(`DEV-${year}`))
+    .map(r => parseInt((r.devuelto_en_numero||'').slice(-4))||0);
+  const next = (nums.length ? Math.max(...nums) : 0) + 1;
+  return `DEV-${year}-${String(next).padStart(4,'0')}`;
+}
+
 function nextCorrelativo(prefix, list, field='numero') {
   const year  = new Date().getFullYear();
   const nums  = list.filter(x=>(x[field]||'').startsWith(`${prefix}-${year}`))
@@ -19277,8 +19289,9 @@ function renderOCPanel(ocId) {
   document.getElementById('oc-panel-reabastecimientos').innerHTML = reabNumeros.map(num=>{
     const rows = reabsOC.filter(r=>r.numero===num);
     const totalCant = rows.reduce((s,r)=>s+Number(r.cantidad||0),0);
+    const devuelto = rows[0]?.devuelto;
     return `<tr style="cursor:pointer" onclick="verReabastecimiento('${num}')">
-      <td class="td-mono" style="font-size:12px;font-weight:700;color:var(--accent)">${num}</td>
+      <td class="td-mono" style="font-size:12px;font-weight:700;color:var(--accent)">${num}${devuelto?' <span style="color:#DC2626;font-weight:600">↩️ devuelto</span>':''}</td>
       <td style="font-size:12px">${fmtDate(rows[0]?.fecha)}</td>
       <td style="font-size:12px">${prodName(rows[0]?.insumo_id)}</td>
       <td class="td-mono" style="text-align:right;font-size:12px;font-weight:600">${totalCant.toFixed(3)}</td>
@@ -21019,8 +21032,20 @@ function verReabastecimiento(numero) {
   }).join('');
 
   document.getElementById('vrea-title').textContent = numero;
+  const btnDevolver = document.getElementById('vrea-btn-devolver');
+  if (btnDevolver) {
+    if (primero.devuelto) {
+      btnDevolver.style.display = 'none';
+    } else {
+      btnDevolver.style.display = '';
+    }
+  }
+  const badgeDevuelto = primero.devuelto
+    ? `<div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;letter-spacing:0.03em;margin-bottom:16px;background:#DC2626;color:#fff">↩️ Devuelto vía ${primero.devuelto_en_numero}</div>`
+    : '';
   document.getElementById('vrea-body').innerHTML = `
     <div style="padding:20px 24px">
+      ${badgeDevuelto}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
         <div style="padding:12px 16px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
           <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Fecha</div>
@@ -21061,20 +21086,106 @@ function verReabastecimiento(numero) {
   openModal('modal-ver-reabastecimiento');
 }
 
-// Botón "✏️ Editar" del visor de solo lectura. IMPORTANTE — a diferencia de
-// Recepciones, un REA ya confirmado no tiene un formulario de edición
-// propio: los lotes ya fueron consumidos (movimiento de inventario +
-// asiento contable ya posteados). Este botón reabre el flujo normal de
-// Reabastecer para el documento (OC u OP) al que pertenece este REA, por
-// si falta asignar más insumos — no permite modificar las líneas de ESTE
-// REA específico ya confirmado.
-function editarReabastecimientoDesdeVista() {
-  const rows = (state.reabastecimiento||[]).filter(r => r.numero === currentVerReabastecimientoNum);
-  if (!rows.length) return;
-  const primero = rows[0];
+// Botón "↩️ Devolver" del visor de solo lectura (21/Ago/2026, a pedido
+// explícito — reemplaza al anterior "Editar", que solo reabría el flujo
+// general de Reabastecer sin poder actuar sobre ESTE reabastecimiento
+// específico. "Devolver" revierte de verdad: genera movimiento de entrada
+// (regresa la cantidad a la bodega/lote de origen), revierte el asiento
+// contable (MP ↔ Proceso, en sentido contrario al original), libera
+// cualquier rollo marcado 'reabastecido', y genera su propio correlativo
+// DEV-YYYY-NNNN — mismo patrón de trazabilidad que REC/REA. El REA
+// original NUNCA se borra ni se modifica — solo se marca devuelto=true,
+// devuelto_en_numero=<DEV> (mismo criterio "nunca borrar" que ya usan en
+// rollos/recepciones).
+async function devolverReabastecimiento(numero) {
+  const rows = (state.reabastecimiento||[]).filter(r => r.numero === numero);
+  if (!rows.length) { toast('Reabastecimiento no encontrado','error'); return; }
+  if (rows[0].devuelto) { toast('Este reabastecimiento ya fue devuelto','error'); return; }
+
+  const primero  = rows[0];
+  const tipoDoc  = primero.oc_id ? 'oc' : 'op';
+  const docId    = primero.oc_id || primero.op_id;
+  const insumo   = state.productos.find(p=>p.id===primero.insumo_id);
+  const totalCant = rows.reduce((s,r)=>s+Number(r.cantidad||0),0);
+  const totalCosto = rows.reduce((s,r)=>s+Number(r.cantidad||0)*Number(r.costo_unitario||0),0);
+
+  if (!confirm(`¿Devolver ${numero}? Esto regresará ${totalCant.toFixed(3)} ${insumo?.unidad||''} de ${insumo?.description||insumo?.code||''} a inventario y revertirá el asiento contable. Esta acción no se puede deshacer.`)) return;
+
+  const numeroDev = nextDevolucionNum();
+  const fechaDev  = today();
+
+  for (const r of rows) {
+    // Movimiento inverso — entrada, mismo lote/bodega de origen
+    await crearMovimiento({
+      tipo: 'entrada', producto_id: r.insumo_id, cantidad: r.cantidad, costo_unitario: r.costo_unitario,
+      referencia_tipo: 'DEVOLUCION_REABASTECIMIENTO', referencia_id: numeroDev,
+      notas: `Devolución ${numeroDev} — reabastecimiento ${numero} — lote ${r.lote}`,
+      fecha: fechaDev, bodega_id: r.bodega_id, lote: r.lote,
+    });
+
+    // Libera el rollo, si este renglón consumió uno (mismo criterio
+    // "nunca borrar" — solo se revierte el estado y se limpia la marca).
+    if (r.rollo_id) {
+      const { error: rErr } = await sb.from('erp_rollos').update({
+        estado: 'disponible',
+        reabastecido_en_tipo: null, reabastecido_en_id: null, reabastecido_en_numero: null,
+      }).eq('id', r.rollo_id);
+      if (rErr) console.error('devolverReabastecimiento: error liberando rollo:', rErr.message);
+    }
+
+    // Reversa el consumo de OP con una línea NEGATIVA (nunca se borra el
+    // consumo original — mismo criterio que el resto del sistema).
+    if (tipoDoc === 'op') {
+      const { error: cErr } = await sb.from('erp_op_consumos').insert({
+        op_id: docId, insumo_id: r.insumo_id,
+        cantidad_prog: 0, cantidad_real: -r.cantidad,
+        costo_unitario: r.costo_unitario, costo_total: -parseFloat((r.cantidad*r.costo_unitario).toFixed(4)),
+        lote: r.lote, bodega_id: r.bodega_id,
+        unidad: insumo?.unidad || 'kg',
+        notas: `Devolución ${numeroDev} de ${numero}`,
+      });
+      if (cErr) console.error('devolverReabastecimiento: error revirtiendo op_consumo:', cErr.message);
+    }
+
+    // Marca el REA original como devuelto — nunca se borra ni modifica su
+    // data (lote/cantidad/costo quedan intactos para trazabilidad).
+    const { error: uErr } = await sb.from('erp_reabastecimiento').update({
+      devuelto: true, devuelto_en_numero: numeroDev,
+    }).eq('id', r.id);
+    if (uErr) console.error('devolverReabastecimiento: error marcando devuelto:', uErr.message);
+  }
+
+  // Asiento inverso al original: MP regresa a inventario, sale de Proceso (WIP)
+  if (totalCosto > 0) {
+    const ctaProcesoDev = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
+    const ctaInsumoDev  = getCtaValoracionProducto(primero.insumo_id);
+    await crearAsiento({
+      diario: DIARIO_MANUFACTURA, fecha: fechaDev,
+      descripcion: `Devolución ${numeroDev} — reversa de ${numero} (${insumo?.codigo_interno||insumo?.code||insumo?.description||''})`,
+      referencia: numeroDev, referencia_id: docId,
+      moneda: 'GTQ', tipo_cambio: 1,
+      lineas: [
+        {
+          cuenta_id: ctaInsumoDev?.id||null, cuenta_codigo: ctaInsumoDev?.codigo||'',
+          cuenta_nombre: ctaInsumoDev?.nombre||'Inventario MP',
+          debe: totalCosto, haber: 0,
+          descripcion: `Entrada MP — devolución de lotes de ${numero}`,
+        },
+        {
+          cuenta_id: ctaProcesoDev?.id||null, cuenta_codigo: CTA_INV_PROCESO,
+          cuenta_nombre: ctaProcesoDev?.nombre||'Inventario en Proceso',
+          debe: 0, haber: totalCosto,
+          descripcion: `Salida de WIP — devolución ${numeroDev}`,
+        },
+      ],
+    });
+  }
+
+  toast(`Devolución ${numeroDev} generada`);
+  await loadAll();
   closeModal('modal-ver-reabastecimiento');
-  if (primero.oc_id) abrirReabastecimiento('oc', primero.oc_id);
-  else abrirReabastecimiento('op', primero.op_id);
+  if (tipoDoc === 'oc') showOCPanel(docId);
+  else refrescarBotonReabastecerOP();
 }
 
 // Imprime el Albarán de un reabastecimiento — mismo patrón que
