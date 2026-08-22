@@ -5544,6 +5544,28 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   </div>
 </div>
 
+<!-- VER RECEPCIÓN (REC) MODAL — solo lectura, mismo patrón que
+     modal-ver-factura-oc (21/Ago/2026, a pedido explícito): clic en el
+     título de una REC ya generada muestra el detalle, con botones
+     Imprimir Albarán / Editar, en vez de abrir directo el formulario
+     editable como pasaba antes. -->
+<div class="modal-overlay" id="modal-ver-recepcion">
+  <div class="modal modal-lg" style="max-width:800px;width:95vw">
+    <div class="modal-header">
+      <div class="modal-title" id="vrec-title">Recepción</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="imprimirRecepcion(currentVerRecepcionId)">🖨 Imprimir Albarán</button>
+        <button class="modal-close" onclick="closeModal('modal-ver-recepcion')">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" id="vrec-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="editarRecepcionDesdeVista()">✏️ Editar</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-ver-recepcion')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- VER ORDEN DE VENTA (OV) MODAL -->
 <div class="modal-overlay" id="modal-ver-pedido">
   <div class="modal modal-lg" style="max-width:90vw;width:90vw;max-height:90vh">
@@ -20727,12 +20749,190 @@ async function guardarRecepcionBorrador() {
   }
 }
 
+// currentVerRecepcionId — la REC actualmente mostrada en modal-ver-recepcion
+// (igual patrón que currentVerFacturaOCId para facturas).
+let currentVerRecepcionId = null;
+
 async function abrirRecepcion(recepcionId) {
   await loadAll();
   const rec = (state.ocRecepciones||[]).find(r => r.id === recepcionId);
   if (!rec) { toast('Recepción no encontrada','error'); return; }
   currentOCId = rec.oc_id;
-  await openRecepcion(rec.oc_id, recepcionId);
+  verRecepcion(recepcionId);
+}
+
+// Vista de solo lectura del detalle de una REC — clic en el título de una
+// recepción ya generada (21/Ago/2026, a pedido explícito: "me colocas 2
+// botones en el pop-up: Imprimir Albarán / Editar", en vez de abrir directo
+// el formulario editable como pasaba antes). Mismo patrón que
+// verFacturaOC(): header con datos generales, tabla de lotes recibidos,
+// footer con Editar (abre el formulario real de edición, openRecepcion) y
+// Cerrar.
+function verRecepcion(recepcionId) {
+  const rec = (state.ocRecepciones||[]).find(r => r.id === recepcionId);
+  if (!rec) { toast('Recepción no encontrada','error'); return; }
+  currentVerRecepcionId = recepcionId;
+  const oc   = state.oc.find(o => o.id === rec.oc_id);
+  const prov = state.proveedores.find(p => p.id === oc?.proveedor_id);
+  const bodega = state.bodegas.find(b => b.id === rec.bodega_id);
+  const STATUS_REC_LABEL = { borrador:'Borrador', en_proceso:'En Proceso', completada:'Completada', cancelada:'Cancelada' };
+  const STATUS_REC_COLOR_HEX = { borrador:'#9CA3AF', en_proceso:'#D97706', completada:'#16A34A', cancelada:'#DC2626' };
+
+  const ri = (state.ocRecepcionItems||[]).filter(x => x.recepcion_id === recepcionId);
+  const lotes = [...new Set(ri.map(x => x.lote).filter(Boolean))];
+  const loteRows = lotes.map(lote => {
+    const lineas = ri.filter(x => x.lote === lote);
+    const qty = lineas.reduce((s,x) => s+Number(x.cantidad||0), 0);
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 12px;font-size:13px;font-family:'DM Mono',monospace;color:var(--accent)">${lote}</td>
+      <td style="padding:8px 12px;font-size:13px">${prodName(lineas[0]?.producto_id)}</td>
+      <td style="padding:8px 12px;font-size:13px">${lineas[0]?.packing_num||'—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">${qty.toFixed(3)} ${lineas[0]?.unidad||''}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:12px">Sin lotes registrados</td></tr>`;
+
+  document.getElementById('vrec-title').textContent = rec.numero || '—';
+  document.getElementById('vrec-body').innerHTML = `
+    <div style="padding:20px 24px">
+      <div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;letter-spacing:0.03em;margin-bottom:16px;background:${STATUS_REC_COLOR_HEX[rec.status]||'#9CA3AF'};color:#fff">${STATUS_REC_LABEL[rec.status]||rec.status||'—'}</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+        <div style="padding:12px 16px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Fecha</div>
+          <div style="font-size:14px;font-weight:500">${fmtDate(rec.fecha)}</div>
+        </div>
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">No. Envío</div>
+          <div style="font-size:14px;font-weight:500">${rec.envio_numero||'—'}</div>
+        </div>
+        <div style="padding:12px 16px;border-right:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Orden de Compra</div>
+          <div style="font-size:14px;font-weight:500;font-family:'DM Mono',monospace">${oc?.numero||'—'}</div>
+        </div>
+        <div style="padding:12px 16px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Proveedor</div>
+          <div style="font-size:14px;font-weight:500">${prov?.name||'—'}</div>
+        </div>
+        <div style="padding:12px 16px;border-top:1px solid var(--border);grid-column:1 / -1">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Bodega</div>
+          <div style="font-size:14px;font-weight:500">${bodega ? (bodega.codigo?bodega.codigo+' — ':'')+bodega.nombre : '—'}</div>
+        </div>
+      </div>
+
+      <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Lotes Recibidos</div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="background:var(--surface2)">
+            <th style="padding:7px 12px;text-align:left;font-size:11px">Lote</th>
+            <th style="padding:7px 12px;text-align:left;font-size:11px">Producto</th>
+            <th style="padding:7px 12px;text-align:left;font-size:11px">No. Packing List</th>
+            <th style="padding:7px 12px;text-align:right;font-size:11px">Cantidad</th>
+          </tr></thead>
+          <tbody>${loteRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  openModal('modal-ver-recepcion');
+}
+
+// Botón "✏️ Editar" del visor de solo lectura — abre el formulario real de
+// edición (el mismo que existía antes de este cambio), reutilizando
+// openRecepcion() sin duplicar su lógica.
+function editarRecepcionDesdeVista() {
+  const rec = (state.ocRecepciones||[]).find(r => r.id === currentVerRecepcionId);
+  if (!rec) return;
+  closeModal('modal-ver-recepcion');
+  openRecepcion(rec.oc_id, rec.id);
+}
+
+// Imprime el Albarán de una recepción — encabezado + tabla de lotes +
+// espacio de firma. Mismo patrón de ventana de impresión que
+// imprimirFacturaOC()/imprimirOC() (21/Ago/2026, a pedido explícito).
+function imprimirRecepcion(recepcionId) {
+  const rec = (state.ocRecepciones||[]).find(r => r.id === recepcionId);
+  if (!rec) { toast('Recepción no encontrada','error'); return; }
+  const oc   = state.oc.find(o => o.id === rec.oc_id);
+  const prov = state.proveedores.find(p => p.id === oc?.proveedor_id);
+  const bodega = state.bodegas.find(b => b.id === rec.bodega_id);
+
+  const ri = (state.ocRecepcionItems||[]).filter(x => x.recepcion_id === recepcionId);
+  const lotes = [...new Set(ri.map(x => x.lote).filter(Boolean))];
+  const loteRows = lotes.map(lote => {
+    const lineas = ri.filter(x => x.lote === lote);
+    const qty = lineas.reduce((s,x) => s+Number(x.cantidad||0), 0);
+    return `<tr>
+      <td>${lote}</td>
+      <td>${prodName(lineas[0]?.producto_id)}</td>
+      <td>${lineas[0]?.packing_num||'—'}</td>
+      <td class="num">${qty.toFixed(3)} ${lineas[0]?.unidad||''}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="4" style="text-align:center;color:#9EA4B0">Sin lotes registrados</td></tr>`;
+
+  const win = window.open('','_blank','width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8"/>
+    <title>Albarán ${rec.numero||''}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Inter',sans-serif;font-size:12px;color:#1A1C21;padding:32px;background:#fff}
+      .doc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;padding-bottom:18px;border-bottom:2px solid #101820}
+      .brand{font-size:11px;color:#5E6470;margin-top:4px}
+      .doc-num{font-size:26px;font-weight:700;color:#C84B2F;font-family:monospace}
+      .two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin:20px 0}
+      .info-row{display:flex;flex-direction:column;margin-bottom:6px}
+      .info-label{font-size:9px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9EA4B0;margin-bottom:1px}
+      .info-val{font-size:12px;font-weight:500;color:#1A1C21}
+      .section-title{font-size:9px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:#9EA4B0;margin:24px 0 8px;padding-top:16px;border-top:2px solid #101820}
+      table{width:100%;border-collapse:collapse;margin-bottom:12px}
+      thead th{background:#F4F5F7;padding:6px 10px;text-align:left;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5E6470;border-bottom:1px solid #E2E4E9}
+      tbody td{padding:6px 10px;border-bottom:1px solid #F0F1F3;font-size:11px}
+      tbody tr:last-child td{border-bottom:none}
+      .num{text-align:right;font-family:monospace}
+      .firmas{display:grid;grid-template-columns:1fr 1fr;gap:48px;margin-top:64px}
+      .firma-linea{border-top:1px solid #1A1C21;padding-top:6px;text-align:center;font-size:10px;color:#5E6470}
+      @media print{body{padding:16px} @page{margin:12mm}}
+    </style>
+  </head><body>
+
+    <div class="doc-header">
+      <div>
+        <h1 style="font-size:20px;font-weight:700">Albarán de Recepción</h1>
+        <div class="brand">TEXTILES CIRCULARES, S.A.</div>
+      </div>
+      <div style="text-align:right">
+        <div class="doc-num">${rec.numero||''}</div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div>
+        <div class="info-row"><div class="info-label">Fecha</div><div class="info-val">${fmtDate(rec.fecha)}</div></div>
+        <div class="info-row"><div class="info-label">Orden de Compra</div><div class="info-val">${oc?.numero||'—'}</div></div>
+        <div class="info-row"><div class="info-label">No. de Envío</div><div class="info-val">${rec.envio_numero||'—'}</div></div>
+      </div>
+      <div>
+        <div class="info-row"><div class="info-label">Proveedor</div><div class="info-val">${prov?.name||'—'}</div></div>
+        <div class="info-row"><div class="info-label">Bodega de destino</div><div class="info-val">${bodega ? (bodega.codigo?bodega.codigo+' — ':'')+bodega.nombre : '—'}</div></div>
+      </div>
+    </div>
+
+    <div class="section-title" style="border-top:none;padding-top:0">Lotes Recibidos</div>
+    <table>
+      <thead><tr><th>Lote</th><th>Producto</th><th>No. Packing List</th><th style="text-align:right">Cantidad</th></tr></thead>
+      <tbody>${loteRows}</tbody>
+    </table>
+
+    <div class="firmas">
+      <div class="firma-linea">Entregado por</div>
+      <div class="firma-linea">Recibido por</div>
+    </div>
+
+  </body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
 }
 
 async function openRecepcion(ocIdParam, recepcionId) {
