@@ -12432,7 +12432,6 @@ async function confirmarRollo() {
   if (isNaN(peso) || peso <= 0) { toast('Peso inválido','error'); return; }
   if (!tejedor) { toast('Seleccioná el tejedor','error'); return; }
   if (!maquina) { toast('Seleccioná la máquina','error'); return; }
-  if ((state.rollos||[]).some(r=>r.numero_rollo===numero)) { toast('Ya existe un rollo con ese número','error'); return; }
 
   // LOTE POR CAMBIO DE HILO (20/Ago/2026, a pedido explícito): ya no se usa
   // op.lote_produccion a ciegas — cada rollo lleva el lote ACTIVO del
@@ -12440,6 +12439,13 @@ async function confirmarRollo() {
   // normalmente es el mismo lote de la OP pero puede cambiar a mitad de
   // producción si cambia el lote de hilo que se está tejiendo.
   const loteActivo = document.getElementById('recep-tela-lote-activo').value || op.lote_produccion;
+
+  // Unicidad ahora es por producto + lote (22/Ago/2026 — el mismo número
+  // de rollo se repite legítimamente entre lotes distintos, ej. R-001 en
+  // el lote Azul y R-001 en el lote Verde de otra recepción).
+  if ((state.rollos||[]).some(r=>r.numero_rollo===numero && r.producto_id===op.producto_id && (r.lote||'')===(loteActivo||''))) {
+    toast('Ya existe un rollo con ese número en este lote','error'); return;
+  }
 
   // 17/Ago/2026, a pedido explícito: la fecha/hora ya NO es editable — el
   // timestamp real es el momento exacto del click en "Agregar Rollo", no
@@ -15106,13 +15112,14 @@ function renderReabastecimientoModal() {
           productoTieneAgrupacion(d.insumo_id) ? renderReabRollosPicker(idx, d.insumo_id, bodegaId, lotes, insumo) :
           `<div class="table-wrap">
             <table>
-              <thead><tr><th>Lote</th><th style="text-align:right">Disponible</th><th style="text-align:right">Costo Unit.</th><th style="text-align:right">Asignar</th></tr></thead>
+              <thead><tr><th>Lote</th><th style="text-align:right">Disponible</th><th style="text-align:right">Costo Unit.</th><th style="text-align:right">Cantidad</th><th></th></tr></thead>
               <tbody>${lotes.map((l,li) => `
                 <tr>
                   <td class="td-mono">${l.lote}</td>
                   <td class="td-mono" style="text-align:right">${fmtNum(l.saldo)} ${insumo?.unidad||'kg'}</td>
                   <td class="td-mono" style="text-align:right">${fmtMoney(l.costo)}</td>
                   <td style="text-align:right"><input type="number" id="reab-cant-${idx}-${li}" min="0" max="${l.saldo}" step="0.0001" placeholder="0.000" style="width:110px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:12px;text-align:right"/></td>
+                  <td style="text-align:right"><button type="button" class="btn btn-ghost btn-sm" style="padding:5px 10px;font-size:11px" onclick="asignarLoteAuto(${idx},${li},${d.requerido},${l.saldo})">Asignar</button></td>
                 </tr>`).join('')}</tbody>
             </table>
           </div>
@@ -15125,6 +15132,23 @@ function renderReabastecimientoModal() {
     <div style="text-align:center;padding:12px;border-radius:8px;background:${estado.completo?'#ECFDF5':'#FFFBEB'};color:${estado.completo?'#16A34A':'#D97706'};font-weight:600;font-size:13px">
       ${estado.completo ? '✓ Reabastecimiento completo' : '⏳ Reabastecimiento pendiente — no se puede iniciar/confirmar hasta asignar todos los lotes'}
     </div>`;
+}
+
+// Botón "Asignar" por línea de lote (22/Ago/2026, a pedido explícito —
+// "de esta manera no hay que estar llenando y perdiendo tiempo... por
+// decimales se pueden quedar abiertos"). Llena la cantidad de ESTA línea
+// con el mínimo entre lo disponible en el lote y lo que todavía falta por
+// cubrir del insumo (calculado en vivo, restando lo que ya esté tipiado
+// en las demás líneas de este mismo insumo) — evita cálculo manual y
+// evita que quede un residuo pendiente por redondeo.
+function asignarLoteAuto(idx, li, requerido, saldoLote) {
+  let yaAsignado = 0;
+  document.querySelectorAll(`[id^="reab-cant-${idx}-"]`).forEach(el => {
+    if (el.id !== `reab-cant-${idx}-${li}`) yaAsignado += parseFloat(el.value)||0;
+  });
+  const falta = Math.max(0, Number(requerido||0) - yaAsignado);
+  const input = document.getElementById(`reab-cant-${idx}-${li}`);
+  if (input) input.value = Math.min(Number(saldoLote||0), falta).toFixed(4);
 }
 
 async function confirmarAsignacionLotes(idx, insumoId) {
@@ -20905,6 +20929,7 @@ function verRecepcion(recepcionId) {
   // Solo las líneas originalmente recibidas (estado='recibido') — las de
   // devolución (estado='devuelto', cantidad negativa) se muestran como
   // "Ya Devuelto" restado de cada línea original, no como filas propias.
+  const ri = (state.ocRecepcionItems||[]).filter(x => x.recepcion_id === recepcionId);
   const originales = ri.filter(x => x.estado === 'recibido');
   const loteRows = originales.map(item => {
     const devuelta = cantidadDevueltaRecepcionItem(item.id);
@@ -22010,6 +22035,26 @@ async function saveRecepcion() {
       }
     }
 
+    // Rollo duplicado — mismo criterio de unicidad que la base de datos
+    // (producto + lote + número de rollo, 22/Ago/2026, reportado en vivo:
+    // "duplicate key value violates unique constraint
+    // erp_rollos_numero_rollo_key" al repetir un número de rollo entre
+    // lotes distintos de la misma recepción). Se valida ANTES de empezar a
+    // guardar, contra rollos ya existentes Y contra los que se están por
+    // crear en esta misma recepción, para no dejar la recepción a medias.
+    {
+      const vistos = new Set();
+      for (const item of recItems) {
+        if (!item._numeroRollo) continue;
+        const key = `${item.producto_id}|${item.lote||''}|${item._numeroRollo}`;
+        if (vistos.has(key) || (state.rollos||[]).some(r => r.producto_id===item.producto_id && (r.lote||'')===(item.lote||'') && r.numero_rollo===item._numeroRollo)) {
+          toast(`Ya existe un rollo "${item._numeroRollo}" en el lote "${item.lote||'(sin lote)'}" — usá un número distinto.`,'error');
+          return;
+        }
+        vistos.add(key);
+      }
+    }
+
     // Resumen de No. de PL para el header (informativo — la fuente real es por línea).
     const packingRollup = [...new Set(recItems.map(it=>it.packing_num).filter(Boolean))].join(', ') || null;
 
@@ -22083,16 +22128,33 @@ async function saveRecepcion() {
         // esa función genérica solo sabe hacer el asiento estándar de
         // compra (Debe Valoración / Haber Entrada) — acá hace falta separar
         // la contrapartida entre Proceso (MP) y el proveedor (conversión).
+        //
+        // FIX (22/Ago/2026, reportado en vivo — AS-2026-00006 daba
+        // conversión Q7.14 en vez de Q54.43): costoMPPorKgOC viene de
+        // erp_reabastecimiento.costo_unitario, que a su vez sale de
+        // calcStockPorLote()/calcStockFIFO() — esas funciones YA prefieren
+        // costo_unitario_gtq sobre el nativo, así que montoMP YA está en
+        // GTQ, no se vuelve a convertir. PERO item.costo_unit viene
+        // directo de erp_oc_items.precio_unit, en la moneda NATIVA de esa
+        // línea (frecuentemente USD para servicio de conversión) — nunca
+        // se convertía a GTQ antes de entrar al asiento. Se corrige acá,
+        // igual criterio que usa crearMovimiento() para el resto del
+        // sistema (moneda==='USD' → multiplicar por TC de la fecha).
+        const itemOCConv = state.ocItems.find(oi => oi.oc_id === oc.id && oi.producto_id === item.producto_id);
+        const monedaConv = itemOCConv?.moneda || monedaOC || 'GTQ';
+        const tcConv      = getTCFecha(fecha) || tcHoy() || 1;
+        const costoUnitConvGTQ = monedaConv === 'USD' ? parseFloat((item.costo_unit * tcConv).toFixed(4)) : item.costo_unit;
+
         const montoMP    = parseFloat((item.cantidad * costoMPPorKgOC).toFixed(4));
-        const montoConv  = parseFloat((item.cantidad * item.costo_unit).toFixed(4));
+        const montoConv  = parseFloat((item.cantidad * costoUnitConvGTQ).toFixed(4));
         const montoTotal = parseFloat((montoMP + montoConv).toFixed(4));
         await crearMovimiento({
           tipo: 'entrada', producto_id: item.producto_id,
-          cantidad: item.cantidad, costo_unitario: parseFloat((costoMPPorKgOC + item.costo_unit).toFixed(4)),
+          cantidad: item.cantidad, costo_unitario: parseFloat((costoMPPorKgOC + costoUnitConvGTQ).toFixed(4)),
           referencia_tipo: 'OC', referencia_id: numero,
           notas: `Recepción ${numero} — subcontrato: MP Q${montoMP.toFixed(2)} + conversión Q${montoConv.toFixed(2)}${item.lote?' | Lote:'+item.lote:''}`,
           fecha, lote: item.lote, poliza: item.poliza,
-          moneda: monedaOC, bodega_id: bodega_id||null,
+          moneda: 'GTQ', bodega_id: bodega_id||null,
         });
         if (montoTotal > 0) {
           const ctaValoracionRec = getCtaValoracionProducto(item.producto_id);
