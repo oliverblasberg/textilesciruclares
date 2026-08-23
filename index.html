@@ -10977,8 +10977,8 @@ function resolveMoneda(proveedorId, productoId, modo = 'venta') {
       const entry = prod.proveedores_compra.find(l => l.proveedor_id === proveedorId);
       if (entry?.moneda) return { moneda: entry.moneda, fuente: 'producto-proveedor' };
     }
-    // Fallback: product's moneda_compra
-    if (prod?.moneda_compra) return { moneda: prod.moneda_compra, fuente: 'producto' };
+    // Fallback: primera línea de proveedores_compra (sin proveedor específico coincidente)
+    if (prod?.proveedores_compra?.[0]?.moneda) return { moneda: prod.proveedores_compra[0].moneda, fuente: 'producto' };
   } else {
     // Venta: use product's moneda_venta
     if (prod?.moneda_venta) return { moneda: prod.moneda_venta, fuente: 'producto' };
@@ -11465,7 +11465,7 @@ function explodeBOM(productoId, cantidad = 1, stockMap, visitados = new Set()) {
     // valorizado (FIFO) o, si no hay existencia, el precio de compra de
     // referencia del producto.
     const st = stockMap[productoId];
-    const costoUnitario = st && st.saldo > 0 ? st.valoracion/st.saldo : Number(prod.precio_compra||0);
+    const costoUnitario = st && st.saldo > 0 ? st.valoracion/st.saldo : costoConversionPredeterminado(prod, tcHoy()||7.75);
     return {
       producto: prod, cantidad, unidad: prod.unidad||'kg',
       costoUnitario, costoLista: costoUnitario * cantidad,
@@ -11693,7 +11693,7 @@ function calcOPConsumosEstimados() {
     const cantConMerma = cantSinMerma * (1 + Number(l.merma_pct||0)/100);
     const st           = stockMap[l.insumo_id];
     const stockDisp    = st ? st.saldo : 0;
-    const costoUnit    = st && st.saldo>0 ? st.valoracion/st.saldo : (p?.precio_compra||0);
+    const costoUnit    = st && st.saldo>0 ? st.valoracion/st.saldo : costoConversionPredeterminado(p, tcHoy()||7.75);
     const costoLinea   = cantConMerma * costoUnit;
     costoMPConMerma   += costoLinea;
     const stockOk      = stockDisp >= cantConMerma;
@@ -11970,7 +11970,7 @@ async function saveOP(estado = 'borrador') {
     lineas.forEach(l => {
       const cantConMerma = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad_prog;
       const st = stockMap[l.insumo_id];
-      const cu = st && st.saldo>0 ? st.valoracion/st.saldo : (state.productos.find(p=>p.id===l.insumo_id)?.precio_compra||0);
+      const cu = st && st.saldo>0 ? st.valoracion/st.saldo : costoConversionPredeterminado(state.productos.find(p=>p.id===l.insumo_id), tc);
       costoMPConMerma += cantConMerma * cu;
     });
   }
@@ -12996,6 +12996,17 @@ async function confirmarOPDirecto(id) {
   renderOPList();
 }
 
+// BUGFIX (barrida de sistema, 22/Ago/2026): esta función se llamaba desde
+// el select "fact-tipo" y desde la inicialización del asistente de
+// proveedor, pero nunca se había definido en ningún lugar — confirmado
+// por grep, cero declaraciones. Al elegir "Otro" en Tipo de Factura, el
+// campo de texto libre nunca aparecía.
+function toggleFactTipoOtro() {
+  const tipo  = document.getElementById('fact-tipo')?.value;
+  const field = document.getElementById('fact-tipo-otro-field');
+  if (field) field.style.display = tipo === 'otro' ? '' : 'none';
+}
+
 function cancelarOP(id) {
   const op   = (state.op||[]).find(x=>x.id===id);
   if (!op) return;
@@ -13857,7 +13868,7 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
   lineas.forEach(l => {
     const cant = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad;
     const st   = stockMap[l.insumo_id];
-    const cu   = st && st.saldo>0 ? st.valoracion/st.saldo : (state.productos.find(p=>p.id===l.insumo_id)?.precio_compra||0);
+    const cu   = st && st.saldo>0 ? st.valoracion/st.saldo : costoConversionPredeterminado(state.productos.find(p=>p.id===l.insumo_id), tc);
     costoMP   += cant * cu;
   });
 
@@ -14758,7 +14769,7 @@ function renderProductos() {
       </td>
       <td><span class="badge ${PROD_TIPO_COLOR[p.tipo]||'badge-gray'}">${PROD_TIPO_LABEL[p.tipo]||p.tipo||'—'}</span></td>
       <td class="hide-mobile">${p.unidad||'—'}</td>
-      <td class="hide-mobile td-mono">${p.precio_compra ? fmtMoney(p.precio_compra) : '—'}</td>
+      <td class="hide-mobile td-mono">${(p.proveedores_compra||[])[0]?.precio ? fmtMoney(p.proveedores_compra[0].precio, p.proveedores_compra[0].moneda||'GTQ') : '—'}</td>
       <td class="hide-mobile td-mono">${p.precio_venta  ? fmtMoney(p.precio_venta)  : '—'}</td>
       <td>${statusBadge(p.estado||'activo')}</td>
       <td><div class="td-actions">
@@ -19422,7 +19433,7 @@ let scLineCount=0;
 function addSCLine(prod_id='',cantidad=0,precio=0) {
   scLineCount++;
   const id='scl_'+scLineCount;
-  const opts=state.productos.filter(p=>p.puede_comprado!==false).map(p=>`<option value="${p.id}" data-unidad="${p.unidad||''}" data-precio="${p.precio_compra||0}" data-moneda="${p.moneda_compra||''}">${p.code||'?'} — ${p.description}</option>`).join('');
+  const opts=state.productos.filter(p=>p.puede_comprado!==false).map(p=>`<option value="${p.id}" data-unidad="${p.unidad||''}" data-precio="${(p.proveedores_compra||[])[0]?.precio||0}" data-moneda="${(p.proveedores_compra||[])[0]?.moneda||''}">${p.code||'?'} — ${p.description}</option>`).join('');
   const tr=document.createElement('tr'); tr.id=id;
   tr.innerHTML=`
     <td><select onchange="scLineProdChange(this,'${id}')" style="width:100%;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:13px">
@@ -19487,9 +19498,10 @@ function ocProductoOptsForProveedor(provId, selectedId='') {
     if (!provId) return true; // sin proveedor elegido aún: no filtrar
     return (p.proveedores_compra||[]).some(l => l.proveedor_id === provId);
   });
-  const opts = productos.map(p =>
-    `<option value="${p.id}" data-unidad="${p.unidad||''}" data-precio="${p.precio_compra||0}" data-moneda="${p.moneda_compra||''}">${p.codigo_interno||p.code||'?'} — ${p.description}</option>`
-  ).join('');
+  const opts = productos.map(p => {
+    const lineaProv = (p.proveedores_compra||[]).find(l => l.proveedor_id === provId) || (p.proveedores_compra||[])[0];
+    return `<option value="${p.id}" data-unidad="${p.unidad||''}" data-precio="${lineaProv?.precio||0}" data-moneda="${lineaProv?.moneda||''}">${p.codigo_interno||p.code||'?'} — ${p.description}</option>`;
+  }).join('');
   return `<option value="">— Seleccionar —</option>${opts}`;
 }
 
@@ -19505,7 +19517,10 @@ function addOCLine(prod_id='',cantidad=0,precio=0,unidad='') {
   // un producto ya comprado, solo se filtra al AGREGAR líneas nuevas.
   if (prod_id && !opts.includes(`value="${prod_id}"`)) {
     const p = state.productos.find(x => x.id === prod_id);
-    if (p) opts += `<option value="${p.id}" data-unidad="${p.unidad||''}" data-precio="${p.precio_compra||0}" data-moneda="${p.moneda_compra||''}">⚠ ${p.codigo_interno||p.code||'?'} — ${p.description} (no asignado a este proveedor)</option>`;
+    if (p) {
+      const lineaProv = (p.proveedores_compra||[]).find(l => l.proveedor_id === provId) || (p.proveedores_compra||[])[0];
+      opts += `<option value="${p.id}" data-unidad="${p.unidad||''}" data-precio="${lineaProv?.precio||0}" data-moneda="${lineaProv?.moneda||''}">⚠ ${p.codigo_interno||p.code||'?'} — ${p.description} (no asignado a este proveedor)</option>`;
+    }
   }
   tr.innerHTML=`
     <td><select onchange="ocLineProdChange(this,'${id}')" style="width:100%;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:13px">
@@ -19540,9 +19555,9 @@ function ocLineProdChange(sel, rowId, overridePrice) {
       if (provLine) {
         precio = Number(provLine.precio||0);
         moneda = provLine.moneda || 'GTQ';
-      } else if (prod?.precio_compra) {
-        precio = Number(prod.precio_compra);
-        moneda = prod.moneda_compra || 'GTQ';
+      } else if ((prod?.proveedores_compra||[])[0]) {
+        precio = Number(prod.proveedores_compra[0].precio||0);
+        moneda = prod.proveedores_compra[0].moneda || 'GTQ';
       }
     }
 
@@ -19593,7 +19608,7 @@ function calcOCTotal() {
     if (!tr.dataset.moneda && sel?.value && provId) {
       const prod = state.productos.find(p => p.id === sel.value);
       const provLine = (prod?.proveedores_compra||[]).find(l => l.proveedor_id === provId);
-      moneda = provLine?.moneda || prod?.moneda_compra || 'GTQ';
+      moneda = provLine?.moneda || prod?.proveedores_compra?.[0]?.moneda || 'GTQ';
     }
     if (!monedaGlobal) monedaGlobal = moneda;
 
@@ -19623,7 +19638,7 @@ function getOCLines() {
     if (!tr.dataset.moneda && prodId && provId) {
       const prod     = state.productos.find(p => p.id === prodId);
       const provLine = (prod?.proveedores_compra||[]).find(l => l.proveedor_id === provId);
-      moneda = provLine?.moneda || prod?.moneda_compra || 'GTQ';
+      moneda = provLine?.moneda || prod?.proveedores_compra?.[0]?.moneda || 'GTQ';
     }
 
     const total_orig          = parseFloat((cantidad * precio_unit).toFixed(4));
@@ -24217,8 +24232,9 @@ function onAjusteProductoChange() {
   document.getElementById('ajuste-unidad-field').style.display = prod ? 'block' : 'none';
   document.getElementById('ajuste-unidad-display').textContent = prod?.unidad || '—';
   const tipo = document.getElementById('ajuste-tipo').value;
-  if (tipo !== 'consignacion' && prod?.precio_compra) {
-    document.getElementById('ajuste-costo-unit').value = prod.precio_compra;
+  const precioDefault = costoConversionPredeterminado(prod, tcHoy()||7.75);
+  if (tipo !== 'consignacion' && precioDefault) {
+    document.getElementById('ajuste-costo-unit').value = precioDefault;
   }
   calcAjusteTotal();
 }
