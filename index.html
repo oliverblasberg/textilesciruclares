@@ -1122,6 +1122,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <select class="filter-select" id="filter-op-estado" onchange="renderOP()">
             <option value="">Todos los estados</option>
             <option value="borrador">Borrador</option>
+            <option value="confirmada">Confirmada</option>
             <option value="en_proceso">En Proceso</option>
             <option value="completada">Completada</option>
             <option value="cancelada">Cancelada</option>
@@ -4864,6 +4865,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div id="op-reab-hint" style="display:none;font-size:11px;color:var(--accent3);align-self:center;margin-right:8px"></div>
       <button class="btn btn-ghost" onclick="closeModal('modal-op')">Cancelar</button>
       <button class="btn btn-secondary" onclick="saveOP('borrador')">Guardar Borrador</button>
+      <button class="btn btn-secondary" onclick="saveOP('confirmada')">✅ Confirmar Orden</button>
       <button class="btn btn-primary" id="btn-op-iniciar" onclick="saveOP('en_proceso')">▶ Iniciar Producción</button>
     </div>
   </div>
@@ -11068,8 +11070,8 @@ function nextRecNum() {
 }
 
 // ── Labels ──
-const OP_ESTADO_LABEL = { borrador:'Borrador', en_proceso:'En Proceso', enviado_terceros:'Enviado a Terceros', recibido_terceros:'Recibido de Terceros', completada:'Completada', cancelada:'Cancelada' };
-const OP_ESTADO_COLOR = { borrador:'badge-gray', en_proceso:'badge-blue', enviado_terceros:'badge-yellow', recibido_terceros:'badge-blue', completada:'badge-green', cancelada:'badge-red' };
+const OP_ESTADO_LABEL = { borrador:'Borrador', confirmada:'Confirmada', en_proceso:'En Proceso', enviado_terceros:'Enviado a Terceros', recibido_terceros:'Recibido de Terceros', completada:'Completada', cancelada:'Cancelada' };
+const OP_ESTADO_COLOR = { borrador:'badge-gray', confirmada:'badge-yellow', en_proceso:'badge-blue', enviado_terceros:'badge-yellow', recibido_terceros:'badge-blue', completada:'badge-green', cancelada:'badge-red' };
 const OP_TIPO_LABEL   = {
   tejido_interno:     'Tejido Interno',
   tejido_subcontrato: 'Tejido Subcontrato',
@@ -11597,12 +11599,15 @@ function renderOP() {
       <td class="td-mono" style="text-align:right;color:var(--accent3);font-weight:600">${o.costo_total>0?fmtMoney(o.costo_total):'—'}</td>
       <td><span class="badge ${OP_ESTADO_COLOR[o.estado]||'badge-gray'}">${OP_ESTADO_LABEL[o.estado]||o.estado}</span></td>
       <td><div class="td-actions">
+        ${o.estado==='borrador'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();confirmarOPDirecto('${o.id}')">✅ Confirmar Orden</button>`:''}
+        ${o.estado==='confirmada'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();editOP('${o.id}')">▶ Iniciar Producción</button>`:''}
+        ${(o.estado==='borrador'||o.estado==='confirmada'||o.estado==='en_proceso')?`<button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();abrirReabastecimiento('op','${o.id}')">🔄 Reabastecer</button>`:''}
         ${o.estado==='en_proceso'&&esSubcontrato(o.tipo)?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirEnvioOP('${o.id}')">📦 Enviar a Terceros</button>`:''}
         ${o.estado==='enviado_terceros'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirRecepcionOP('${o.id}')">📥 Recibir de Terceros</button>`:''}
         ${o.estado==='en_proceso'&&esInterno(o.tipo)?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirRecepcionTela('${o.id}')">📥 Recepción de Tela (${fmtNum(kgRecibidosOP(o.id))}/${fmtNum(o.cantidad_prog)} kg)</button>`:''}
         ${o.estado==='en_proceso'&&esInterno(o.tipo)&&kgRecibidosOP(o.id)>=Number(o.cantidad_prog||0)-0.0001?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirCompletarOP('${o.id}')">✓ Completar</button>`:''}
         ${o.estado==='recibido_terceros'?`<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();abrirCompletarOP('${o.id}')">✓ Completar</button>`:''}
-        ${o.estado==='borrador'||o.estado==='en_proceso'?`
+        ${o.estado==='borrador'||o.estado==='confirmada'||o.estado==='en_proceso'?`
           <button class="btn btn-sm btn-ghost" style="color:var(--red);border-color:var(--red)" onclick="event.stopPropagation();cancelarOP('${o.id}')">✕ Cancelar</button>`:''}
       </div></td>
     </tr>`;
@@ -11820,6 +11825,16 @@ async function openNewOP() {
     (state.bodegas||[]).filter(b=>b.activa!==false).map(b=>`<option value="${b.id}">${b.codigo} — ${b.nombre}</option>`).join('');
   document.getElementById('op-bodega-entrada').innerHTML = bodOpts;
   document.getElementById('op-bodega-salida').innerHTML  = bodOpts;
+  // Default (22/Ago/2026, a pedido explícito): OPs siempre proponen
+  // BOD-01 (Hilo) como entrada y BOD-02 (Tela Cruda) como salida — sigue
+  // 100% editable, esto solo pre-selecciona. Si la receta elegida trae su
+  // propio bodega_entrada_default/bodega_salida_default (ver
+  // onOPRecetaChange más abajo), ese default más específico gana sobre
+  // este general. Se busca por código, no por id hardcodeado.
+  const bodDefEnt = (state.bodegas||[]).find(b => b.codigo === 'BOD-01');
+  const bodDefSal = (state.bodegas||[]).find(b => b.codigo === 'BOD-02');
+  if (bodDefEnt) document.getElementById('op-bodega-entrada').value = bodDefEnt.id;
+  if (bodDefSal) document.getElementById('op-bodega-salida').value  = bodDefSal.id;
   populateOVSelect('op-ov');
 
   document.getElementById('modal-op-title').textContent = 'Nueva Orden de Producción';
@@ -11870,6 +11885,17 @@ async function editOP(id) {
 
   document.getElementById('op-bodega-entrada').value = op.bodega_entrada||'';
   document.getElementById('op-bodega-salida').value  = op.bodega_salida||'';
+  // Mismo default que openNewOP() — solo aplica si esta OP (ej. un
+  // borrador viejo) nunca tuvo bodega guardada; nunca pisa un valor real
+  // ya existente.
+  if (!op.bodega_entrada) {
+    const bodDefEnt = (state.bodegas||[]).find(b => b.codigo === 'BOD-01');
+    if (bodDefEnt) document.getElementById('op-bodega-entrada').value = bodDefEnt.id;
+  }
+  if (!op.bodega_salida) {
+    const bodDefSal = (state.bodegas||[]).find(b => b.codigo === 'BOD-02');
+    if (bodDefSal) document.getElementById('op-bodega-salida').value = bodDefSal.id;
+  }
 
   populateOVSelect('op-ov');
   document.getElementById('op-ov').value = op.ov_id||'';
@@ -12433,6 +12459,30 @@ async function confirmarRollo() {
   if (!tejedor) { toast('Seleccioná el tejedor','error'); return; }
   if (!maquina) { toast('Seleccioná la máquina','error'); return; }
 
+  // Tolerancia de sobre-recepción (22/Ago/2026, a pedido explícito — mismo
+  // criterio que Recepción de OC: "hay veces por humedad o mejor
+  // eficiencia que se produce un poco más de lo estipulado por la
+  // merma"). Hasta lo programado (cantidad_prog), libre. Hasta +3%, exige
+  // justificación manual. Más de +3%, bloqueado.
+  const TOLERANCIA_SOBRE_RECEPCION_OP = 0.03;
+  let motivoOverrideRollo = '';
+  {
+    const recibidoHastaAhora = kgRecibidosOP(opId); // excluye rollos eliminados
+    const progOP = Number(op.cantidad_prog||0);
+    const disponible = progOP - recibidoHastaAhora;
+    const disponibleConTolerancia = (progOP * (1 + TOLERANCIA_SOBRE_RECEPCION_OP)) - recibidoHastaAhora;
+    if (peso > disponibleConTolerancia + 0.001) {
+      toast(`Este rollo excede incluso la tolerancia del 3% sobre lo programado (${progOP.toFixed(3)} kg — ya recibido ${recibidoHastaAhora.toFixed(3)} kg, máximo con tolerancia: ${Math.max(0,disponibleConTolerancia).toFixed(3)} kg).`,'error');
+      return;
+    }
+    if (peso > disponible + 0.001) {
+      const exceso = peso - disponible;
+      const motivo = prompt(`Este rollo pasa lo programado por ${exceso.toFixed(3)} kg (dentro del 3% de tolerancia). Escribí el motivo (ej. "humedad", "mejor eficiencia del proceso") para continuar:`);
+      if (!motivo || !motivo.trim()) { toast('Se requiere un motivo para recibir por encima de lo programado — rollo cancelado.','error'); return; }
+      motivoOverrideRollo = ` — Sobre-producción +${exceso.toFixed(3)} kg, motivo: ${motivo.trim()}`;
+    }
+  }
+
   // LOTE POR CAMBIO DE HILO (20/Ago/2026, a pedido explícito): ya no se usa
   // op.lote_produccion a ciegas — cada rollo lleva el lote ACTIVO del
   // momento (ver renderRecepcionTelaModal/nuevoLoteRecepcionTela), que
@@ -12471,7 +12521,7 @@ async function confirmarRollo() {
     tipo: 'entrada', producto_id: op.producto_id, cantidad: peso,
     costo_unitario: parseFloat(costoUnit.toFixed(4)),
     referencia_tipo: 'OP-ROLLO', referencia_id: numero,
-    notas: `Recepción de tela — OP ${op.numero} — rollo ${numero} — Tejedor: ${tejedor} — Máquina: ${maquina}`,
+    notas: `Recepción de tela — OP ${op.numero} — rollo ${numero} — Tejedor: ${tejedor} — Máquina: ${maquina}${motivoOverrideRollo}`,
     fecha: fechaMov, bodega_id: op.bodega_salida, lote: loteActivo,
   });
 
@@ -12927,6 +12977,25 @@ async function confirmarCompletarOP() {
   await loadAll();
 }
 
+// Confirmar Orden (22/Ago/2026, a pedido explícito — "coloquemos un botón
+// de confirmar orden. Esto pone en fijo la orden y nos ayudará más
+// adelante para el módulo de programación, y deja el inicio de orden...
+// siempre debemos poder abastecer la orden"). Estado nuevo 'confirmada':
+// vive ENTRE borrador y en_proceso — no dispara ningún consumo/costo de
+// conversión (eso sigue atado solo a la transición real a en_proceso, ver
+// saveOP), es puramente un candado de planeación. No requiere abrir el
+// formulario completo — acción directa desde la fila/detalle.
+async function confirmarOPDirecto(id) {
+  const op = (state.op||[]).find(x=>x.id===id);
+  if (!op) return;
+  if (!confirm(`¿Confirmar la orden ${op.numero}? Queda fija para planeación — igual podés seguir reabasteciendo y luego dar inicio cuando corresponda.`)) return;
+  const { error } = await sb.from('erp_op').update({ estado: 'confirmada' }).eq('id', id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  toast(`${op.numero} confirmada`);
+  await loadAll();
+  renderOPList();
+}
+
 function cancelarOP(id) {
   const op   = (state.op||[]).find(x=>x.id===id);
   if (!op) return;
@@ -13169,8 +13238,15 @@ function showOPDetail(id) {
             }).join('')}</tbody>
           </table>
         </div>` : ''}`;
-  document.getElementById('op-detail-footer-actions').innerHTML = op?.estado==='borrador'
-    ? `<button class="btn btn-ghost btn-sm" onclick="closeModal('modal-op-detail');editOP('${id}')">✎ Editar</button>`
+  document.getElementById('op-detail-footer-actions').innerHTML =
+    op?.estado==='borrador' ? `
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('modal-op-detail');editOP('${id}')">✎ Editar</button>
+      <button class="btn btn-primary btn-sm" onclick="confirmarOPDirecto('${id}')">✅ Confirmar Orden</button>`
+    : op?.estado==='confirmada' ? `
+      <button class="btn btn-ghost btn-sm" onclick="abrirReabastecimiento('op','${id}')">🔄 Reabastecer</button>
+      <button class="btn btn-primary btn-sm" onclick="closeModal('modal-op-detail');editOP('${id}')">▶ Iniciar Producción</button>`
+    : op?.estado==='en_proceso' ? `
+      <button class="btn btn-ghost btn-sm" onclick="abrirReabastecimiento('op','${id}')">🔄 Reabastecer</button>`
     : '';
   openModal('modal-op-detail');
 }
@@ -20975,6 +21051,11 @@ function verRecepcion(recepcionId) {
         </div>
       </div>
 
+      ${rec.notas ? `<div style="padding:10px 14px;border-radius:8px;background:#FFFBEB;border:1px solid #FDE68A;margin-bottom:16px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#92400E;margin-bottom:3px">⚠ Nota</div>
+        <div style="font-size:12px;color:#78350F">${rec.notas}</div>
+      </div>` : ''}
+
       <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Lotes Recibidos</div>
       <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
         <table style="width:100%;border-collapse:collapse">
@@ -21561,35 +21642,45 @@ function renderRecLoteRow(item, lote, cajasLote, ocId, savedItem=null) {
   const espValue   = savedItem?.cantidad_esperada ? Number(savedItem.cantidad_esperada).toFixed(3) : pendienteOC.toFixed(3);
   const plValue    = savedItem?.packing_num || '';
   const requiereLote = state.productos.find(p=>p.id===item.producto_id)?.seguimiento === 'lote';
+  // Filas YA GUARDADAS quedan bloqueadas al editar (22/Ago/2026, reportado
+  // en vivo — "no debe generar una nueva recepción, debe cambiar la
+  // recepción ya hecha"): si se re-procesaran junto con lo nuevo, se
+  // duplicaría la cantidad/costo en inventario silenciosamente. Para
+  // agregar más material se usa "+ Agregar Lote" (fila nueva, editable);
+  // lo ya guardado no se vuelve a tocar desde acá.
+  const yaGuardado = !!savedItem;
+  const lockAttr   = yaGuardado ? 'disabled' : '';
+  const lockBg     = yaGuardado ? 'background:var(--surface2);color:var(--text3)' : '';
   return `
-  <div id="rec-lote-row-${n}" style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr 1fr;gap:10px;align-items:end;padding:8px 0;border-bottom:1px solid var(--border)">
+  <div id="rec-lote-row-${n}" data-existing="${yaGuardado?'1':'0'}" style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr 1fr auto;gap:10px;align-items:end;padding:8px 0;border-bottom:1px solid var(--border)">
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Lote${requiereLote?' <span style="color:var(--red)">*</span>':''}</div>
-      <input type="text" id="rec-lote-val-${n}" value="${lote||''}" placeholder="Número de lote"
-        style="padding:6px 10px;border:1.5px solid ${requiereLote?'var(--red)':'var(--border)'};border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100%"
+      <input type="text" id="rec-lote-val-${n}" value="${lote||''}" placeholder="Número de lote" ${lockAttr}
+        style="padding:6px 10px;border:1.5px solid ${requiereLote?'var(--red)':'var(--border)'};border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100%;${lockBg}"
         data-prod="${item.producto_id}" data-unidad="${item.unidad||''}" data-costo="${item.precio_unit||0}"
         oninput="calcRecVerificacion()"/>
     </div>
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">No. Packing List</div>
-      <input type="text" id="rec-pl-val-${n}" value="${plValue}" placeholder="Ej. KAA4071-CI01"
-        style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"/>
+      <input type="text" id="rec-pl-val-${n}" value="${plValue}" placeholder="Ej. KAA4071-CI01" ${lockAttr}
+        style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%;${lockBg}"/>
     </div>
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Cantidad Esperada</div>
-      <input type="number" id="rec-qty-esperada-${n}" step="0.001" min="0" placeholder="0.000"
+      <input type="number" id="rec-qty-esperada-${n}" step="0.001" min="0" placeholder="0.000" ${lockAttr}
         value="${espValue}"
-        style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%"
+        style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;width:100%;${lockBg}"
         oninput="calcRecVerificacion()"/>
     </div>
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Recibir Ahora</div>
-      <input type="number" id="rec-qty-${item.producto_id}-${n}" step="0.001" min="0"
+      <input type="number" id="rec-qty-${item.producto_id}-${n}" step="0.001" min="0" ${lockAttr}
         value="${qtyValue}" placeholder="0.000"
         data-prod="${item.producto_id}" data-unidad="${item.unidad||''}" data-costo="${item.precio_unit||0}" data-lote="${lote||''}"
-        style="padding:6px 10px;border:1.5px solid var(--accent);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100%;color:var(--accent)"
+        style="padding:6px 10px;border:1.5px solid var(--accent);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;width:100%;color:var(--accent);${lockBg}"
         oninput="calcRecVerificacion()"/>
     </div>
+    <div style="padding-bottom:6px">${yaGuardado?'<span style="font-size:10px;color:var(--green);font-weight:600">✓ Guardado</span>':''}</div>
   </div>`;
 }
 
@@ -21620,7 +21711,7 @@ function renderRecLoteRowRollos(item, lote, savedItemsDeEsteLote, ocId) {
   const gid = _recRolloGrpCount;
   const rollosExistentes = savedItemsDeEsteLote.map(si => {
     const rollo = si.rollo_id ? (state.rollos||[]).find(r => r.id === si.rollo_id) : null;
-    return { numero: rollo?.numero_rollo || '', peso: Number(si.cantidad||0), packing: si.packing_num || '' };
+    return { numero: rollo?.numero_rollo || '', peso: Number(si.cantidad||0), packing: si.packing_num || '', existing: true };
   });
   const filas = rollosExistentes.length ? rollosExistentes.map(r => renderRecRolloRow(gid, r)).join('') : renderRecRolloRow(gid, null);
   const requiereLote = state.productos.find(p=>p.id===item.producto_id)?.seguimiento === 'lote';
@@ -21645,25 +21736,35 @@ function renderRecLoteRowRollos(item, lote, savedItemsDeEsteLote, ocId) {
 function renderRecRolloRow(gid, r) {
   _recRolloRowCount++;
   const rid = _recRolloRowCount;
+  // Rollos YA GUARDADOS quedan bloqueados al editar — mismo criterio que
+  // renderRecLoteRow (22/Ago/2026). Nunca se re-procesan al guardar; para
+  // devolver un rollo ya recibido se usa el flujo de Devolución, no editar
+  // acá.
+  const yaGuardado = !!r?.existing;
+  const lockAttr   = yaGuardado ? 'disabled' : '';
+  const lockBg     = yaGuardado ? 'background:var(--surface2);color:var(--text3)' : '';
+  const accionCell = yaGuardado
+    ? '<span style="font-size:10px;color:var(--green);font-weight:600;white-space:nowrap">✓ Guardado</span>'
+    : `<button type="button" class="btn btn-ghost btn-sm" style="padding:5px 8px;color:var(--red)" onclick="document.getElementById('rec-rollo-row-${gid}-${rid}').remove();calcRecRolloGrpTotal(${gid})">✕</button>`;
   return `
-  <div id="rec-rollo-row-${gid}-${rid}" style="display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:8px;align-items:end;margin-bottom:6px">
+  <div id="rec-rollo-row-${gid}-${rid}" data-existing="${yaGuardado?'1':'0'}" style="display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:8px;align-items:end;margin-bottom:6px">
     <div>
       <div style="font-size:9px;color:var(--text3)">No. Rollo</div>
-      <input type="text" id="rec-rollo-numero-${gid}-${rid}" value="${r?.numero||''}" placeholder="Ej. R-001"
-        style="padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-family:'DM Mono',monospace;font-size:12px;width:100%"/>
+      <input type="text" id="rec-rollo-numero-${gid}-${rid}" value="${r?.numero||''}" placeholder="Ej. R-001" ${lockAttr}
+        style="padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-family:'DM Mono',monospace;font-size:12px;width:100%;${lockBg}"/>
     </div>
     <div>
       <div style="font-size:9px;color:var(--text3)">Peso (kg)</div>
-      <input type="number" id="rec-rollo-peso-${gid}-${rid}" step="0.001" min="0" value="${r?.peso?r.peso.toFixed(3):''}" placeholder="0.000"
-        style="padding:5px 8px;border:1.5px solid var(--accent);border-radius:5px;font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:var(--accent);width:100%"
+      <input type="number" id="rec-rollo-peso-${gid}-${rid}" step="0.001" min="0" value="${r?.peso?r.peso.toFixed(3):''}" placeholder="0.000" ${lockAttr}
+        style="padding:5px 8px;border:1.5px solid var(--accent);border-radius:5px;font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:var(--accent);width:100%;${lockBg}"
         oninput="calcRecRolloGrpTotal(${gid})"/>
     </div>
     <div>
       <div style="font-size:9px;color:var(--text3)">No. Packing List</div>
-      <input type="text" id="rec-rollo-pl-${gid}-${rid}" value="${r?.packing||''}" placeholder="Opcional"
-        style="padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-family:'DM Mono',monospace;font-size:12px;width:100%"/>
+      <input type="text" id="rec-rollo-pl-${gid}-${rid}" value="${r?.packing||''}" placeholder="Opcional" ${lockAttr}
+        style="padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-family:'DM Mono',monospace;font-size:12px;width:100%;${lockBg}"/>
     </div>
-    <button type="button" class="btn btn-ghost btn-sm" style="padding:5px 8px;color:var(--red)" onclick="document.getElementById('rec-rollo-row-${gid}-${rid}').remove();calcRecRolloGrpTotal(${gid})">✕</button>
+    ${accionCell}
   </div>`;
 }
 
@@ -21965,7 +22066,10 @@ async function saveRecepcion() {
     // Read from new lote rows: rec-lote-val-N, rec-qty-{prod}-N, rec-pl-val-N
     // (el No. de Packing List se ingresa por lote, no un único valor de header).
     document.querySelectorAll('[id^="rec-lote-val-"]').forEach(el => {
-      const n      = el.id.replace('rec-lote-val-','');
+      const n = el.id.replace('rec-lote-val-','');
+      // Filas ya guardadas (bloqueadas al editar) se ignoran por completo —
+      // nunca se reprocesan, evita duplicar cantidad/costo en inventario.
+      if (document.getElementById(`rec-lote-row-${n}`)?.dataset.existing === '1') return;
       const lote   = el.value.trim() || null;
       const prodId = el.dataset.prod;
       const unidad = el.dataset.unidad || '';
@@ -22000,6 +22104,9 @@ async function saveRecepcion() {
       const lote   = document.getElementById(`rec-rollogrp-lote-${gid}`)?.value.trim() || null;
       grp.querySelectorAll(`[id^="rec-rollo-numero-${gid}-"]`).forEach(numEl => {
         const rid    = numEl.id.replace(`rec-rollo-numero-${gid}-`,'');
+        // Filas ya guardadas (bloqueadas al editar) se ignoran — nunca se
+        // reprocesan, evita crear un rollo duplicado.
+        if (document.getElementById(`rec-rollo-row-${gid}-${rid}`)?.dataset.existing === '1') return;
         const numero = numEl.value.trim();
         const peso   = parseFloat(document.getElementById(`rec-rollo-peso-${gid}-${rid}`)?.value)||0;
         const pl     = document.getElementById(`rec-rollo-pl-${gid}-${rid}`)?.value.trim() || null;
@@ -22058,9 +22165,16 @@ async function saveRecepcion() {
     // Resumen de No. de PL para el header (informativo — la fuente real es por línea).
     const packingRollup = [...new Set(recItems.map(it=>it.packing_num).filter(Boolean))].join(', ') || null;
 
-    // No permitir recibir, por producto, más de lo pedido en la OC. Si esta
-    // recepción ya existía (se está reconfirmando), se resta su propio aporte
-    // anterior para no contarlo dos veces.
+    // Tolerancia de sobre-recepción (22/Ago/2026, a pedido explícito —
+    // "hay veces por humedad o mejor eficiencia que se produce un poco
+    // más de lo estipulado por la merma"). No se compara contra
+    // reabastecimiento (eso es un tema de insumo, no de producto
+    // recibido) — se compara contra lo PEDIDO en la OC, con 3% de margen
+    // automático. Si se excede ese 3%, se exige justificación manual
+    // (texto obligatorio) antes de continuar — queda guardada en las
+    // notas de la recepción para auditoría.
+    const TOLERANCIA_SOBRE_RECEPCION = 0.03;
+    let notasOverride = '';
     {
       const existingRecCheck = (state.ocRecepciones||[]).find(r => r.numero===numero && r.oc_id===ocId);
       const prevItemsThisRec = existingRecCheck
@@ -22075,10 +22189,21 @@ async function saveRecepcion() {
         const yaRecibidoOtras = ocRecibidoQty(ocId, prodId) -
           prevItemsThisRec.filter(x=>x.producto_id===prodId).reduce((s,x)=>s+Number(x.cantidad||0),0);
         const disponible = pedido - yaRecibidoOtras;
-        if (nuevoPorProducto[prodId] > disponible + 0.001) {
-          const prod = state.productos.find(p=>p.id===prodId);
-          toast(`No puedes recibir ${nuevoPorProducto[prodId].toFixed(3)} ${ocItem.unidad||''} de ${prod?.description||'este producto'}: ya está recibido ${yaRecibidoOtras.toFixed(3)} de ${pedido.toFixed(3)} pedidos (disponible: ${Math.max(0,disponible).toFixed(3)}).`,'error');
+        const disponibleConTolerancia = (pedido * (1 + TOLERANCIA_SOBRE_RECEPCION)) - yaRecibidoOtras;
+        const prod = state.productos.find(p=>p.id===prodId);
+
+        if (nuevoPorProducto[prodId] > disponibleConTolerancia + 0.001) {
+          // Excede incluso la tolerancia — bloquea, igual que antes.
+          toast(`No puedes recibir ${nuevoPorProducto[prodId].toFixed(3)} ${ocItem.unidad||''} de ${prod?.description||'este producto'}: excede incluso la tolerancia del 3% (ya recibido ${yaRecibidoOtras.toFixed(3)} de ${pedido.toFixed(3)} pedidos — máximo con tolerancia: ${Math.max(0,disponibleConTolerancia).toFixed(3)}).`,'error');
           return;
+        }
+        if (nuevoPorProducto[prodId] > disponible + 0.001) {
+          // Dentro de la tolerancia pero por encima de lo pedido — exige
+          // justificación manual antes de continuar.
+          const exceso = nuevoPorProducto[prodId] - disponible;
+          const motivo = prompt(`Vas a recibir ${exceso.toFixed(3)} ${ocItem.unidad||''} más de lo pedido para ${prod?.description||'este producto'} (dentro del 3% de tolerancia). Escribí el motivo (ej. "humedad", "mejor eficiencia del proceso") para continuar:`);
+          if (!motivo || !motivo.trim()) { toast('Se requiere un motivo para recibir por encima de lo pedido — recepción cancelada.','error'); return; }
+          notasOverride += `${notasOverride?' | ':''}Sobre-recepción ${prod?.description||prodId}: +${exceso.toFixed(3)} ${ocItem.unidad||''} — motivo: ${motivo.trim()}`;
         }
       }
     }
@@ -22087,8 +22212,9 @@ async function saveRecepcion() {
     const existingRec = (state.ocRecepciones||[]).find(r => r.numero===numero && r.oc_id===ocId);
     let rec;
     if (existingRec) {
+      const notasFinal = [existingRec.notas, notasOverride].filter(Boolean).join(' | ') || null;
       const { data, error:e1 } = await sb.from('erp_oc_recepciones')
-        .update({ status:'completada', bodega_id: bodega_id||null, envio_numero: envioHdr||null, packing_num: packingRollup })
+        .update({ status:'completada', bodega_id: bodega_id||null, envio_numero: envioHdr||null, packing_num: packingRollup, notas: notasFinal })
         .eq('id', existingRec.id).select().single();
       if (e1) { toast('Error actualizando recepción: '+e1.message,'error'); return; }
       rec = data;
@@ -22098,6 +22224,7 @@ async function saveRecepcion() {
       const { data, error:e1 } = await sb.from('erp_oc_recepciones').insert({
         oc_id: ocId, numero, fecha, status: 'completada',
         bodega_id: bodega_id||null, envio_numero: envioHdr||null, packing_num: packingRollup,
+        notas: notasOverride || null,
       }).select().single();
       if (e1) { toast('Error creando recepción: '+e1.message,'error'); return; }
       rec = data;
