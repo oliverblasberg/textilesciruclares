@@ -1836,10 +1836,19 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
            acá — mismo concepto que Recepciones (clic en el título abre el
            detalle de solo lectura con Imprimir Albarán / Editar). -->
       <div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Reabastecimientos</div>
-      <div class="table-wrap">
+      <div class="table-wrap" style="margin-bottom:18px">
         <table>
           <thead><tr><th>No.</th><th>Fecha</th><th>Insumo</th><th style="text-align:right">Cantidad</th></tr></thead>
           <tbody id="oc-panel-reabastecimientos"></tbody>
+        </table>
+      </div>
+      <!-- Devoluciones (22/Ago/2026, a pedido explícito) — junta DEV de
+           Recepción (REC) y de Reabastecimiento (REA) ligados a esta OC. -->
+      <div style="font-size:10px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Devoluciones</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>No.</th><th>Origen</th><th>Fecha</th></tr></thead>
+          <tbody id="oc-panel-devoluciones"></tbody>
         </table>
       </div>
     </div>
@@ -5592,6 +5601,25 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   </div>
 </div>
 
+<!-- VER DEVOLUCIÓN (DEV) MODAL — solo lectura, unifica devoluciones de
+     Recepción (REC) y de Reabastecimiento (REA). 22/Ago/2026, a pedido
+     explícito. -->
+<div class="modal-overlay" id="modal-ver-devolucion">
+  <div class="modal modal-lg" style="max-width:800px;width:95vw">
+    <div class="modal-header">
+      <div class="modal-title" id="vdev-title">Devolución</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="imprimirDevolucion(currentVerDevolucionNum)">🖨 Imprimir Albarán</button>
+        <button class="modal-close" onclick="closeModal('modal-ver-devolucion')">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" id="vdev-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-ver-devolucion')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- VER ORDEN DE VENTA (OV) MODAL -->
 <div class="modal-overlay" id="modal-ver-pedido">
   <div class="modal modal-lg" style="max-width:90vw;width:90vw;max-height:90vh">
@@ -5716,7 +5744,18 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 <div id="toast"></div>
 
-<script>
+<script type="module">
+// ═══ MÓDULOS (22/Ago/2026, Fase 1 de modularización a ES Modules
+// nativos — a pedido explícito). Sin bundler, sin build step: el
+// navegador carga esto directo. Netlify sirve /js/utils.js como
+// archivo estático igual que index.html, sin cambios al pipeline de
+// deploy. IMPORTANTE: type="module" exige servir por http(s) — no abrir
+// index.html directo desde el disco (file://) al probar localmente. ═══
+import {
+  MESES_ABREV, fmtDate, fmtDateCorto, fmtMesAbrev,
+  fmtMoney, fmtGTQ, fmtUSD, fmtKg, today, fmtNum,
+} from './js/utils.js';
+
 // ═══ CONFIG ═══
 const SUPABASE_URL = 'https://saskshdgrcucflnrgxqh.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhc2tzaGRncmN1Y2ZsbnJneHFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyNDI2OTEsImV4cCI6MjA5ODgxODY5MX0.4GRz1RFFswRzZm-v6WVhlHHXWrmgKNiL8A9CbPZxofs';
@@ -6081,41 +6120,11 @@ function toast(msg, type='success') {
 // Único punto de conversión — cualquier pantalla que muestre una fecha debe
 // pasar por aquí (o por fmtDateCorto/fmtMesAbrev) en vez de armar el string
 // a mano, para que un cambio de formato futuro solo se edite en un lugar.
-const MESES_ABREV = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
-function fmtDate(d) {
-  if (!d) return '—';
-  const iso = d.split('T')[0];
-  const [y,m,day] = iso.split('-');
-  const mi = parseInt(m,10) - 1;
-  if (!y || !day || !MESES_ABREV[mi]) return iso; // fecha no reconocida: se muestra tal cual (fallback seguro)
-  return `${day}/${MESES_ABREV[mi]}/${y}`;
-}
-// Variante compacta sin año — para espacios muy reducidos (ej. topbar de TC).
-function fmtDateCorto(d) {
-  if (!d) return '—';
-  const iso = d.split('T')[0];
-  const [y,m,day] = iso.split('-');
-  const mi = parseInt(m,10) - 1;
-  if (!day || !MESES_ABREV[mi]) return iso;
-  return `${day}/${MESES_ABREV[mi]}`;
-}
-// "aaaa-mm" (ej. de un <input type="month"> o de agrupar movimientos por
-// mes) -> "Mmm/aaaa" (ej. 08/2026 -> Ago/2026).
-function fmtMesAbrev(ym) {
-  if (!ym) return '—';
-  const [y,m] = ym.split('-');
-  const mi = parseInt(m,10) - 1;
-  if (!y || !MESES_ABREV[mi]) return ym;
-  return `${MESES_ABREV[mi]}/${y}`;
-}
-function fmtMoney(n, moneda='GTQ') {
-  const num = Number(n||0).toLocaleString('es-GT',{minimumFractionDigits:2,maximumFractionDigits:2});
-  return moneda === 'USD' ? '$' + num : 'Q' + num;
-}
-function fmtGTQ(n) { return fmtMoney(n, 'GTQ'); }
-function fmtUSD(n) { return fmtMoney(n, 'USD'); }
-function fmtKg(n) { return Number(n||0).toLocaleString('es-GT',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' kg'; }
-function today() { return new Date().toISOString().split('T')[0]; }
+//
+// MÓDULO (22/Ago/2026, Fase 1 de modularización — a pedido explícito):
+// MESES_ABREV, fmtDate, fmtDateCorto, fmtMesAbrev, fmtMoney, fmtGTQ,
+// fmtUSD, fmtKg, today, y más abajo fmtNum, se movieron a js/utils.js —
+// se importan al inicio de este script (ver <script type="module">).
 
 // Valor por defecto para un <input type="datetime-local"> — hora LOCAL, no
 // UTC (a diferencia de today()/toISOString(), que sí es UTC y no aplica
@@ -6729,6 +6738,18 @@ function verPedido(id) {
       </table>
     </div>
     ${p.notes ? `<div style="margin-top:16px;font-size:12px;color:var(--text2)"><strong>Notas:</strong> ${p.notes}</div>` : ''}
+
+    <!-- Devoluciones (22/Ago/2026, a pedido explícito). Hoy siempre vacía
+         — no existe todavía un flujo de devolución de venta/despacho, solo
+         de Recepción (OC) y Reabastecimiento. Se deja lista para cuando se
+         construya esa funcionalidad. -->
+    <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin:20px 0 8px">Devoluciones</div>
+    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--surface2)"><th style="padding:7px 12px;text-align:left;font-size:11px">No.</th><th style="padding:7px 12px;text-align:left;font-size:11px">Origen</th><th style="padding:7px 12px;text-align:left;font-size:11px">Fecha</th></tr></thead>
+        <tbody><tr><td colspan="3" style="text-align:center;color:var(--text3);padding:12px;font-size:12px">Sin devoluciones — no hay flujo de devolución de venta todavía</td></tr></tbody>
+      </table>
+    </div>
   `;
 
   const yaPlanificado = (state.op||[]).some(o => o.ov_id === id) || (state.oc||[]).some(o => o.ov_id === id);
@@ -13248,7 +13269,28 @@ function showOPDetail(id) {
               </tr>`;
             }).join('')}</tbody>
           </table>
-        </div>` : ''}`;
+        </div>` : ''}
+
+        ${(() => {
+          // Devoluciones (22/Ago/2026, a pedido explícito) — solo tipo REA
+          // en OP hoy (no existe todavía devolución de "Recepción de Tela"
+          // propia). Se agrupan y renderizan igual criterio que en OC.
+          const devsOP = devolucionesREADe('op', id);
+          return `
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Devoluciones</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>No.</th><th>Origen</th><th>Fecha</th></tr></thead>
+            <tbody>${devsOP.length
+              ? devsOP.map(d => `<tr style="cursor:pointer" onclick="verDevolucion('${d.numero}')">
+                  <td class="td-mono" style="font-size:12px;font-weight:700;color:var(--accent)">${d.numero}</td>
+                  <td style="font-size:12px">${d.origen}</td>
+                  <td style="font-size:12px">${d.fecha ? fmtDate(d.fecha) : '—'}</td>
+                </tr>`).join('')
+              : '<tr><td colspan="3" style="text-align:center;color:var(--text3);padding:12px">Sin devoluciones</td></tr>'}</tbody>
+          </table>
+        </div>`;
+        })()}`;
   document.getElementById('op-detail-footer-actions').innerHTML =
     op?.estado==='borrador' ? `
       <button class="btn btn-ghost btn-sm" onclick="closeModal('modal-op-detail');editOP('${id}')">✎ Editar</button>
@@ -17771,10 +17813,7 @@ function renderStock() {
     </tr>`;
 }
 
-function fmtNum(n) {
-  const num = Number(n || 0);
-  return num % 1 === 0 ? num.toLocaleString('es-GT') : num.toFixed(2);
-}
+// fmtNum() se movió a js/utils.js (ver import al inicio del script).
 
 function openStockDetalle(productoId) {
   const prod = state.productos.find(p => p.id === productoId);
@@ -19314,6 +19353,241 @@ function imprimirFacturaOC(facturaId) {
   setTimeout(()=>win.print(), 600);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// DEVOLUCIONES — sección unificada (22/Ago/2026, a pedido explícito):
+// hay dos orígenes posibles de un DEV — devolución de Recepción de OC
+// (erp_oc_recepcion_items estado='devuelto') y devolución de
+// Reabastecimiento (erp_reabastecimiento_devoluciones). Ambas comparten
+// el mismo prefijo DEV-YYYY-NNNN pero son secuencias independientes (ya
+// confirmado con Oliver que no hace falta unificarlas). Esta sección los
+// junta para mostrarlos donde corresponda: OC ve ambos tipos; OP solo ve
+// los de Reabastecimiento (no existe todavía devolución de "Recepción de
+// Tela" propia); OV no tiene devoluciones todavía (no se ha construido
+// flujo de devolución de venta) — la sección se deja lista mostrando
+// "Sin devoluciones", a la espera de esa funcionalidad futura.
+// ═══════════════════════════════════════════════════════════════════
+
+// Devoluciones tipo REC (de Recepción de OC) ligadas a una OC específica.
+function devolucionesRECDeOC(ocId) {
+  const recIds = (state.ocRecepciones||[]).filter(r => r.oc_id === ocId).map(r => r.id);
+  const items = (state.ocRecepcionItems||[]).filter(x =>
+    x.estado === 'devuelto' && x.numero_devolucion && recIds.includes(x.recepcion_id));
+  const numeros = [...new Set(items.map(x => x.numero_devolucion))];
+  return numeros.map(num => {
+    const rows = items.filter(x => x.numero_devolucion === num);
+    const mov  = (state.movimientos||[]).find(m => m.referencia_tipo==='DEV-OC' && m.referencia_id===num);
+    return { numero: num, origen: 'REC', fecha: mov?.fecha || null, rows };
+  });
+}
+
+// Devoluciones tipo REA (de Reabastecimiento) ligadas a una OC o una OP.
+function devolucionesREADe(tipoDoc, docId) {
+  const reabIds = (state.reabastecimiento||[])
+    .filter(r => tipoDoc==='oc' ? r.oc_id===docId : r.op_id===docId)
+    .map(r => r.id);
+  const devs = (state.reabastecimientoDevoluciones||[]).filter(d => reabIds.includes(d.reabastecimiento_id));
+  const numeros = [...new Set(devs.map(d => d.numero))];
+  return numeros.map(num => {
+    const rows = devs.filter(d => d.numero === num);
+    return { numero: num, origen: 'REA', fecha: rows[0]?.fecha || null, rows };
+  });
+}
+
+let currentVerDevolucionNum = null;
+
+// Vista de solo lectura de un DEV — resuelve automáticamente si es de
+// origen REC o REA buscando en ambas fuentes (mismo criterio que ya usan
+// verReabastecimiento/verRecepcion).
+function verDevolucion(numero) {
+  currentVerDevolucionNum = numero;
+  const devREA = (state.reabastecimientoDevoluciones||[]).filter(d => d.numero === numero);
+
+  document.getElementById('vdev-title').textContent = numero;
+
+  if (devREA.length) {
+    const primero = devREA[0];
+    const reab = (state.reabastecimiento||[]).find(r => r.id === primero.reabastecimiento_id);
+    const tipoDoc = reab?.oc_id ? 'oc' : 'op';
+    const oc = tipoDoc==='oc' ? state.oc.find(o=>o.id===reab?.oc_id) : null;
+    const op = tipoDoc==='op' ? state.op.find(o=>o.id===reab?.op_id) : null;
+    const insumo = state.productos.find(p=>p.id===reab?.insumo_id);
+    const totalCant = devREA.reduce((s,d)=>s+Number(d.cantidad||0),0);
+    const filas = devREA.map(d => {
+      const r = (state.reabastecimiento||[]).find(x=>x.id===d.reabastecimiento_id);
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px;font-size:13px;font-family:'DM Mono',monospace;color:var(--accent)">${r?.lote||'—'}</td>
+        <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">${Number(d.cantidad||0).toFixed(3)}</td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('vdev-body').innerHTML = `
+      <div style="padding:20px 24px">
+        <div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;margin-bottom:16px;background:var(--surface2);color:var(--text2)">↩️ Devolución de Reabastecimiento — revierte ${reab?.numero||''}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+          <div style="padding:12px 16px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
+            <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Fecha</div>
+            <div style="font-size:14px;font-weight:500">${fmtDate(primero.fecha)}</div>
+          </div>
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+            <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">${tipoDoc==='oc'?'Orden de Compra':'Orden de Producción'}</div>
+            <div style="font-size:14px;font-weight:500;font-family:'DM Mono',monospace">${oc?.numero||op?.numero||'—'}</div>
+          </div>
+          <div style="padding:12px 16px;grid-column:1 / -1">
+            <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Insumo</div>
+            <div style="font-size:14px;font-weight:500">${insumo?.description||insumo?.code||'—'}</div>
+          </div>
+        </div>
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Lotes Devueltos — Total: ${totalCant.toFixed(3)} ${insumo?.unidad||''}</div>
+        <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="background:var(--surface2)"><th style="padding:7px 12px;text-align:left;font-size:11px">Lote</th><th style="padding:7px 12px;text-align:right;font-size:11px">Cantidad</th></tr></thead>
+            <tbody>${filas}</tbody>
+          </table>
+        </div>
+      </div>`;
+    openModal('modal-ver-devolucion');
+    return;
+  }
+
+  // Si no se encontró en REA, buscar en REC (Recepción de OC)
+  const itemsREC = (state.ocRecepcionItems||[]).filter(x => x.numero_devolucion === numero && x.estado==='devuelto');
+  if (itemsREC.length) {
+    const primero = itemsREC[0];
+    const rec = (state.ocRecepciones||[]).find(r => r.id === primero.recepcion_id);
+    const oc  = state.oc.find(o => o.id === rec?.oc_id);
+    const mov = (state.movimientos||[]).find(m => m.referencia_tipo==='DEV-OC' && m.referencia_id===numero);
+    const totalCant = itemsREC.reduce((s,x)=>s+Math.abs(Number(x.cantidad||0)),0);
+    const filas = itemsREC.map(x => {
+      const prod = state.productos.find(p=>p.id===x.producto_id);
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px;font-size:13px">${prod?.description||prodName(x.producto_id)}</td>
+        <td style="padding:8px 12px;font-size:13px;font-family:'DM Mono',monospace;color:var(--accent)">${x.lote||'—'}</td>
+        <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">${Math.abs(Number(x.cantidad||0)).toFixed(3)} ${x.unidad||''}</td>
+        <td style="padding:8px 12px;font-size:12px;color:var(--text2)">${x.motivo_devolucion||'—'}</td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('vdev-body').innerHTML = `
+      <div style="padding:20px 24px">
+        <div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;margin-bottom:16px;background:var(--surface2);color:var(--text2)">↩️ Devolución de Recepción — revierte ${rec?.numero||''}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+          <div style="padding:12px 16px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
+            <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Fecha</div>
+            <div style="font-size:14px;font-weight:500">${mov?.fecha ? fmtDate(mov.fecha) : '—'}</div>
+          </div>
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+            <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Orden de Compra</div>
+            <div style="font-size:14px;font-weight:500;font-family:'DM Mono',monospace">${oc?.numero||'—'}</div>
+          </div>
+        </div>
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Líneas Devueltas — Total: ${totalCant.toFixed(3)}</div>
+        <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="background:var(--surface2)">
+              <th style="padding:7px 12px;text-align:left;font-size:11px">Producto</th>
+              <th style="padding:7px 12px;text-align:left;font-size:11px">Lote</th>
+              <th style="padding:7px 12px;text-align:right;font-size:11px">Cantidad</th>
+              <th style="padding:7px 12px;text-align:left;font-size:11px">Motivo</th>
+            </tr></thead>
+            <tbody>${filas}</tbody>
+          </table>
+        </div>
+      </div>`;
+    openModal('modal-ver-devolucion');
+    return;
+  }
+
+  toast('Devolución no encontrada','error');
+}
+
+// Imprime el Albarán de una devolución — mismo patrón que
+// imprimirRecepcion()/imprimirReabastecimiento(), pero unificado para
+// ambos orígenes (REC/REA).
+function imprimirDevolucion(numero) {
+  const devREA = (state.reabastecimientoDevoluciones||[]).filter(d => d.numero === numero);
+  const itemsREC = devREA.length ? [] : (state.ocRecepcionItems||[]).filter(x => x.numero_devolucion === numero && x.estado==='devuelto');
+  if (!devREA.length && !itemsREC.length) { toast('Devolución no encontrada','error'); return; }
+
+  let tituloOrigen, fechaDoc, refDoc, filasHtml, headerCols;
+  if (devREA.length) {
+    const primero = devREA[0];
+    const reab = (state.reabastecimiento||[]).find(r => r.id === primero.reabastecimiento_id);
+    const tipoDoc = reab?.oc_id ? 'oc' : 'op';
+    const oc = tipoDoc==='oc' ? state.oc.find(o=>o.id===reab?.oc_id) : null;
+    const op = tipoDoc==='op' ? state.op.find(o=>o.id===reab?.op_id) : null;
+    const insumo = state.productos.find(p=>p.id===reab?.insumo_id);
+    tituloOrigen = `Reversa de Reabastecimiento ${reab?.numero||''}`;
+    fechaDoc = primero.fecha;
+    refDoc = oc?.numero || op?.numero || '—';
+    headerCols = '<th>Lote</th><th style="text-align:right">Cantidad</th>';
+    filasHtml = devREA.map(d => {
+      const r = (state.reabastecimiento||[]).find(x=>x.id===d.reabastecimiento_id);
+      return `<tr><td>${r?.lote||'—'}</td><td class="num">${Number(d.cantidad||0).toFixed(3)} ${insumo?.unidad||''}</td></tr>`;
+    }).join('');
+  } else {
+    const primero = itemsREC[0];
+    const rec = (state.ocRecepciones||[]).find(r => r.id === primero.recepcion_id);
+    const oc  = state.oc.find(o => o.id === rec?.oc_id);
+    const mov = (state.movimientos||[]).find(m => m.referencia_tipo==='DEV-OC' && m.referencia_id===numero);
+    tituloOrigen = `Reversa de Recepción ${rec?.numero||''}`;
+    fechaDoc = mov?.fecha;
+    refDoc = oc?.numero || '—';
+    headerCols = '<th>Producto</th><th>Lote</th><th style="text-align:right">Cantidad</th><th>Motivo</th>';
+    filasHtml = itemsREC.map(x => {
+      const prod = state.productos.find(p=>p.id===x.producto_id);
+      return `<tr><td>${prod?.description||''}</td><td>${x.lote||'—'}</td><td class="num">${Math.abs(Number(x.cantidad||0)).toFixed(3)} ${x.unidad||''}</td><td>${x.motivo_devolucion||'—'}</td></tr>`;
+    }).join('');
+  }
+
+  const win = window.open('','_blank','width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8"/>
+    <title>Albarán ${numero}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Inter',sans-serif;font-size:12px;color:#1A1C21;padding:32px;background:#fff}
+      .doc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;padding-bottom:18px;border-bottom:2px solid #101820}
+      .brand{font-size:11px;color:#5E6470;margin-top:4px}
+      .doc-num{font-size:26px;font-weight:700;color:#C84B2F;font-family:monospace}
+      .two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin:20px 0}
+      .info-row{display:flex;flex-direction:column;margin-bottom:6px}
+      .info-label{font-size:9px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9EA4B0;margin-bottom:1px}
+      .info-val{font-size:12px;font-weight:500;color:#1A1C21}
+      .section-title{font-size:9px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;color:#9EA4B0;margin:24px 0 8px;padding-top:16px;border-top:2px solid #101820}
+      table{width:100%;border-collapse:collapse;margin-bottom:12px}
+      thead th{background:#F4F5F7;padding:6px 10px;text-align:left;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5E6470;border-bottom:1px solid #E2E4E9}
+      tbody td{padding:6px 10px;border-bottom:1px solid #F0F1F3;font-size:11px}
+      tbody tr:last-child td{border-bottom:none}
+      .num{text-align:right;font-family:monospace}
+      .firmas{display:grid;grid-template-columns:1fr 1fr;gap:48px;margin-top:64px}
+      .firma-linea{border-top:1px solid #1A1C21;padding-top:6px;text-align:center;font-size:10px;color:#5E6470}
+      @media print{body{padding:16px} @page{margin:12mm}}
+    </style>
+  </head><body>
+    <div class="doc-header">
+      <div>
+        <h1 style="font-size:20px;font-weight:700">Albarán de Devolución</h1>
+        <div class="brand">TEXTILES CIRCULARES, S.A. — ${tituloOrigen}</div>
+      </div>
+      <div style="text-align:right"><div class="doc-num">${numero}</div></div>
+    </div>
+    <div class="two-col">
+      <div class="info-row"><div class="info-label">Fecha</div><div class="info-val">${fechaDoc ? fmtDate(fechaDoc) : '—'}</div></div>
+      <div class="info-row"><div class="info-label">Documento de Origen</div><div class="info-val">${refDoc}</div></div>
+    </div>
+    <div class="section-title" style="border-top:none;padding-top:0">Detalle Devuelto</div>
+    <table><thead><tr>${headerCols}</tr></thead><tbody>${filasHtml}</tbody></table>
+    <div class="firmas">
+      <div class="firma-linea">Entregado por</div>
+      <div class="firma-linea">Recibido por</div>
+    </div>
+  </body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
+}
+
 function renderOCPanel(ocId) {
   const items = state.ocItems.filter(i=>i.oc_id===ocId);
   // Lines
@@ -19426,6 +19700,16 @@ function renderOCPanel(ocId) {
       <td class="td-mono" style="text-align:right;font-size:12px;font-weight:600">${totalCant.toFixed(3)}</td>
     </tr>`;
   }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:12px">Sin reabastecimientos</td></tr>';
+
+  // Devoluciones — junta REC (Recepción) + REA (Reabastecimiento).
+  const devsOC = [...devolucionesRECDeOC(ocId), ...devolucionesREADe('oc', ocId)];
+  document.getElementById('oc-panel-devoluciones').innerHTML = devsOC.length
+    ? devsOC.map(d => `<tr style="cursor:pointer" onclick="verDevolucion('${d.numero}')">
+        <td class="td-mono" style="font-size:12px;font-weight:700;color:var(--accent)">${d.numero}</td>
+        <td style="font-size:12px">${d.origen}</td>
+        <td style="font-size:12px">${d.fecha ? fmtDate(d.fecha) : '—'}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" style="text-align:center;color:var(--text3);padding:12px">Sin devoluciones</td></tr>';
 }
 
 // ── SC LINES ──
@@ -20284,7 +20568,15 @@ async function confirmarRecepcionPL() {
   toast(`✓ ${recibidas.length} cajas recibidas · ${totalPN.toFixed(3)} kg${noRecibidas.length>0?' · '+noRecibidas.length+' no recibidas':''}`);
 }
 
-function confirmPL() { confirmarRecepcionPL(); }
+// (22/Ago/2026, barrida de sistema): existía un confirmPL() duplicado acá
+// — un delegador de una línea que llamaba a confirmarRecepcionPL(). Nunca
+// se ejecutaba en producción (la declaración real, más abajo, siempre
+// ganaba por redeclaración) y ningún onclick="" lo llamaba por su propio
+// nombre — se eliminó. Al convertir el script a type="module" (Fase 1 de
+// modularización), esta duplicación pasó de ser inofensiva a un
+// SyntaxError fatal ("Identifier 'confirmPL' has already been declared"),
+// porque los módulos de JS no permiten redeclarar el mismo identificador
+// en el mismo scope, a diferencia del script clásico anterior.
 
 function updatePLBadge(productoId, totalCajas, recibidas) {
   const resumen = document.getElementById(`pl-resumen-${productoId}`);
@@ -23585,23 +23877,12 @@ async function _guardarTC(datos, fuente = 'Banguat') {
   return true;
 }
 
-// Editar un TC del historial
-function editTC(id) {
-  const t = state.tiposCambio.find(x => x.id === id);
-  if (!t) return;
-  showTCModal(Number(t.referencia), 'Edición manual', false);
-  setTimeout(() => {
-    // Force open edit field
-    const field = document.getElementById('tc-edit-field');
-    const input = document.getElementById('tc-input-edit');
-    const modal = document.getElementById('modal-tc-confirm');
-    if (field) field.style.display = 'block';
-    if (input) { input.value = t.referencia || ''; input.focus(); input.select(); }
-    if (modal) { modal._tcSugerido = Number(t.referencia); modal._editId = id; }
-    // Override fecha
-    modal._fecha = t.fecha;
-  }, 100);
-}
+// (22/Ago/2026, barrida de sistema): existía un editTC() duplicado acá,
+// usando el flujo viejo de tc-edit-field/tc-input-edit. Nunca se
+// ejecutaba en producción (la declaración real, más abajo con
+// openTCConfirm/tc-manual-notas, siempre ganaba por redeclaración) — se
+// eliminó. Mismo motivo que confirmPL(): en type="module" esto pasó de
+// inofensivo a SyntaxError fatal.
 
 // openTCConfirm — alias for backwards compat
 function openTCConfirm() { fetchTipoCambio(true); }
