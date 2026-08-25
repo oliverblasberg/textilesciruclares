@@ -5744,18 +5744,16 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 
 <div id="toast"></div>
 
-<script type="module">
-// ═══ MÓDULOS (22/Ago/2026, Fase 1 de modularización a ES Modules
-// nativos — a pedido explícito). Sin bundler, sin build step: el
-// navegador carga esto directo. Netlify sirve /js/utils.js como
-// archivo estático igual que index.html, sin cambios al pipeline de
-// deploy. IMPORTANTE: type="module" exige servir por http(s) — no abrir
-// index.html directo desde el disco (file://) al probar localmente. ═══
-import {
-  MESES_ABREV, fmtDate, fmtDateCorto, fmtMesAbrev,
-  fmtMoney, fmtGTQ, fmtUSD, fmtKg, today, fmtNum,
-} from './js/utils.js';
+<!-- ═══ MÓDULOS PROPIOS (22/Ago/2026, división del monolito) ═══
+     Scripts CLÁSICOS (no type="module") cargados ANTES del script
+     principal. Se ejecutan en orden y sincrónicamente, y sus funciones
+     de nivel superior quedan globales — así los cientos de
+     onclick="funcName()" del HTML siguen funcionando sin cambios.
+     (Un type="module" no expone sus funciones globalmente y además
+     corre diferido, lo que rompe el arranque — ya se comprobó en vivo.) -->
+<script src="js/utils.js"></script>
 
+<script>
 // ═══ CONFIG ═══
 const SUPABASE_URL = 'https://saskshdgrcucflnrgxqh.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhc2tzaGRncmN1Y2ZsbnJneHFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyNDI2OTEsImV4cCI6MjA5ODgxODY5MX0.4GRz1RFFswRzZm-v6WVhlHHXWrmgKNiL8A9CbPZxofs';
@@ -6116,15 +6114,6 @@ function toast(msg, type='success') {
 }
 
 // ═══ HELPERS ═══
-// Formato estándar de fecha en toda la app: dd/Mmm/aaaa (ej. 08/Ago/2026).
-// Único punto de conversión — cualquier pantalla que muestre una fecha debe
-// pasar por aquí (o por fmtDateCorto/fmtMesAbrev) en vez de armar el string
-// a mano, para que un cambio de formato futuro solo se edite en un lugar.
-//
-// MÓDULO (22/Ago/2026, Fase 1 de modularización — a pedido explícito):
-// MESES_ABREV, fmtDate, fmtDateCorto, fmtMesAbrev, fmtMoney, fmtGTQ,
-// fmtUSD, fmtKg, today, y más abajo fmtNum, se movieron a js/utils.js —
-// se importan al inicio de este script (ver <script type="module">).
 
 // Valor por defecto para un <input type="datetime-local"> — hora LOCAL, no
 // UTC (a diferencia de today()/toISOString(), que sí es UTC y no aplica
@@ -17813,7 +17802,7 @@ function renderStock() {
     </tr>`;
 }
 
-// fmtNum() se movió a js/utils.js (ver import al inicio del script).
+// fmtNum() vive ahora en js/utils.js (cargado antes de este script).
 
 function openStockDetalle(productoId) {
   const prod = state.productos.find(p => p.id === productoId);
