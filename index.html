@@ -22350,13 +22350,32 @@ async function saveRecepcion() {
     // ya vive en `item.costo_unit` (viene de la línea de la OC,
     // costoServPorKg) — el de MP se prorratea desde el total ya asignado en
     // erp_reabastecimiento para esta OC, entre la cantidad total pedida.
+    //
+    // FIX (22/Ago/2026, reportado en vivo — AS-2026-00006): el denominador
+    // anterior era cantidadOCTot (la cantidad total PEDIDA en la OC, ej.
+    // 500 kg de producto terminado) — esto daba un costo/kg absurdamente
+    // bajo cuando solo se había reabastecido parcialmente (ej. 25 kg de MP
+    // para un pedido de 500 → Q502.97/500 = Q1.006/kg, en vez del valor
+    // real ~Q21.73/kg). La fórmula correcta: costo promedio ponderado por
+    // kg de INPUT × cantidadBase × (1 + merma%) = costo por kg de OUTPUT.
+    // Esto es independiente de cuánto se haya pedido en la OC o cuánto se
+    // esté recibiendo ahora — es una propiedad del insumo y la receta.
     const esSubOC = oc?.tipo_oc === 'subcontrato';
     let costoMPPorKgOC = 0;
     if (esSubOC) {
       const reabOC       = (state.reabastecimiento||[]).filter(r => r.oc_id === ocId);
-      const totalMPAsigOC = reabOC.reduce((s,r) => s + Math.max(0, Number(r.cantidad||0)-cantidadDevueltaReab(r.id))*Number(r.costo_unitario||0), 0);
-      const cantidadOCTot = Number(items[0]?.cantidad||0);
-      costoMPPorKgOC = cantidadOCTot > 0 ? totalMPAsigOC / cantidadOCTot : 0;
+      const totalMPCosto = reabOC.reduce((s,r) => s + Math.max(0, Number(r.cantidad||0)-cantidadDevueltaReab(r.id))*Number(r.costo_unitario||0), 0);
+      const totalMPQty   = reabOC.reduce((s,r) => s + Math.max(0, Number(r.cantidad||0)-cantidadDevueltaReab(r.id)), 0);
+      const costoPromPorKgInput = totalMPQty > 0 ? totalMPCosto / totalMPQty : 0;
+      // Merma y cantidadBase de la receta: para producir 1 kg de output se
+      // necesitan cantidadBase × (1+merma%) kg de input — así que el costo
+      // de MP por kg de output = costoInput × cantidadBase × (1+merma%).
+      const recetaOC = oc.receta_id ? (state.recetas||[]).find(r => r.id === oc.receta_id) : null;
+      const recetaLineas = recetaOC ? (state.recetaLineas||[]).filter(l => l.receta_id === recetaOC.id) : [];
+      const lineaMP = recetaLineas[0]; // típicamente 1 sola línea de insumo en subcontrato
+      const cantBase = Number(lineaMP?.cantidad_base||1);
+      const mermaPct = Number(lineaMP?.merma_pct||0);
+      costoMPPorKgOC = costoPromPorKgInput * cantBase * (1 + mermaPct/100);
     }
 
     // Read from new lote rows: rec-lote-val-N, rec-qty-{prod}-N, rec-pl-val-N
