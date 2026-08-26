@@ -5753,6 +5753,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
      corre diferido, lo que rompe el arranque — ya se comprobó en vivo.) -->
 <script src="js/utils.js"></script>
 <script src="js/constantes.js"></script>
+<script src="js/helpers-calculo.js"></script>
 
 <script>
 // ═══ CONFIG ═══
@@ -8351,12 +8352,7 @@ function bancoNomenclatura(cuentaId) {
 // exentos por Decreto 29-89 — quedan fuera automáticamente porque su
 // regimen_isr es 'exento_29_89', no 'opcional_simplificado'.
 // ═══════════════════════════════════════════════════
-function calcRetencionISR(neto) {
-  const n = Number(neto || 0);
-  if (n <= 2500) return 0;
-  if (n <= 30000) return parseFloat((n * 0.05).toFixed(2));
-  return parseFloat((30000 * 0.05 + (n - 30000) * 0.07).toFixed(2));
-}
+// calcRetencionISR() vive ahora en js/helpers-calculo.js
 
 // Retención ISR que corresponde a una factura de OC específica, o 0 si no
 // aplica. El neto se toma de erp_compras.valor_neto (el mismo valor real
@@ -9308,63 +9304,13 @@ function openExtractoUpload() {
   openModal('modal-extracto-upload');
 }
 
-function _normKeyExt(k) { return String(k||'').toLowerCase().trim().normalize('NFD').replace(/[̀-ͯ]/g,''); }
+// _normKeyExt() vive ahora en js/helpers-calculo.js
 
-function _parseNumeroExtracto(v) {
-  if (v === '' || v === null || v === undefined) return 0;
-  if (typeof v === 'number') return v;
-  const s = String(v).trim().replace(/[Qq$\s]/g,'').replace(/,/g,'');
-  const n = parseFloat(s);
-  return isNaN(n) ? 0 : n;
-}
+// _parseNumeroExtracto() vive ahora en js/helpers-calculo.js
 
-function _parseFechaExtracto(v) {
-  if (!v) return '';
-  if (v instanceof Date && !isNaN(v)) return v.toISOString().split('T')[0];
-  const s = String(v).trim();
-  let m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`; // dd/mm/yyyy
-  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
-  return '';
-}
+// _parseFechaExtracto() vive ahora en js/helpers-calculo.js
 
-function normalizarFilasExtracto(rows) {
-  if (!rows.length) return [];
-  const keys = Object.keys(rows[0]);
-  const findKey = (...candidates) => keys.find(k => candidates.some(c => _normKeyExt(k).includes(c)));
-
-  const kFecha = findKey('fecha');
-  const kDesc  = findKey('descripcion','concepto','detalle','glosa');
-  const kRef   = findKey('referencia','documento','doc');
-  const kMonto = findKey('monto','importe','valor');
-  const kCargo = findKey('cargo','debito','debe');
-  const kAbono = findKey('abono','credito','haber');
-
-  const out = [];
-  for (const row of rows) {
-    const fecha = kFecha ? _parseFechaExtracto(row[kFecha]) : '';
-    if (!fecha) continue; // fila sin fecha válida (encabezados, totales, etc.)
-
-    let monto = null;
-    if (kMonto) {
-      monto = _parseNumeroExtracto(row[kMonto]);
-    } else if (kCargo || kAbono) {
-      const cargo = _parseNumeroExtracto(kCargo ? row[kCargo] : 0);
-      const abono = _parseNumeroExtracto(kAbono ? row[kAbono] : 0);
-      monto = (abono||0) - Math.abs(cargo||0);
-    }
-    if (monto === null || isNaN(monto) || monto === 0) continue;
-
-    out.push({
-      fecha,
-      descripcion: kDesc ? String(row[kDesc]||'').trim() : '',
-      referencia: kRef ? String(row[kRef]||'').trim() : '',
-      monto: parseFloat(monto.toFixed(2)),
-    });
-  }
-  return out;
-}
+// normalizarFilasExtracto() vive ahora en js/helpers-calculo.js
 
 function onExtractoFileSelected() {
   const file = document.getElementById('ext-file-input').files[0];
@@ -15026,23 +14972,7 @@ function ctaNombre(id) {
 function ctaById(id) { return state.nomenclatura.find(x => x.id === id); }
 
 // ── Period helpers ──
-function periodoFechas(periodo) {
-  const now = new Date();
-  const y = now.getFullYear(), m = now.getMonth();
-  let desde, hasta;
-  if (periodo === 'mes') {
-    desde = new Date(y, m, 1);
-    hasta = new Date(y, m+1, 0);
-  } else if (periodo === 'trimestre') {
-    const q = Math.floor(m/3);
-    desde = new Date(y, q*3, 1);
-    hasta = new Date(y, q*3+3, 0);
-  } else {
-    desde = new Date(y, 0, 1);
-    hasta = new Date(y, 11, 31);
-  }
-  return { desde: desde.toISOString().slice(0,10), hasta: hasta.toISOString().slice(0,10) };
-}
+// periodoFechas() vive ahora en js/helpers-calculo.js
 
 // ═══════════════════════════════════════════════════
 // DIFERENCIAL CAMBIARIO — Pérdida/Ganancia
@@ -15382,9 +15312,7 @@ async function confirmarAsignacionLotes(idx, insumoId) {
   else { showOCPanel(docId); }
 }
 
-function proveedorPredeterminado(prod) {
-  return (prod?.proveedores_compra||[])[0]?.proveedor_id || null;
-}
+// proveedorPredeterminado() vive ahora en js/helpers-calculo.js
 
 // Costo de conversión (servicio subcontratado) predeterminado de un
 // producto (15/Ago/2026, a pedido explícito): la sección "Costos de
@@ -16543,39 +16471,16 @@ function renderBalanceGeneral() {
 //   por mes, o el Plazo "Este Mes" con el detalle día a día.
 let fcChartInstance = null;
 
-function diasCreditoVenta(credito) {
-  if (!credito || credito === 'inmediato') return 0;
-  const n = parseInt(credito, 10);
-  return isNaN(n) ? 0 : n;
-}
+// diasCreditoVenta() vive ahora en js/helpers-calculo.js
 
 // Fecha de vencimiento de una factura de venta = fecha de emisión + días de crédito.
-function facturaVentaVencimiento(f) {
-  if (!f?.date) return null;
-  const dias = diasCreditoVenta(f.credito);
-  const d = new Date(f.date);
-  d.setDate(d.getDate() + dias);
-  return d.toISOString().slice(0, 10);
-}
+// facturaVentaVencimiento() vive ahora en js/helpers-calculo.js
 
 // Reduce una fecha exacta (yyyy-mm-dd) al bucket del eje X según el
 // intervalo elegido: día = la fecha tal cual, mes = yyyy-mm, año = yyyy.
-function fcBucketKey(fecha, intervalo) {
-  if (!fecha) return null;
-  if (intervalo === 'anio') return fecha.slice(0, 4);
-  if (intervalo === 'mes')  return fecha.slice(0, 7);
-  return fecha;
-}
+// fcBucketKey() vive ahora en js/helpers-calculo.js
 
-function fcBucketLabel(key, intervalo) {
-  if (intervalo === 'anio') return key;
-  if (intervalo === 'mes') {
-    const [y, m] = key.split('-');
-    const mi = parseInt(m, 10) - 1;
-    return `${MESES_ABREV[mi] || m} ${y}`;
-  }
-  return fmtDate(key);
-}
+// fcBucketLabel() vive ahora en js/helpers-calculo.js
 
 // Junta cada factura (ingreso o egreso) como un ítem individual, agrupado
 // por bucket de tiempo — a propósito NO suma los montos de antemano: cada
@@ -17386,96 +17291,13 @@ function exportarKardex() {
  * capas = array de lotes FIFO pendientes [{ cant, costo }]
  * costo_siguiente = costo del próximo lote a consumir (para valoración)
  */
-function calcStockFIFO(movimientos) {
-  // Group and sort by producto_id, then by fecha ASC
-  const porProducto = {};
-  movimientos.forEach(m => {
-    const id = m.producto_id;
-    if (!id) return;
-    if (!porProducto[id]) porProducto[id] = [];
-    porProducto[id].push(m);
-  });
-
-  const resultado = {};
-
-  Object.entries(porProducto).forEach(([id, movs]) => {
-    const sorted = [...movs].sort((a,b) =>
-      (a.fecha||'').localeCompare(b.fecha||'') ||
-      (a.created_at||'').localeCompare(b.created_at||'')
-    );
-
-    const capas = []; // { cant, costo } FIFO queue
-    let entradas = 0, salidas = 0, consignacion = 0, ultimo_costo = 0;
-
-    sorted.forEach(m => {
-      const cant  = Number(m.cantidad || 0);
-      const costo = Number(m.costo_unitario_gtq || m.costo_unitario || 0);
-
-      if (m.tipo === 'entrada' || m.tipo === 'ajuste_positivo') {
-        capas.push({ cant, costo });
-        entradas += cant;
-        if (costo > 0) ultimo_costo = costo;
-
-      } else if (m.tipo === 'consignacion') {
-        // Entra físicamente con costo 0
-        capas.push({ cant, costo: 0 });
-        entradas    += cant;
-        consignacion += cant;
-
-      } else if (m.tipo === 'salida' || m.tipo === 'ajuste_negativo') {
-        salidas += cant;
-        // Consume FIFO layers
-        let porConsumir = cant;
-        while (porConsumir > 0 && capas.length) {
-          const capa = capas[0];
-          if (capa.cant <= porConsumir) {
-            porConsumir -= capa.cant;
-            capas.shift();
-          } else {
-            capa.cant -= porConsumir;
-            porConsumir = 0;
-          }
-        }
-        // If porConsumir > 0, stock went negative (phantom layer)
-        if (porConsumir > 0) {
-          capas.unshift({ cant: -porConsumir, costo: ultimo_costo });
-        }
-      }
-    });
-
-    const saldo      = capas.reduce((s, c) => s + c.cant, 0);
-    const valoracion = capas.reduce((s, c) => s + c.cant * c.costo, 0);
-    // For costo unitario: only consider capas with actual cost (exclude consignacion)
-    const saldo_valorizado    = capas.filter(c => c.costo > 0).reduce((s, c) => s + c.cant, 0);
-    const costo_siguiente = capas.length ? capas[0].costo : ultimo_costo;
-
-    resultado[id] = {
-      saldo, capas, valoracion, entradas, salidas,
-      consignacion, ultimo_costo, costo_siguiente,
-      saldo_valorizado,
-      costo_total: valoracion,
-    };
-  });
-
-  return resultado;
-}
+// calcStockFIFO() vive ahora en js/helpers-calculo.js
 
 /**
  * Calcula el costo de una salida FIFO dado el estado actual de capas.
  * Útil para valorar una salida antes de registrarla.
  */
-function calcCostoSalidaFIFO(capas, cantidad) {
-  let restante = cantidad;
-  let costoTotal = 0;
-  const capasCopia = capas.map(c => ({...c})); // non-destructive
-  for (const capa of capasCopia) {
-    if (restante <= 0) break;
-    const usado = Math.min(capa.cant, restante);
-    costoTotal += usado * capa.costo;
-    restante   -= usado;
-  }
-  return costoTotal;
-}
+// calcCostoSalidaFIFO() vive ahora en js/helpers-calculo.js
 
 /**
  * calcStock — wrapper FIFO que reemplaza el antiguo AVCO.
@@ -17875,13 +17697,7 @@ function nextDevolucionNum() {
   return `DEV-${year}-${String(next).padStart(4,'0')}`;
 }
 
-function nextCorrelativo(prefix, list, field='numero') {
-  const year  = new Date().getFullYear();
-  const nums  = list.filter(x=>(x[field]||'').startsWith(`${prefix}-${year}`))
-                    .map(x=>parseInt((x[field]||'').slice(-4))||0);
-  const next  = (nums.length ? Math.max(...nums) : 0) + 1;
-  return `${prefix}-${year}-${String(next).padStart(4,'0')}`;
-}
+// nextCorrelativo() vive ahora en js/helpers-calculo.js
 
 // ── Helpers ──
 function prodName(id) {
@@ -23414,14 +23230,7 @@ const NOM_GROUPS = [
 ];
 
 // Compute hierarchy depth from code length
-function nomDepth(codigo) {
-  const len = (codigo||'').length;
-  if (len <= 3) return 0;
-  if (len <= 5) return 1;
-  if (len <= 8) return 2;
-  if (len <= 10) return 3;
-  return 4;
-}
+// nomDepth() vive ahora en js/helpers-calculo.js
 
 function renderNomenclatura() {
   const q = (document.getElementById('search-nomenclatura')?.value||'').toLowerCase();
