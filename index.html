@@ -5752,6 +5752,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
      (Un type="module" no expone sus funciones globalmente y además
      corre diferido, lo que rompe el arranque — ya se comprobó en vivo.) -->
 <script src="js/utils.js"></script>
+<script src="js/constantes.js"></script>
 
 <script>
 // ═══ CONFIG ═══
@@ -10611,14 +10612,7 @@ ${f.notes ? `<div class="obs" style="margin-top:16px"><strong>Notas:</strong> ${
 }
 
 // ═══ HILOS ═══
-const HIL_CONSTRUCCION_LABEL = {
-  anillos_peinado: 'Anillos Peinado',
-  anillos_cardado: 'Anillos Cardado',
-  open_end:        'Open End',
-  filamento:       'Filamento',
-  elastano:        'Elastano',
-  otro:            'Otro',
-};
+// HIL_CONSTRUCCION_LABEL vive ahora en js/constantes.js
 
 function renderHilos() {
   const q  = (document.getElementById('search-hilos')?.value||'').toLowerCase();
@@ -11080,14 +11074,7 @@ function nextRecNum() {
 }
 
 // ── Labels ──
-const OP_ESTADO_LABEL = { borrador:'Borrador', confirmada:'Confirmada', en_proceso:'En Proceso', enviado_terceros:'Enviado a Terceros', recibido_terceros:'Recibido de Terceros', completada:'Completada', cancelada:'Cancelada' };
-const OP_ESTADO_COLOR = { borrador:'badge-gray', confirmada:'badge-yellow', en_proceso:'badge-blue', enviado_terceros:'badge-yellow', recibido_terceros:'badge-blue', completada:'badge-green', cancelada:'badge-red' };
-const OP_TIPO_LABEL   = {
-  tejido_interno:     'Tejido Interno',
-  tejido_subcontrato: 'Tejido Subcontrato',
-  tenido_subcontrato: 'Teñido Subcontrato',
-  acabado_subcontrato: 'Acabado Subcontrato',
-};
+// OP_ESTADO_LABEL, OP_ESTADO_COLOR, OP_TIPO_LABEL viven ahora en js/constantes.js
 
 // Helpers de tipo
 const esInterno      = tipo => tipo === 'tejido_interno';
@@ -11141,12 +11128,7 @@ function toggleRecetasProducto(prodId) {
   renderRecetas();
 }
 
-const RECETA_TIPO_BADGE = {
-  tejido_interno:      '<span class="badge badge-green">Tejido Interno</span>',
-  tejido_subcontrato:  '<span class="badge badge-yellow">Tejido Subcontrato</span>',
-  tenido_subcontrato:  '<span class="badge badge-yellow">Teñido Subcontrato</span>',
-  acabado_subcontrato: '<span class="badge badge-yellow">Acabado Subcontrato</span>',
-};
+// RECETA_TIPO_BADGE vive ahora en js/constantes.js
 
 function renderRecetas() {
   const q    = (document.getElementById('search-recetas')?.value||'').toLowerCase();
@@ -14092,7 +14074,7 @@ function ovLabel(p) {
 }
 
 // ═══ LIBRO DE COMPRAS ═══
-const IVA_RATE = 0.12;
+// IVA_RATE vive ahora en js/constantes.js
 
 function calcCompraIVA() {
   const neto  = parseFloat(document.getElementById('cmp-neto').value)||0;
@@ -14632,8 +14614,7 @@ async function deletePrecio(id) {
 }
 
 // ═══ PRODUCTOS ═══
-const PROD_TIPO_LABEL = { almacenable:'Almacenable', servicio:'Servicio', tela:'Almacenable', hilo:'Almacenable', general:'Almacenable' };
-const PROD_TIPO_COLOR = { tela:'badge-green', hilo:'badge-blue', general:'badge-yellow' };
+// PROD_TIPO_LABEL, PROD_TIPO_COLOR viven ahora en js/constantes.js
 
 // ── Tab switching ──
 function switchProdTab(tab, btn) {
@@ -15021,16 +15002,7 @@ async function deleteProducto(id) {
 // MÓDULO CONTABLE COMPLETO
 // ═══════════════════════════════════════════════════
 
-const DIARIO_LABEL = {
-  VENTAS:'Ventas', COBROS:'Cobros', COMPRAS:'Compras',
-  PAGOS:'Pagos', INVENTARIO:'Inventario', GENERAL:'General',
-  CAMBIARIO:'Diferencial Cambiario', MANUFACTURA:'Manufactura',
-};
-const DIARIO_COLOR = {
-  VENTAS:'badge-green', COBROS:'badge-blue', COMPRAS:'badge-yellow',
-  PAGOS:'badge-red', INVENTARIO:'badge-blue', GENERAL:'badge-gray',
-  CAMBIARIO:'badge-yellow', MANUFACTURA:'badge-green',
-};
+// DIARIO_LABEL, DIARIO_COLOR viven ahora en js/constantes.js
 
 // ── Correlativo de asientos ──
 // BUGFIX (debugging en vivo, 13/Ago/2026): mismo problema que
@@ -15077,15 +15049,9 @@ function periodoFechas(periodo) {
 // ═══════════════════════════════════════════════════
 
 // Códigos de cuenta para diferencial cambiario
-const CTA_GANANCIA_CAMBIARIA = '71101002';
-const CTA_PERDIDA_CAMBIARIA  = '71201003';
-const DIARIO_CAMBIARIO       = 'CAMBIARIO';
-
-// Cuentas contables de manufactura
-const CTA_INV_HILO      = '11301001'; // Inventario de Hilo
-const CTA_INV_PROCESO   = '11301002'; // Inventario Producto en Proceso (WIP)
-const CTA_INV_TERMINADO = '11301003'; // Inventario Producto Terminado
-const DIARIO_MANUFACTURA = 'MANUFACTURA';
+// CTA_GANANCIA_CAMBIARIA, CTA_PERDIDA_CAMBIARIA, DIARIO_CAMBIARIO,
+// CTA_INV_HILO, CTA_INV_PROCESO, CTA_INV_TERMINADO, DIARIO_MANUFACTURA
+// viven ahora en js/constantes.js
 
 // Proveedor predeterminado de un producto (14/Ago/2026, a pedido explícito):
 // el campo separado "Proveedor Predeterminado" se eliminó del producto y de
@@ -16660,8 +16626,7 @@ function computeFlujoCajaItems(desde, hasta, intervalo) {
 
 // Paletas para diferenciar cada factura individual dentro de su columna
 // apilada, manteniendo la familia de color (verde=ingreso, rojo=egreso).
-const FC_GREENS = ['#16A34A','#22C55E','#4ADE80','#15803D','#10B981','#059669','#065F46','#86EFAC'];
-const FC_REDS   = ['#DC2626','#EF4444','#F87171','#B91C1C','#F43F5E','#E11D48','#7F1D1D','#FB7185'];
+// FC_GREENS, FC_REDS viven ahora en js/constantes.js
 
 function renderFlujoCajaChart() {
   const canvas = document.getElementById('fc-chart-canvas');
@@ -17072,17 +17037,7 @@ function updateBreadcrumb(pageName) {
 
 let kardexProductoId = null;
 
-const KX_TIPO_LABEL = {
-  entrada:'Entrada', salida:'Salida',
-  ajuste_positivo:'Ajuste +', ajuste_negativo:'Ajuste −',
-  consignacion:'Consignación',
-};
-const KX_TIPO_COLOR = {
-  entrada:'badge-green', salida:'badge-red',
-  ajuste_positivo:'badge-blue', ajuste_negativo:'badge-yellow',
-  consignacion:'badge-blue',
-};
-const KX_ES_ENTRADA = t => ['entrada','ajuste_positivo','consignacion'].includes(t);
+// KX_TIPO_LABEL, KX_TIPO_COLOR, KX_ES_ENTRADA viven ahora en js/constantes.js
 
 function onKardexPeriodoChange() {
   const p = document.getElementById('kardex-periodo')?.value;
@@ -17863,15 +17818,7 @@ function openStockDetalle(productoId) {
 
 // ── OVERRIDE showPage to update breadcrumb ───
 
-const INCOTERMS_LIST = ['EXW','FCA','FAS','FOB','CFR','CIF','CPT','CIP','DAP','DPU','DDP'];
-const TERMINOS_PAGO_LIST = [
-  { value:'inmediato', label:'Pago Inmediato' },
-  { value:'15',  label:'15 días' },
-  { value:'30',  label:'30 días' },
-  { value:'45',  label:'45 días' },
-  { value:'60',  label:'60 días' },
-];
-const TERMINOS_PAGO_LABEL = { inmediato:'Pago Inmediato', '15':'15 días', '30':'30 días', '45':'45 días', '60':'60 días' };
+// INCOTERMS_LIST, TERMINOS_PAGO_LIST, TERMINOS_PAGO_LABEL viven ahora en js/constantes.js
 
 function incotermsOpts(selected='') {
   return '<option value="">— Seleccionar —</option>' +
@@ -17882,15 +17829,7 @@ function terminosPagoOpts(selected='') {
     TERMINOS_PAGO_LIST.map(t=>`<option value="${t.value}"${t.value===selected?' selected':''}>${t.label}</option>`).join('');
 }
 
-const OC_STATUS_COLOR = {
-  borrador:'badge-gray', confirmada:'badge-blue', recibiendo:'badge-yellow',
-  completada:'badge-green', cancelada:'badge-red',
-  enviada:'badge-blue',
-};
-const OC_STATUS_LABEL = {
-  borrador:'Borrador', confirmada:'Confirmada', recibiendo:'Recibiendo',
-  completada:'Completada', cancelada:'Cancelada', enviada:'Enviada',
-};
+// OC_STATUS_COLOR, OC_STATUS_LABEL viven ahora en js/constantes.js
 
 let currentOCId = null;
 // Factura OC actualmente mostrada en el modal "modal-ver-factura-oc" — el
@@ -22367,15 +22306,29 @@ async function saveRecepcion() {
       const totalMPCosto = reabOC.reduce((s,r) => s + Math.max(0, Number(r.cantidad||0)-cantidadDevueltaReab(r.id))*Number(r.costo_unitario||0), 0);
       const totalMPQty   = reabOC.reduce((s,r) => s + Math.max(0, Number(r.cantidad||0)-cantidadDevueltaReab(r.id)), 0);
       const costoPromPorKgInput = totalMPQty > 0 ? totalMPCosto / totalMPQty : 0;
-      // Merma y cantidadBase de la receta: para producir 1 kg de output se
-      // necesitan cantidadBase × (1+merma%) kg de input — así que el costo
-      // de MP por kg de output = costoInput × cantidadBase × (1+merma%).
+      // Merma y cantidadBase de la receta: puede haber hasta 4 insumos
+      // distintos (a pedido explícito, 22/Ago/2026 — "pueden haber más
+      // insumos, por lo general es 1 pero puede llegar hasta 4"). Cada
+      // insumo contribuye su parte al costo del kg de output según su
+      // propio cantidadBase y merma_pct.
+      // costoMPPorKgOutput = Σ costoPromInput_i/kgInput_i × cantBase_i × (1+merma_i%)
       const recetaOC = oc.receta_id ? (state.recetas||[]).find(r => r.id === oc.receta_id) : null;
       const recetaLineas = recetaOC ? (state.recetaLineas||[]).filter(l => l.receta_id === recetaOC.id) : [];
-      const lineaMP = recetaLineas[0]; // típicamente 1 sola línea de insumo en subcontrato
-      const cantBase = Number(lineaMP?.cantidad_base||1);
-      const mermaPct = Number(lineaMP?.merma_pct||0);
-      costoMPPorKgOC = costoPromPorKgInput * cantBase * (1 + mermaPct/100);
+      if (recetaLineas.length > 0) {
+        costoMPPorKgOC = recetaLineas.reduce((suma, lineaMP) => {
+          // Filtrar los lotes de reabastecimiento correspondientes a ESTE insumo
+          const reabEsteInsumo = reabOC.filter(r => r.insumo_id === lineaMP.insumo_id);
+          const costoTotalInsumo = reabEsteInsumo.reduce((s,r) => s + Math.max(0, Number(r.cantidad||0)-cantidadDevueltaReab(r.id))*Number(r.costo_unitario||0), 0);
+          const kgTotalInsumo    = reabEsteInsumo.reduce((s,r) => s + Math.max(0, Number(r.cantidad||0)-cantidadDevueltaReab(r.id)), 0);
+          const costoPromInput   = kgTotalInsumo > 0 ? costoTotalInsumo / kgTotalInsumo : 0;
+          const cantBase = Number(lineaMP.cantidad_base||1);
+          const mermaPct = Number(lineaMP.merma_pct||0);
+          return suma + costoPromInput * cantBase * (1 + mermaPct/100);
+        }, 0);
+      } else {
+        // Fallback sin receta: misma lógica del caso de 1 insumo pero sin merma
+        costoMPPorKgOC = totalMPQty > 0 ? totalMPCosto / totalMPQty : 0;
+      }
     }
 
     // Read from new lote rows: rec-lote-val-N, rec-qty-{prod}-N, rec-pl-val-N
@@ -23422,21 +23375,7 @@ async function saveAnticipo() {
 
 // ═══ NOMENCLATURA CONTABLE ═══
 
-const NOM_TIPO_COLOR = {
-  'Activos Circulantes':   'badge-blue',
-  'Activos no-circulantes':'badge-blue',
-  'Pasivos Circulantes':   'badge-red',
-  'Pasivos no-circulantes':'badge-red',
-  'Capital':               'badge-green',
-  'Banco y efectivo':      'badge-green',
-  'Ingreso':               'badge-green',
-  'Otro Ingreso':          'badge-green',
-  'Por cobrar':            'badge-blue',
-  'Por pagar':             'badge-red',
-  'Costo de ingresos':     'badge-yellow',
-  'Gastos':                'badge-yellow',
-  'Ganancias del año actual':'badge-green',
-};
+// NOM_TIPO_COLOR vive ahora en js/constantes.js
 
 function nomOpts(filterFn) {
   // Build <option> list from nomenclatura, optionally filtered
@@ -23635,7 +23574,7 @@ async function deleteNomenclatura(id) {
 
 // ── Tipo de Cambio — obtención automática con fallbacks ─────────
 
-const BANGUAT_URL = 'https://banguat.gob.gt/cambio/tc.asp';
+// BANGUAT_URL vive ahora en js/constantes.js
 
 /**
  * Obtiene el TC de referencia OFICIAL del Banguat.
@@ -24061,11 +24000,7 @@ function exportarTC() {
 
 // ═══ BODEGAS ═══
 
-const BODEGA_TIPO_LABEL = {
-  general:'General', materia_prima:'Materia Prima',
-  producto_terminado:'Producto Terminado', transito:'Tránsito', devoluciones:'Devoluciones',
-  en_terceros:'En Poder de Terceros'
-};
+// BODEGA_TIPO_LABEL vive ahora en js/constantes.js
 
 function renderBodegas() {
   const q = (document.getElementById('search-bodegas')?.value||'').toLowerCase();
