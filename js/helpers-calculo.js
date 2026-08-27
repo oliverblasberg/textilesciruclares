@@ -257,3 +257,6 @@ function normalizarFilasExtracto(rows) {
   }
   return out;
 }
+  }
+  return out;
+}
