@@ -119,6 +119,12 @@ function nextCorrelativo(prefix, list, field='numero') {
 
 // ═══ PRODUCTOS / PROVEEDORES ═══
 
+// Proveedor predeterminado de un producto (14/Ago/2026, a pedido explícito):
+// el campo separado "Proveedor Predeterminado" se eliminó del producto y de
+// la base de datos — generaba confusión porque quedaba vacío en la práctica
+// aunque el producto ya tuviera proveedores configurados en Compra. Ahora
+// siempre se toma el primero de la lista real (prod.proveedores_compra),
+// que es la única fuente de verdad de qué proveedores vende ese producto.
 function proveedorPredeterminado(prod) {
   return (prod?.proveedores_compra||[])[0]?.proveedor_id || null;
 }
