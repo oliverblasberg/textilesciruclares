@@ -226,6 +226,12 @@ async function crearAsiento({ diario, fecha, descripcion, referencia, referencia
       ...l,
       moneda_orig: moneda,
       monto_orig:  parseFloat(montoOrig.toFixed(4)),
+      // FIX (26/Ago/2026): la columna tipo_cambio de erp_asiento_lineas existe
+      // desde siempre, pero nunca se escribía — quedaba en el default 1.0000
+      // incluso en líneas USD. Una línea de USD 1,300 a Q9,910.81 guardaba
+      // tipo_cambio 1.0000, un dato falso que alguien podría leer creyéndole.
+      // Ahora se escribe el TC realmente aplicado (1 cuando es GTQ).
+      tipo_cambio: esUSD ? tcUsar : 1,
       debe:        Number(l.debe||0)  > 0 ? montoGTQ : 0,
       haber:       Number(l.haber||0) > 0 ? montoGTQ : 0,
       debe_gtq:    Number(l.debe||0)  > 0 ? montoGTQ : 0,
@@ -638,18 +644,26 @@ async function asientoMovInventario(movId, monedaParam = null) {
   // busque el del día — el GTQ del asiento queda idéntico a costo_total_gtq,
   // así que el mayor cuadra siempre contra el auxiliar de inventario.
   const esUSD = (mov.moneda || 'GTQ') === 'USD';
-  // gtqReal = el GTQ efectivamente guardado, SIN respaldo. Es la única base
-  // válida para derivar el TC: si cayéramos al costo_total como respaldo, un
-  // movimiento en USD sin costo_total_gtq daría TC = 1 y contabilizaría
-  // USD 100 como Q100.
   const gtqReal   = Number(mov.costo_total_gtq || 0);
   const totalGTQ  = gtqReal || Number(mov.costo_total || 0);
   const totalOrig = Number(esUSD ? (mov.costo_total || 0) : totalGTQ);
-  // TC implícito solo si hay ambos lados de la conversión realmente guardados.
-  // Si falta el GTQ, se deja null y crearAsiento usa el TC del día.
-  const tcMov = (esUSD && Number(mov.costo_total) > 0 && gtqReal > 0)
-    ? Number((gtqReal / Number(mov.costo_total)).toFixed(6))
-    : null;
+
+  // TC del movimiento. Prioridad:
+  //   1. mov.tipo_cambio — columna guardada al crear el movimiento
+  //      (26/Ago/2026). Es la fuente correcta: sobrevive al caso de costo
+  //      cero, donde no hay nada que dividir.
+  //   2. Derivación gtqReal/costo_total — solo para filas anteriores a esa
+  //      columna. Requiere ambos lados > 0; si no, se deja null y
+  //      crearAsiento usa el TC del día.
+  // Nunca se deriva de totalGTQ (que cae al costo_total como respaldo):
+  // eso daría TC = 1 y contabilizaría USD 100 como Q100.
+  let tcMov = Number(mov.tipo_cambio) > 0 ? Number(mov.tipo_cambio) : null;
+  if (!tcMov && esUSD && Number(mov.costo_total) > 0 && gtqReal > 0) {
+    tcMov = Number((gtqReal / Number(mov.costo_total)).toFixed(6));
+  }
+  // En GTQ el TC es 1 y no hay nada que forzar: se deja null para que
+  // crearAsiento siga su camino normal.
+  if (!esUSD) tcMov = null;
 
   const monto = totalOrig;
   if (!monto) return;
