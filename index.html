@@ -5701,6 +5701,25 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 <!-- DETALLE DE ORDEN DE PRODUCCIÓN — modal (14/Ago/2026, a pedido explícito;
      reemplaza el panel inline op-detail-panel, ver comentario en el HTML de
      Órdenes de Producción). Mismo patrón de tamaño que modal-ver-pedido. -->
+<!-- DETALLE DE ASIENTO CONTABLE (26/Ago/2026, a pedido explícito)
+     Hoja imprimible con la cabecera del asiento, todas sus líneas y un
+     drill-through al documento que lo originó. El Libro Mayor queda igual
+     — una fila por línea —; se llega acá haciendo clic en el correlativo.
+     Mismo patrón de tamaño que modal-op-detail. -->
+<div class="modal-overlay" id="modal-asiento-detail">
+  <div class="modal modal-lg" style="max-width:900px;width:90vw;max-height:90vh">
+    <div class="modal-header">
+      <div class="modal-title" id="asiento-detail-title">Asiento Contable</div>
+      <button class="modal-close" onclick="closeModal('modal-asiento-detail')">✕</button>
+    </div>
+    <div class="modal-body" id="asiento-detail-body" style="padding:20px"></div>
+    <div class="modal-footer">
+      <div id="asiento-detail-footer-actions" style="display:flex;gap:8px"></div>
+      <button class="btn btn-ghost" onclick="closeModal('modal-asiento-detail')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-op-detail">
   <div class="modal modal-lg" style="max-width:90vw;width:90vw;max-height:90vh">
     <div class="modal-header">
@@ -14604,21 +14623,34 @@ async function confirmarAsignacionLotes(idx, insumoId) {
     const destinoTxt = tipoDoc === 'op' ? 'producción' : 'subcontratista';
     await crearAsiento({
       diario: DIARIO_MANUFACTURA, fecha: today(),
-      descripcion: `Reabastecimiento ${numero} — MP entregada a ${destinoTxt} (${insumoProdReab?.codigo_interno||insumoProdReab?.code||insumoProdReab?.description||''})`,
-      referencia: numero, referencia_id: docId,
+      // FIX (26/Ago/2026, a pedido explícito):
+      //  1. La descripción de línea listaba un lote por cada rollo asignado
+      //     (`asignaciones.map(a=>a.lote)`), lo que producía el MISMO lote
+      //     repetido N veces — no identificaba el rollo y con 50 rollos
+      //     dejaba la descripción ilegible. El detalle rollo por rollo vive
+      //     en el albarán de reabastecimiento y en las notas de cada
+      //     movimiento de inventario; no se duplica acá.
+      //  2. `numero` viene de reabCurrentDoc y es el número del DOCUMENTO
+      //     PADRE (la OC o la OP), no del reabastecimiento. El asiento decía
+      //     "Reabastecimiento OC-2026-0007" y referenciaba la OC, así que el
+      //     correlativo REA-YYYY-NNNN —que es el que identifica al albarán—
+      //     no quedaba en el asiento por ningún lado. Ahora la referencia es
+      //     el REA, con el documento padre en la descripción.
+      descripcion: `Reabastecimiento ${numeroReab} — MP entregada a ${destinoTxt} para ${numero} (${insumoProdReab?.codigo_interno||insumoProdReab?.code||insumoProdReab?.description||''})`,
+      referencia: numeroReab, referencia_id: docId,
       moneda: 'GTQ', tipo_cambio: 1,
       lineas: [
         {
           cuenta_id: ctaProcesoReab?.id||null, cuenta_codigo: CTA_INV_PROCESO,
           cuenta_nombre: ctaProcesoReab?.nombre||'Inventario en Proceso',
           debe: totalCostoAsignado, haber: 0,
-          descripcion: `MP a WIP — ${insumoProdReab?.description||''} (${asignaciones.map(a=>a.lote).join(', ')})`,
+          descripcion: `MP a WIP — ${insumoProdReab?.description||''}`,
         },
         {
           cuenta_id: ctaInsumoReab?.id||null, cuenta_codigo: ctaInsumoReab?.codigo||'',
           cuenta_nombre: ctaInsumoReab?.nombre||'Inventario MP',
           debe: 0, haber: totalCostoAsignado,
-          descripcion: `Salida MP — lotes asignados a ${numero}`,
+          descripcion: `Salida MP — lotes asignados en ${numeroReab}`,
         },
       ],
     });
