@@ -21026,6 +21026,46 @@ async function crearMovimiento({ tipo, producto_id, cantidad, costo_unitario,
   const cu = parseFloat(costo_unitario||0);
   const costo_unitario_gtq = esUSD && tc > 1 ? parseFloat((cu * tc).toFixed(4)) : cu;
   const costo_total_gtq    = esUSD && tc > 1 ? parseFloat((costo_total * tc).toFixed(4)) : costo_total;
+  // TC guardado explícitamente (26/Ago/2026). Antes se reconstruía dividiendo
+  // costo_total_gtq/costo_total, lo que es imposible cuando el costo es cero —
+  // caso real del hilo en consignación. Con la columna, el TC sobrevive
+  // aunque el movimiento no tenga valor.
+  const tipo_cambio = esUSD ? tc : 1;
+
+  // BLOQUEO DE COSTO CERO EN COMPRAS (26/Ago/2026, a pedido explícito).
+  // Costo cero es LEGÍTIMO solo en consignación: el hilo de terceros se
+  // registra a valor cero por requisito legal, en el paso hilo → tejido. A
+  // partir de GF el producto ya tiene valor porque se cargó el costo de tejido.
+  // En una COMPRA es siempre un error de captura: capitalizaría inventario en
+  // Q0 y arrastraría ese cero al costeo FIFO y al costo de venta sin que nada
+  // lo delate después.
+  //
+  // Se LANZA excepción en vez de devolver null: de los 14 llamadores de esta
+  // función, casi todos hacen `await crearMovimiento({...})` sin revisar el
+  // retorno, así que un null se ignoraría en silencio y la operación
+  // continuaría igual — exactamente lo que hay que evitar. El throw corta el
+  // flujo completo (recepción, asiento y actualización de OC) y deja el
+  // sistema sin escribir nada.
+  const esConsignacion = tipo === 'consignacion' || !!consignacion_cliente_id;
+  // Solo los referencia_tipo de COMPRA. Verificado contra los valores que el
+  // sistema realmente emite: OC y DEV-OC. Quedan deliberadamente fuera los de
+  // producción (OP, OP-ROLLO, OP-AJUSTE, REABASTECIMIENTO, ENVIO-TERCEROS,
+  // RECEPCION-TERCEROS) y DESPACHO, donde un costo cero puede ser legítimo.
+  const esCompra = ['OC','DEV-OC'].includes(referencia_tipo||'');
+  if (!esConsignacion && esCompra && costo_total === 0) {
+    const msg =
+      'OPERACIÓN BLOQUEADA — Compra con costo CERO\n\n' +
+      `Producto: ${prod?.description || producto_id}\n` +
+      `Cantidad: ${cantidad}\n` +
+      `Referencia: ${referencia_tipo||''} ${referencia_id||''}\n\n` +
+      'Una compra no puede entrar a costo cero: el inventario se capitalizaría ' +
+      'en Q0 y ese cero se propagaría al costeo FIFO y al costo de venta.\n\n' +
+      'No se registró ningún movimiento. Corrija el precio unitario en la orden ' +
+      'de compra y vuelva a intentarlo.\n\n' +
+      'Costo cero solo es válido en materia prima en consignación.';
+    alert(msg);
+    throw new Error('Movimiento bloqueado: compra con costo cero — ' + (prod?.description || producto_id));
+  }
 
   const row = {
     mov_id, tipo, producto_id,
@@ -21035,6 +21075,7 @@ async function crearMovimiento({ tipo, producto_id, cantidad, costo_unitario,
     costo_unitario:    parseFloat(costo_unitario)||0,
     costo_total,
     moneda:            moneda||'GTQ',
+    tipo_cambio,
     costo_unitario_gtq,
     costo_total_gtq,
     referencia_tipo:   referencia_tipo||null,
