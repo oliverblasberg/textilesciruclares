@@ -738,7 +738,7 @@ function renderDiarioGeneral() {
     // El número abre la hoja de detalle del asiento (26/Ago/2026, a pedido
     // explícito). El Libro Mayor se deja tal cual — una fila por línea —;
     // esto solo agrega el acceso al detalle desde el correlativo.
-    const numCell    = `<span class="td-mono" onclick="showAsientoDetail('${a.id}')" title="Ver detalle del asiento" style="font-weight:700;color:var(--accent);font-size:11px;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px">${a.numero||'—'}</span>`;
+    const numCell    = `<span class="td-mono" onclick="showAsientoDetail('${a.id}')" title="Ver detalle del asiento" style="font-weight:700;color:var(--accent);font-size:11px;cursor:pointer">${a.numero||'—'}</span>`;
     const diarioCell = `<span class="badge ${DIARIO_COLOR[a.diario]||'badge-gray'}" style="font-size:10px">${DIARIO_LABEL[a.diario]||a.diario}</span>`;
     const refCell    = a.referencia||'—';
     const estadoCell = pendienteTC
@@ -837,7 +837,16 @@ function showAsientoDetail(id) {
       <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Diario</div>
         <span class="badge ${DIARIO_COLOR[a.diario]||'badge-gray'}">${DIARIO_LABEL[a.diario]||a.diario}</span></div>
       <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Referencia</div>
-        <div class="td-mono" style="font-size:13px;font-weight:600">${a.referencia||'—'}</div></div>
+        ${(() => {
+          // La referencia es el acceso al documento origen (26/Ago/2026, a
+          // pedido explícito): se hace clic sobre el albarán, sin botón
+          // aparte en el pie. Si el documento no existe o el prefijo no se
+          // reconoce, se muestra como texto plano en vez de un enlace muerto.
+          const d = _asientoDrillDestino(a);
+          return d
+            ? `<div class="td-mono" onclick="${d.fn}" title="Abrir ${a.referencia}" style="font-size:13px;font-weight:600;color:var(--accent);cursor:pointer">${a.referencia}</div>`
+            : `<div class="td-mono" style="font-size:13px;font-weight:600">${a.referencia||'—'}</div>`;
+        })()}</div>
       <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Moneda</div>
         <div style="font-size:13px;font-weight:600">${a.moneda||'GTQ'}${esUSD?` · TC ${Number(a.tipo_cambio||0).toFixed(4)}`:''}</div></div>
     </div>
@@ -874,10 +883,10 @@ function showAsientoDetail(id) {
       ${a.estado_tc==='pendiente_tc'?'<span class="badge badge-yellow" style="margin-left:6px">Pendiente de TC</span>':''}
     </div>`;
 
-  const destino = _asientoDrillDestino(a);
+  // El pie solo lleva Imprimir. El acceso al documento origen se hace
+  // haciendo clic sobre la referencia en la cabecera, no con un botón aparte.
   document.getElementById('asiento-detail-footer-actions').innerHTML =
-    `<button class="btn btn-ghost btn-sm" onclick="imprimirAsiento('${a.id}')">🖨 Imprimir</button>` +
-    (destino ? `<button class="btn btn-ghost btn-sm" onclick="${destino.fn}">${destino.label}</button>` : '');
+    `<button class="btn btn-ghost btn-sm" onclick="imprimirAsiento('${a.id}')">🖨 Imprimir</button>`;
 
   openModal('modal-asiento-detail');
 }
