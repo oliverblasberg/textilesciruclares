@@ -883,10 +883,9 @@ function showAsientoDetail(id) {
       ${a.estado_tc==='pendiente_tc'?'<span class="badge badge-yellow" style="margin-left:6px">Pendiente de TC</span>':''}
     </div>`;
 
-  // El pie solo lleva Imprimir. El acceso al documento origen se hace
-  // haciendo clic sobre la referencia en la cabecera, no con un botón aparte.
-  document.getElementById('asiento-detail-footer-actions').innerHTML =
-    `<button class="btn btn-ghost btn-sm" onclick="imprimirAsiento('${a.id}')">🖨 Imprimir</button>`;
+  // Imprimir vive en el header, junto a la ✕. El pie solo tiene Cerrar.
+  document.getElementById('asiento-detail-header-actions').innerHTML =
+    `<button class="btn btn-ghost btn-sm" onclick="imprimirAsiento('${a.id}')" title="Imprimir asiento">🖨 Imprimir</button>`;
 
   openModal('modal-asiento-detail');
 }
