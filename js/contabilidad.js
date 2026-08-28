@@ -189,14 +189,30 @@ async function asientoDiferencialCambiario({
 // ── ACTUALIZAR asientoFacturaVenta para convertir USD→GTQ ──────
 // Reemplaza la versión anterior que no convertía monedas
 async function crearAsiento({ diario, fecha, descripcion, referencia, referencia_id,
-  moneda='GTQ', tipo_cambio=null, lineas, auto=true }) {
+  moneda='GTQ', tipo_cambio=null, tc_forzado=null, lineas, auto=true }) {
 
   const fechaStr   = fecha || today();
   const numero     = await nextAsientoNum();
 
-  // TC a usar: buscar el del día de la transacción
-  const tcUsar       = getTCFecha(fechaStr) || 1;
-  const tcDisponible = state.tiposCambio.some(t => t.fecha === fechaStr);
+  // TC a usar. Prioridad:
+  //   1. tc_forzado — para asientos que deben heredar el TC de una transacción
+  //      ya valorizada (hoy solo asientoMovInventario, que usa el TC con que
+  //      se capitalizó la recepción). Así el asiento queda exactamente igual
+  //      en GTQ que el auxiliar de inventario, sin depender del TC del día.
+  //   2. TC del día de la transacción (comportamiento de siempre).
+  //
+  // ATENCIÓN (26/Ago/2026): se usa un parámetro NUEVO en vez de reactivar
+  // `tipo_cambio`, que se declaraba pero nunca se leía. Varios llamadores ya
+  // pasan `tipo_cambio: 1` — entre ellos los asientos de factura y pago de
+  // VENTA, que van con moneda del cliente (posible USD). Si `tipo_cambio` se
+  // hubiera activado, ese 1 se habría tomado como TC real y una venta de
+  // USD 1,000 se habría contabilizado como Q1,000. `tipo_cambio` se mantiene
+  // ignorado a propósito; no reactivarlo sin revisar los ~5 llamadores.
+  const tcExplicito  = Number(tc_forzado) > 0 ? Number(tc_forzado) : null;
+  const tcUsar       = tcExplicito || getTCFecha(fechaStr) || 1;
+  // Con TC forzado el asiento ya está valorizado: no queda pendiente de TC
+  // aunque no exista tasa publicada para esa fecha.
+  const tcDisponible = tcExplicito ? true : state.tiposCambio.some(t => t.fecha === fechaStr);
   const estadoTC     = tcDisponible ? 'aplicado' : 'pendiente_tc';
   const esUSD        = moneda === 'USD';
 
@@ -573,6 +589,11 @@ async function asientoMovInventarioManual(movId, cat, moneda='GTQ') {
   });
 }
 
+// NOTA: monedaParam se conserva por compatibilidad con el llamador
+// (crearMovimientoConAsiento), pero ya NO se usa: la moneda y el TC se leen
+// directamente de la fila del movimiento, que es la fuente de verdad de cómo
+// se valorizó esa entrada. Antes se recibía y también se ignoraba, con la
+// diferencia de que entonces el asiento quedaba mal.
 async function asientoMovInventario(movId, monedaParam = null) {
   const mov  = state.movimientos.find(x => x.mov_id === movId);
   if (!mov) return;
@@ -606,15 +627,39 @@ async function asientoMovInventario(movId, monedaParam = null) {
     haber = ctaValoracion;
   }
 
-  // Always use GTQ for accounting — use costo_total_gtq (already converted)
-  const monto = Number(mov.costo_total_gtq || mov.costo_total || 0);
+  // FIX (26/Ago/2026): antes esta función forzaba moneda:'GTQ' y mandaba el
+  // costo YA convertido, así que el asiento guardaba monto_orig en GTQ y se
+  // perdía la moneda original de la compra (una OC en USD 1,300 aparecía en
+  // el Diario General como GTQ 9,910.81 en "Monto Original").
+  //
+  // Ahora se pasan los valores tal como quedaron guardados en el movimiento:
+  // costo_total (moneda original), moneda, y el TC implícito de esa misma
+  // fila. Al heredar el TC del movimiento — en vez de dejar que crearAsiento
+  // busque el del día — el GTQ del asiento queda idéntico a costo_total_gtq,
+  // así que el mayor cuadra siempre contra el auxiliar de inventario.
+  const esUSD = (mov.moneda || 'GTQ') === 'USD';
+  // gtqReal = el GTQ efectivamente guardado, SIN respaldo. Es la única base
+  // válida para derivar el TC: si cayéramos al costo_total como respaldo, un
+  // movimiento en USD sin costo_total_gtq daría TC = 1 y contabilizaría
+  // USD 100 como Q100.
+  const gtqReal   = Number(mov.costo_total_gtq || 0);
+  const totalGTQ  = gtqReal || Number(mov.costo_total || 0);
+  const totalOrig = Number(esUSD ? (mov.costo_total || 0) : totalGTQ);
+  // TC implícito solo si hay ambos lados de la conversión realmente guardados.
+  // Si falta el GTQ, se deja null y crearAsiento usa el TC del día.
+  const tcMov = (esUSD && Number(mov.costo_total) > 0 && gtqReal > 0)
+    ? Number((gtqReal / Number(mov.costo_total)).toFixed(6))
+    : null;
+
+  const monto = totalOrig;
   if (!monto) return;
 
   await crearAsiento({
     diario: 'INVENTARIO', fecha: mov.fecha,
     descripcion: `${isEntrada?'Entrada':'Salida'} inventario — ${prod?.description||''} (${mov.mov_id})`,
     referencia: mov.mov_id, referencia_id: mov.id,
-    moneda: 'GTQ',
+    moneda: mov.moneda || 'GTQ',
+    tc_forzado: tcMov,
     lineas: [
       { cuenta_id: debe||null,  cuenta_codigo: ctaNom(debe)?.codigo||'INV-DEBE',   cuenta_nombre: ctaNom(debe)?.nombre||'Inventario',        debe: monto, haber: 0,     descripcion: mov.mov_id },
       { cuenta_id: haber||null, cuenta_codigo: ctaNom(haber)?.codigo||'INV-HABER', cuenta_nombre: ctaNom(haber)?.nombre||'Contra inventario', debe: 0,     haber: monto, descripcion: mov.mov_id },
