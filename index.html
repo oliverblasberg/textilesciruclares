@@ -1738,14 +1738,35 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <div class="search-box"><span class="search-icon">⌕</span>
             <input type="text" id="search-oc" placeholder="Buscar OC..." oninput="renderOC()"/>
           </div>
-          <select class="filter-select" id="filter-oc-status" onchange="renderOC()">
-            <option value="">Todos los estados</option>
-            <option value="borrador">Borrador</option>
-            <option value="confirmada">Confirmada</option>
-            <option value="recibiendo">Recibiendo</option>
-            <option value="completada">Completada</option>
-            <option value="cancelada">Cancelada</option>
-          </select>
+          <!-- Filtro de estado multi-selección (26/Ago/2026, a pedido
+               explícito): antes era un <select> simple que solo dejaba ver un
+               estado a la vez o todos. Ahora se pueden combinar (ej. ver
+               Confirmadas + Recibiendo, ocultando Canceladas). -->
+          <div id="oc-status-filter-wrap" style="position:relative;display:inline-block">
+            <button type="button" class="filter-select" id="oc-status-filter-btn"
+                    onclick="toggleOCStatusFilter(event)"
+                    style="text-align:left;cursor:pointer;min-width:190px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+              <span id="oc-status-filter-label">Todos los estados</span>
+              <span style="font-size:10px;color:var(--text3)">▼</span>
+            </button>
+            <div id="oc-status-filter-menu"
+                 style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:60;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:6px;min-width:200px">
+              <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);margin-bottom:4px">
+                <input type="checkbox" id="oc-status-all" checked onchange="toggleOCStatusAll(this)" style="width:14px;height:14px"/>
+                <span style="font-weight:600">Todos los estados</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:pointer;font-size:13px">
+                <input type="checkbox" class="oc-status-chk" value="borrador" onchange="onOCStatusChange()" style="width:14px;height:14px"/> Borrador</label>
+              <label style="display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:pointer;font-size:13px">
+                <input type="checkbox" class="oc-status-chk" value="confirmada" onchange="onOCStatusChange()" style="width:14px;height:14px"/> Confirmada</label>
+              <label style="display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:pointer;font-size:13px">
+                <input type="checkbox" class="oc-status-chk" value="recibiendo" onchange="onOCStatusChange()" style="width:14px;height:14px"/> Recibiendo</label>
+              <label style="display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:pointer;font-size:13px">
+                <input type="checkbox" class="oc-status-chk" value="completada" onchange="onOCStatusChange()" style="width:14px;height:14px"/> Completada</label>
+              <label style="display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:pointer;font-size:13px">
+                <input type="checkbox" class="oc-status-chk" value="cancelada" onchange="onOCStatusChange()" style="width:14px;height:14px"/> Cancelada</label>
+            </div>
+          </div>
           <input type="month" id="filter-oc-mes" class="filter-select" onchange="renderOC()" style="max-width:160px"/>
           <button class="btn btn-primary" onclick="openNewOC()">+ Nueva OC</button>
         </div>
@@ -7325,10 +7346,27 @@ function onPedClienteChange() {
   if (clt.bodega_id)     populateBodegaSelect('ped-bodega', clt.bodega_id);
 }
 
+// La fecha de la Orden de Venta es siempre la de creación: se fija al
+// guardar y no se edita después (26/Ago/2026, a pedido explícito). Este
+// helper la marca de solo lectura y lo deja visible en la UI.
+function _setPedFechaReadonly(ro) {
+  const el = document.getElementById('ped-date');
+  if (!el) return;
+  el.readOnly = ro;
+  el.style.background = ro ? 'var(--bg2)' : '';
+  el.style.color      = ro ? 'var(--text3)' : '';
+  el.title = ro ? 'La fecha de la orden es la de su creación y no se modifica' : '';
+  const lbl = el.closest('.field')?.querySelector('label');
+  if (lbl) lbl.textContent = ro ? 'Fecha (creación)' : 'Fecha *';
+}
+
 function openNewPedido() {
   document.getElementById('ped-id').value = '';
   document.getElementById('modal-ped-title').textContent = 'Nueva Orden de Venta';
   document.getElementById('ped-date').value = today();
+  // También de solo lectura al crear: la fecha se sella con today() al momento
+  // de guardar, no con lo que el usuario escriba.
+  _setPedFechaReadonly(true);
   document.getElementById('ped-fecha-entrega').value = '';
   document.getElementById('ped-status').value = 'borrador';
   document.getElementById('ped-notes').value = '';
@@ -7353,8 +7391,18 @@ async function editPedido(id) {
   document.getElementById('modal-ped-title').textContent = 'Editar Orden de Venta';
   populateClienteSelects();
   document.getElementById('ped-customer').value = p.customer_id;
-  document.getElementById('ped-date').value = fmtDate(p.date);
-  document.getElementById('ped-fecha-entrega').value = p.fecha_entrega ? fmtDate(p.fecha_entrega) : '';
+  // FIX (26/Ago/2026): antes acá se hacía `= fmtDate(p.date)`, que devuelve
+  // "28/Ago/2026". Un <input type="date"> solo acepta YYYY-MM-DD, así que el
+  // navegador rechazaba el valor y el campo quedaba VACÍO — y savePedido
+  // exige fecha, con lo cual editar una OV fallaba con "Cliente y fecha son
+  // requeridos". Se pasa la fecha ISO tal como viene de la base.
+  document.getElementById('ped-date').value = (p.date||'').split('T')[0];
+  document.getElementById('ped-fecha-entrega').value = p.fecha_entrega ? String(p.fecha_entrega).split('T')[0] : '';
+  // La fecha de la OV es la de creación y NO se edita (26/Ago/2026, a pedido
+  // explícito). Se deja visible pero de solo lectura; savePedido además
+  // ignora este campo al actualizar, así que aunque se fuerce por consola la
+  // fecha original se conserva.
+  _setPedFechaReadonly(true);
   document.getElementById('ped-status').value = p.status;
   document.getElementById('ped-notes').value = p.notes||'';
   document.getElementById('ped-po').value    = p.po_number||'';
@@ -7423,8 +7471,17 @@ async function savePedido() {
     // sin número — igual que ahora funciona erp_oc.
     const existente = id ? (state.pedidos||[]).find(x=>x.id===id) : null;
     const numeroActual = existente?.order_number || null;
+    // FECHA DE LA OV (26/Ago/2026, a pedido explícito): es la fecha en que se
+    // genera la orden y no cambia después.
+    //   · Al CREAR: se sella con today() en el momento del guardado, no con lo
+    //     que muestre el campo (que pudo quedar de una sesión anterior del modal).
+    //   · Al EDITAR: se conserva la de la fila existente. El campo está en
+    //     readOnly, pero eso es solo visual — acá es donde realmente se hace
+    //     cumplir la regla, aunque alguien fuerce el valor por consola.
+    const fechaOV = id ? ((existente?.date||'').split('T')[0] || date) : today();
     const row = {
-      customer_id, date,
+      customer_id,
+      date: fechaOV,
       moneda:        getMonedaOV(customer_id),
       fecha_entrega: document.getElementById('ped-fecha-entrega')?.value || null,
       responsable:   document.getElementById('ped-responsable')?.value.trim() || null,
@@ -15420,13 +15477,58 @@ function renderSC() {
   }).join('') : '<tr><td colspan="7"><div class="empty-state"><p>Sin solicitudes de cotización</p></div></td></tr>';
 }
 
+// ── FILTRO DE ESTADO OC (multi-selección) ──
+// Reemplaza al <select> de un solo valor (26/Ago/2026, a pedido explícito).
+// Sin checks marcados = sin filtro = se ven todas, igual que el antiguo
+// "Todos los estados". Así el comportamiento por defecto no cambia.
+function ocStatusSeleccionados() {
+  return [...document.querySelectorAll('.oc-status-chk:checked')].map(c => c.value);
+}
+
+function toggleOCStatusFilter(ev) {
+  ev?.stopPropagation();
+  const menu = document.getElementById('oc-status-filter-menu');
+  if (!menu) return;
+  const abierto = menu.style.display === 'block';
+  menu.style.display = abierto ? 'none' : 'block';
+  // Cerrar al hacer clic fuera. Se registra una sola vez por apertura.
+  if (!abierto) {
+    const cerrar = e => {
+      if (!document.getElementById('oc-status-filter-wrap')?.contains(e.target)) {
+        menu.style.display = 'none';
+        document.removeEventListener('click', cerrar);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', cerrar), 0);
+  }
+}
+
+function toggleOCStatusAll(chk) {
+  document.querySelectorAll('.oc-status-chk').forEach(c => { c.checked = false; });
+  if (!chk.checked) chk.checked = false;
+  onOCStatusChange();
+}
+
+function onOCStatusChange() {
+  const sel = ocStatusSeleccionados();
+  const all = document.getElementById('oc-status-all');
+  if (all) all.checked = sel.length === 0;
+  const lbl = document.getElementById('oc-status-filter-label');
+  if (lbl) {
+    lbl.textContent = sel.length === 0
+      ? 'Todos los estados'
+      : (sel.length === 1 ? (OC_STATUS_LABEL[sel[0]] || sel[0]) : `${sel.length} estados`);
+  }
+  renderOC();
+}
+
 // ── OC RENDER ──
 function renderOC() {
   const q  = (document.getElementById('search-oc')?.value||'').toLowerCase();
-  const st = document.getElementById('filter-oc-status')?.value||'';
+  const sts= ocStatusSeleccionados();
   const mes= document.getElementById('filter-oc-mes')?.value||'';
   const data = state.oc.filter(o=>
-    (!st  || o.status===st) &&
+    (!sts.length || sts.includes(o.status)) &&
     (!mes || (o.fecha||'').startsWith(mes)) &&
     (!q   || (o.numero||'').toLowerCase().includes(q) ||
              provName(o.proveedor_id).toLowerCase().includes(q))
