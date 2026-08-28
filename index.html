@@ -12120,6 +12120,71 @@ async function confirmarCompletarOP() {
   const cantReal = parseFloat(document.getElementById('completar-op-cantreal').value);
   if (isNaN(cantReal) || cantReal <= 0) { toast('Cantidad real inválida','error'); return; }
 
+  // RENDIMIENTO MÁXIMO SEGÚN MATERIAL PUESTO (26/Ago/2026, a pedido explícito:
+  // "lo que no puede pasar es que con 500 kg de H yo despache 1000 kg de GF").
+  //
+  // Hasta ahora esta función aceptaba cualquier cantidad real positiva, sin
+  // tope. Como el reabastecimiento se puede cerrar con faltante, era posible
+  // poner 500 kg de hilo y declarar 1,000 kg de tela producida — masa que no
+  // existe. Ese exceso se capitaliza como inventario real y después se
+  // despacha, porque el despacho solo mira que existan rollos.
+  //
+  // El techo sale de la receta: si un insumo pide r kg por cada kg de salida
+  // y se pusieron c kg, ese insumo da como máximo c/r kg de producto. El
+  // límite real es el MENOR entre todos los insumos — el que primero se
+  // agota manda.
+  //
+  // Se usa la misma tolerancia del 3% que ya rige las recepciones, por
+  // coherencia: dentro del 3% se exige motivo escrito, por encima se bloquea.
+  {
+    const TOLERANCIA_RENDIMIENTO = 0.03;
+    const resumen = insumosOPResumen(op);
+    const topes = resumen
+      .map(r => {
+        // r.total = consumo teórico para toda la OP → ratio por kg de salida.
+        const ratio = Number(op.cantidad_prog||0) > 0 ? r.total / Number(op.cantidad_prog) : 0;
+        if (!(ratio > 0)) return null;   // insumo sin ratio: no restringe
+        // Material realmente puesto en la OP: reabastecido (rutas
+        // subcontratadas) o consumido (tejido interno). Se toma el mayor
+        // para no bloquear de más cuando solo uno de los dos está poblado.
+        const puesto = Math.max(Number(r.reabastecido||0), Number(r.consumoReal||0));
+        return { insumo: r.insumo?.description || '—', maxSalida: puesto / ratio, puesto, ratio };
+      })
+      .filter(Boolean);
+
+    if (topes.length) {
+      const limitante = topes.reduce((a,b) => a.maxSalida <= b.maxSalida ? a : b);
+      const maxSalida = limitante.maxSalida;
+      const maxConTolerancia = maxSalida * (1 + TOLERANCIA_RENDIMIENTO);
+
+      if (cantReal > maxConTolerancia + 0.0001) {
+        toast(
+          `No se puede declarar ${fmtNum(cantReal)} kg producidos: el material puesto no alcanza. ` +
+          `Con ${fmtNum(limitante.puesto)} de ${limitante.insumo} el máximo es ${fmtNum(maxSalida)} kg ` +
+          `(${fmtNum(maxConTolerancia)} con la tolerancia del 3%). Reabastecé el faltante o corregí la cantidad.`,
+          'error'
+        );
+        return;
+      }
+      if (cantReal > maxSalida + 0.0001) {
+        const exceso = cantReal - maxSalida;
+        const motivo = prompt(
+          `La producción declarada supera en ${fmtNum(exceso)} kg el rendimiento teórico del material puesto ` +
+          `(máximo ${fmtNum(maxSalida)} kg según ${limitante.insumo}), dentro del 3% de tolerancia.\n\n` +
+          `Escribí el motivo (ej. "humedad", "mejor eficiencia del proceso") para continuar:`
+        );
+        if (!motivo || !motivo.trim()) { toast('Se requiere un motivo para cerrar la OP con exceso de rendimiento','error'); return; }
+        // Queda en las notas de la OP: sin esto la justificación se perdería
+        // y nadie sabría después por qué se aceptó el exceso.
+        const notaPrev = (op.notas||'').trim();
+        await sb.from('erp_op').update({
+          notas: (notaPrev ? notaPrev + '\n' : '') +
+                 `[${today()}] Exceso de rendimiento +${fmtNum(exceso)} kg sobre el máximo teórico (${fmtNum(maxSalida)} kg): ${motivo.trim()}`
+        }).eq('id', id);
+      }
+    }
+  }
+
   await sb.from('erp_op').update({
     estado: 'completada',
     cantidad_real: cantReal,
@@ -14372,9 +14437,16 @@ function estadoReabastecimiento(tipoDoc, docId, receta, cantidadBase) {
     tipoDoc === 'op' ? r.op_id === docId : r.oc_id === docId);
   const detalle = lineasReq.map(l => {
     const requerido = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidadBase;
-    const asignado  = asignados.filter(a => a.insumo_id === l.insumo_id)
-      .reduce((s,a) => s + Math.max(0, Number(a.cantidad||0) - cantidadDevueltaReab(a.id)), 0);
-    return { insumo_id: l.insumo_id, requerido, asignado, completo: asignado >= requerido - 0.0001 };
+    const filas     = asignados.filter(a => a.insumo_id === l.insumo_id);
+    const asignado  = filas.reduce((s,a) => s + Math.max(0, Number(a.cantidad||0) - cantidadDevueltaReab(a.id)), 0);
+    // CIERRE MANUAL (26/Ago/2026, a pedido explícito): si alguna asignación de
+    // este insumo quedó marcada como cerrada, el insumo se considera completo
+    // aunque lo asignado sea menor al requerido teórico. Sin esto, una OP
+    // nunca podría iniciar producción si se decide trabajar con menos
+    // material del que calcula la receta.
+    const cerrado = filas.some(a => a.cerrado === true);
+    return { insumo_id: l.insumo_id, requerido, asignado, cerrado,
+             completo: cerrado || asignado >= requerido - 0.0001 };
   });
   return { requiere: true, completo: detalle.every(d => d.completo), detalle };
 }
@@ -14543,6 +14615,32 @@ async function confirmarAsignacionLotes(idx, insumoId) {
   }
 
   let totalCostoAsignado = 0;
+  // CIERRE DE REABASTECIMIENTO PARCIAL (26/Ago/2026, a pedido explícito).
+  // Si tras esta asignación el insumo sigue corto contra lo que pide la
+  // receta, se pregunta si va a llegar más material o si se da por cerrado.
+  // Antes el insumo quedaba pendiente para siempre y bloqueaba Iniciar
+  // Producción / Confirmar OC, sin forma de avanzar con menos material.
+  let cerrarInsumo = false;
+  {
+    const estadoPrev = estadoReabastecimiento(tipoDoc, docId, reabCurrentDoc.receta, reabCurrentDoc.cantidadBase);
+    const det = estadoPrev.detalle.find(d => d.insumo_id === insumoId);
+    if (det && !det.cerrado) {
+      const aAsignar = asignaciones.reduce((s,a) => s + Number(a.cantidad||0), 0);
+      const faltaTras = det.requerido - (det.asignado + aAsignar);
+      if (faltaTras > 0.0001) {
+        const insumoProd = state.productos.find(p => p.id === insumoId);
+        cerrarInsumo = confirm(
+          `Reabastecimiento parcial — ${insumoProd?.description || 'insumo'}\n\n` +
+          `Requerido: ${fmtNum(det.requerido)}\n` +
+          `Quedará asignado: ${fmtNum(det.asignado + aAsignar)}\n` +
+          `Faltante: ${fmtNum(faltaTras)}\n\n` +
+          `¿Se dará por CERRADO el reabastecimiento de este insumo?\n\n` +
+          `• Aceptar = cerrar; se podrá iniciar producción con este material.\n` +
+          `• Cancelar = seguir reabasteciendo (queda pendiente y bloquea el inicio).`
+        );
+      }
+    }
+  }
   // Correlativo REA-YYYY-NNNN — uno por cada confirmación (esta llamada =
   // un insumo confirmado), compartido por todas las filas que se insertan
   // en este mismo ciclo. Da visibilidad de qué se envió a cada orden.
@@ -14556,6 +14654,7 @@ async function confirmarAsignacionLotes(idx, insumoId) {
       costo_unitario: a.costo, bodega_id: bodegaId,
       rollo_id: a.rolloId || null,
       numero: numeroReab, fecha: fechaReab,
+      cerrado: cerrarInsumo,
     });
     if (error) { toast('Error asignando lote: '+error.message,'error'); continue; }
 
@@ -15688,7 +15787,7 @@ function renderOC() {
       <td>${provName(o.proveedor_id)}</td>
       <td class="hide-mobile" style="font-size:12px;color:var(--text2)">${o.representante||'—'}</td>
       <td class="hide-mobile" style="white-space:nowrap">${o.entrega?fmtDate(o.entrega):'—'}</td>
-      <td><span class="badge ${OC_STATUS_COLOR[o.status]||'badge-gray'}">${OC_STATUS_LABEL[o.status]||o.status}</span></td>
+      <td><span class="badge ${OC_STATUS_COLOR[o.status]||'badge-gray'}">${OC_STATUS_LABEL[o.status]||o.status}</span>${o.recepcion_cerrada?'<span class="badge badge-yellow" style="font-size:9px;margin-left:4px" title="Cerrada aceptando un faltante — no se recibió todo lo pedido">con faltante</span>':''}</td>
       <td>${pagoBadge}</td>
     </tr>`;
   }).join('') : '<tr><td colspan="7"><div class="empty-state"><p>Sin órdenes de compra</p></div></td></tr>';
@@ -15805,7 +15904,7 @@ function showOCPanel(ocId) {
   const bodegaNombre  = oc.bodega_id ? (state.bodegas||[]).find(b=>b.id===oc.bodega_id)?.nombre : null;
   const terminosLabel = { inmediato:'Pago Inmediato', '15':'15 días', '30':'30 días', '45':'45 días', '60':'60 días' };
   const terminosText  = oc.terminos_pago ? terminosLabel[oc.terminos_pago]||oc.terminos_pago : null;
-  document.getElementById('oc-panel-sub').innerHTML = `Fecha: ${fmtDate(oc.fecha)} &nbsp;·&nbsp; <span class="badge ${OC_STATUS_COLOR[oc.status]||'badge-gray'}">${OC_STATUS_LABEL[oc.status]||oc.status}</span>${bodegaNombre?` &nbsp;·&nbsp; <span style="font-size:11px;color:var(--text2)">📦 ${bodegaNombre}</span>`:''}${terminosText?` &nbsp;·&nbsp; <span style="font-size:11px;color:var(--text2)">💳 ${terminosText}</span>`:''}${oc.representante?` &nbsp;·&nbsp; <span style="font-size:11px;color:var(--text2)">👤 ${oc.representante}</span>`:''}`;
+  document.getElementById('oc-panel-sub').innerHTML = `Fecha: ${fmtDate(oc.fecha)} &nbsp;·&nbsp; <span class="badge ${OC_STATUS_COLOR[oc.status]||'badge-gray'}">${OC_STATUS_LABEL[oc.status]||oc.status}</span>${oc.recepcion_cerrada?' <span class="badge badge-yellow" style="font-size:10px" title="Cerrada aceptando un faltante — no se recibió todo lo pedido">cerrada con faltante</span>':''}${bodegaNombre?` &nbsp;·&nbsp; <span style="font-size:11px;color:var(--text2)">📦 ${bodegaNombre}</span>`:''}${terminosText?` &nbsp;·&nbsp; <span style="font-size:11px;color:var(--text2)">💳 ${terminosText}</span>`:''}${oc.representante?` &nbsp;·&nbsp; <span style="font-size:11px;color:var(--text2)">👤 ${oc.representante}</span>`:''}`;
 
   const isBorrador   = oc.status === 'borrador';
   const isConfirmada = oc.status === 'confirmada' || oc.status === 'recibiendo' || oc.status === 'completada';
@@ -18547,7 +18646,35 @@ function openDevolucion(itemId, recepcionId, ocId) {
   // línea), no la cantidad original completa — antes permitía capturar
   // más de lo que realmente quedaba, si ya se había devuelto algo antes.
   const yaDevuelto = cantidadDevueltaRecepcionItem(itemId);
-  const disponible = Math.max(0, Number(item.cantidad||0) - yaDevuelto);
+  const recibidoNeto = Math.max(0, Number(item.cantidad||0) - yaDevuelto);
+
+  // TOPE POR SALDO REAL EN INVENTARIO (26/Ago/2026, a pedido explícito:
+  // "si ya la utilizaste, no se puede devolver").
+  //
+  // Hasta ahora el único límite era lo recibido menos lo ya devuelto, sin
+  // mirar si el material seguía existiendo. Eso permitía recibir 500 kg,
+  // consumirlos completos en una OP, y aun así devolverle 500 kg al
+  // proveedor: se generaba stock negativo y una reversa contable de material
+  // que ya estaba dentro de un rollo de tela.
+  //
+  // El saldo se mide sobre el LOTE específico de esta recepción en la bodega
+  // donde entró, que es la unidad real de trazabilidad — no basta con el
+  // saldo global del producto, porque podría haber existencia de otro lote
+  // que no es el que se quiere devolver.
+  const bodegaRec = rec?.bodega_id || null;
+  const loteRec   = item.lote || '(sin lote)';
+  const saldoLote = (calcStockPorLote(item.producto_id, bodegaRec)
+                      .find(l => l.lote === loteRec)?.saldo) ?? 0;
+  const disponible = Math.max(0, Math.min(recibidoNeto, saldoLote));
+
+  if (disponible <= 0.0001) {
+    toast(
+      `No se puede devolver ${prodName(item.producto_id)} — el lote ${item.lote||'(sin lote)'} ya no tiene existencia. ` +
+      `El material ya fue consumido o despachado. Para corregir el costo, usá un ajuste de inventario.`,
+      'error'
+    );
+    return;
+  }
 
   document.getElementById('dev-item-id').value       = itemId;
   document.getElementById('dev-recepcion-id').value  = recepcionId;
@@ -18556,7 +18683,15 @@ function openDevolucion(itemId, recepcionId, ocId) {
   document.getElementById('dev-moneda').value        = ocItem?.moneda || 'GTQ';
   document.getElementById('dev-oc-id').value         = ocId;
   document.getElementById('dev-producto-nombre').textContent     = prodName(item.producto_id);
-  document.getElementById('dev-cantidad-recibida').textContent   = `${disponible.toFixed(3)} ${item.unidad||''}${yaDevuelto>0.0001?` (de ${Number(item.cantidad||0).toFixed(3)} — ya devuelto ${yaDevuelto.toFixed(3)})`:''}`;
+  document.getElementById('dev-cantidad-recibida').textContent =
+    `${disponible.toFixed(3)} ${item.unidad||''}` +
+    (yaDevuelto > 0.0001 ? ` (de ${Number(item.cantidad||0).toFixed(3)} — ya devuelto ${yaDevuelto.toFixed(3)})` : '') +
+    // Si el tope lo impone el saldo y no lo recibido, se dice explícitamente:
+    // de lo contrario el usuario ve un máximo menor al que recibió y parece
+    // un error del sistema, cuando en realidad parte ya se consumió.
+    (saldoLote < recibidoNeto - 0.0001
+      ? ` — limitado por existencia: quedan ${saldoLote.toFixed(3)} en el lote, el resto ya se consumió`
+      : '');
   document.getElementById('dev-cantidad').value      = '';
   document.getElementById('dev-cantidad').max        = disponible;
   document.getElementById('dev-packing').value       = '';
@@ -18589,8 +18724,27 @@ async function saveDevolucion() {
     const item = state.ocRecepcionItems.find(x => x.id === itemId);
     const rec  = state.ocRecepciones.find(x => x.id === recepcionId);
     if (!item) { alert('No se encontró el item. ID: ' + itemId); return; }
-    const disponible = Math.max(0, Number(item.cantidad||0) - cantidadDevueltaRecepcionItem(itemId));
-    if (cantidad > disponible + 0.0001) { toast(`La cantidad no puede ser mayor a lo disponible (${disponible.toFixed(3)})`, 'error'); return; }
+    const recibidoNeto = Math.max(0, Number(item.cantidad||0) - cantidadDevueltaRecepcionItem(itemId));
+    // Mismo tope que aplica openDevolucion, revalidado acá porque el modal es
+    // solo la UI: sin esto, cualquier valor forzado por consola —o un state
+    // desactualizado desde que se abrió el diálogo— pasaría igual y generaría
+    // stock negativo. No se puede devolver material que ya se consumió.
+    const loteRec   = item.lote || '(sin lote)';
+    const saldoLote = (calcStockPorLote(item.producto_id, rec?.bodega_id || null)
+                        .find(l => l.lote === loteRec)?.saldo) ?? 0;
+    const disponible = Math.max(0, Math.min(recibidoNeto, saldoLote));
+    if (disponible <= 0.0001) {
+      toast(`El lote ${item.lote||'(sin lote)'} ya no tiene existencia — el material fue consumido o despachado. No se puede devolver.`, 'error');
+      return;
+    }
+    if (cantidad > disponible + 0.0001) {
+      toast(
+        `La cantidad no puede ser mayor a lo disponible (${disponible.toFixed(3)})` +
+        (saldoLote < recibidoNeto - 0.0001 ? ` — limitado por existencia del lote, no por lo recibido` : ''),
+        'error'
+      );
+      return;
+    }
 
     // Generate DEV correlativo — based on existing devolucion lines
     const devLines = (state.ocRecepcionItems||[]).filter(x => x.estado === 'devuelto' && x.numero_devolucion);
@@ -18639,7 +18793,14 @@ async function saveDevolucion() {
     const allItems    = state.ocItems.filter(i => i.oc_id === ocId);
     const allReceived = allItems.every(i => ocRecibidoQty(ocId, i.producto_id) >= Number(i.cantidad||0));
     if (!allReceived) {
-      await sb.from('erp_oc').update({ status: 'recibiendo' }).eq('id', ocId);
+      // La OC se reabre SIEMPRE, incluso si se había cerrado aceptando un
+      // faltante (26/Ago/2026, a pedido explícito). Una devolución significa
+      // que salió producto: la orden queda desabastecida y hay que poder
+      // seguir operando sobre ella. Se limpia además recepcion_cerrada,
+      // porque la decisión de "cerrada con faltante" dejó de ser válida —
+      // si no se limpiara, la OC quedaría en 'recibiendo' pero marcada como
+      // cerrada, dos datos que se contradicen.
+      await sb.from('erp_oc').update({ status: 'recibiendo', recepcion_cerrada: false }).eq('id', ocId);
     }
     await loadAll();
 
@@ -20367,11 +20528,46 @@ async function saveRecepcion() {
 
     const allItems    = state.ocItems.filter(i => i.oc_id === ocId);
     const allReceived = allItems.every(i => ocRecibidoQty(ocId, i.producto_id) >= Number(i.cantidad||0));
-    await sb.from('erp_oc').update({ status: allReceived ? 'completada' : 'recibiendo' }).eq('id', ocId);
+
+    // CIERRE DE RECEPCIÓN PARCIAL (26/Ago/2026, a pedido explícito).
+    // Si quedó faltante, se pregunta si el pedido sigue abierto o se da por
+    // cerrado. Antes quedaba SIEMPRE en 'recibiendo', así que una OC con un
+    // embarque corto aceptado se quedaba abierta para siempre.
+    // Solo se pregunta cuando hay faltante real: si se recibió todo, pasa a
+    // 'completada' sin molestar al usuario.
+    let cerrarConFaltante = false;
+    if (!allReceived) {
+      const pendientes = allItems
+        .map(i => {
+          const p = state.productos.find(x => x.id === i.producto_id);
+          const falta = Number(i.cantidad||0) - ocRecibidoQty(ocId, i.producto_id);
+          return falta > 0.0001
+            ? `  · ${p?.description || p?.code || '—'}: faltan ${fmtNum(falta)} ${i.unidad||''}`
+            : null;
+        })
+        .filter(Boolean);
+      cerrarConFaltante = confirm(
+        `Recepción parcial — queda producto pendiente:\n\n${pendientes.join('\n')}\n\n` +
+        `¿Se dará por CERRADO este pedido?\n\n` +
+        `• Aceptar = cerrar la OC como completada, aceptando el faltante.\n` +
+        `• Cancelar = seguir recibiendo (la OC queda en "Recibiendo").\n\n` +
+        `Lo ya recibido queda registrado en ambos casos.`
+      );
+    }
+
+    await sb.from('erp_oc').update({
+      status: (allReceived || cerrarConFaltante) ? 'completada' : 'recibiendo',
+      // Solo se marca cuando se cerró ACEPTANDO faltante. Una OC que se
+      // completó porque llegó todo mantiene la bandera en false.
+      recepcion_cerrada: cerrarConFaltante,
+    }).eq('id', ocId);
     await loadAll();
 
     closeModal('modal-recepcion');
-    toast(`Recepción ${numero} confirmada — ${recItems.length} producto${recItems.length!==1?'s':''} ingresados a inventario`);
+    toast(
+      `Recepción ${numero} confirmada — ${recItems.length} producto${recItems.length!==1?'s':''} ingresados a inventario` +
+      (cerrarConFaltante ? ' · OC cerrada con faltante' : '')
+    );
     showOCPanel(ocId);
 
   } catch(err) {
