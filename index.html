@@ -5710,11 +5710,16 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   <div class="modal modal-lg" style="max-width:900px;width:90vw;max-height:90vh">
     <div class="modal-header">
       <div class="modal-title" id="asiento-detail-title">Asiento Contable</div>
-      <button class="modal-close" onclick="closeModal('modal-asiento-detail')">✕</button>
+      <!-- Imprimir va en el header junto a la ✕ (26/Ago/2026, a pedido
+           explícito). El id lo pobla showAsientoDetail() con el asiento
+           actual, porque la función necesita saber cuál imprimir. -->
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="asiento-detail-header-actions"></span>
+        <button class="modal-close" onclick="closeModal('modal-asiento-detail')">✕</button>
+      </div>
     </div>
     <div class="modal-body" id="asiento-detail-body" style="padding:20px"></div>
     <div class="modal-footer">
-      <div id="asiento-detail-footer-actions" style="display:flex;gap:8px"></div>
       <button class="btn btn-ghost" onclick="closeModal('modal-asiento-detail')">Cerrar</button>
     </div>
   </div>
