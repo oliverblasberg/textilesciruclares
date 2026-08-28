@@ -19893,6 +19893,33 @@ async function saveRecepcion() {
       }
     }
 
+    // Costo cero en compra (26/Ago/2026, a pedido explícito). Se valida ACÁ,
+    // junto al resto de validaciones previas, y no solo dentro de
+    // crearMovimiento(): esa guarda existe y funciona, pero se dispara cuando
+    // saveRecepcion ya insertó la cabecera de la recepción, dejando una fila
+    // huérfana sin ítems ni movimiento (detectado en pruebas: 2 recepciones
+    // contra 1 ítem). Validando antes de la primera escritura, la operación
+    // se aborta sin tocar la base.
+    //
+    // Costo cero solo es válido en materia prima en consignación, que no pasa
+    // por este flujo de recepción de OC.
+    {
+      const sinCosto = recItems.filter(it => !(Number(it.costo_unit) > 0));
+      if (sinCosto.length) {
+        const nombres = sinCosto.map(it => {
+          const p = state.productos.find(x => x.id === it.producto_id);
+          return p?.description || p?.code || it.producto_id;
+        });
+        toast(
+          `No se puede recibir con costo cero: ${nombres.join(', ')}. ` +
+          `El inventario se capitalizaría en Q0 y ese cero se propagaría al costeo FIFO ` +
+          `y al costo de venta. Corregí el precio unitario en la orden de compra.`,
+          'error'
+        );
+        return;
+      }
+    }
+
     // Resumen de No. de PL para el header (informativo — la fuente real es por línea).
     const packingRollup = [...new Set(recItems.map(it=>it.packing_num).filter(Boolean))].join(', ') || null;
 
@@ -20120,7 +20147,20 @@ async function saveRecepcion() {
     showOCPanel(ocId);
 
   } catch(err) {
-    alert('Error inesperado en saveRecepcion:\n\n' + err.message + '\n\n' + err.stack);
+    // Las validaciones de negocio (ej. el bloqueo de costo cero en
+    // crearMovimiento) llegan acá como excepción, igual que un fallo técnico.
+    // Mostrarlas con el stack no le dice nada a quien está recibiendo
+    // mercadería y hace parecer que el sistema se rompió, cuando en realidad
+    // se defendió correctamente. Se separan los dos casos: el mensaje de
+    // negocio se muestra limpio; el stack queda solo para lo inesperado.
+    const esValidacion = /^Movimiento bloqueado:/.test(err.message||'');
+    if (esValidacion) {
+      alert(err.message.replace(/^Movimiento bloqueado:\s*/,'OPERACIÓN CANCELADA\n\n') +
+            '\n\nNo se registró ningún movimiento.');
+      console.warn('saveRecepcion — validación de negocio:', err.message);
+    } else {
+      alert('Error inesperado en saveRecepcion:\n\n' + err.message + '\n\n' + err.stack);
+    }
   } finally {
     _savingRecepcion = false;
     if (btn) { btn.disabled = false; btn.textContent = '✓ Confirmar Recepción'; }
@@ -21053,18 +21093,18 @@ async function crearMovimiento({ tipo, producto_id, cantidad, costo_unitario,
   // RECEPCION-TERCEROS) y DESPACHO, donde un costo cero puede ser legítimo.
   const esCompra = ['OC','DEV-OC'].includes(referencia_tipo||'');
   if (!esConsignacion && esCompra && costo_total === 0) {
-    const msg =
-      'OPERACIÓN BLOQUEADA — Compra con costo CERO\n\n' +
-      `Producto: ${prod?.description || producto_id}\n` +
-      `Cantidad: ${cantidad}\n` +
-      `Referencia: ${referencia_tipo||''} ${referencia_id||''}\n\n` +
-      'Una compra no puede entrar a costo cero: el inventario se capitalizaría ' +
-      'en Q0 y ese cero se propagaría al costeo FIFO y al costo de venta.\n\n' +
-      'No se registró ningún movimiento. Corrija el precio unitario en la orden ' +
-      'de compra y vuelva a intentarlo.\n\n' +
-      'Costo cero solo es válido en materia prima en consignación.';
-    alert(msg);
-    throw new Error('Movimiento bloqueado: compra con costo cero — ' + (prod?.description || producto_id));
+    // Sin alert() acá: el llamador (saveRecepcion y demás flujos) muestra el
+    // mensaje. Tener el alert en ambos lados producía dos diálogos seguidos,
+    // el segundo con stack trace. Esta guarda es la última línea de defensa:
+    // lo esperable es que la validación previa del llamador ya haya frenado
+    // la operación antes de tocar la base.
+    throw new Error(
+      'Movimiento bloqueado: compra con costo cero — ' +
+      (prod?.description || producto_id) +
+      '. Una compra no puede entrar a costo cero: el inventario se capitalizaría ' +
+      'en Q0 y ese cero se propagaría al costeo FIFO y al costo de venta. ' +
+      'Corrija el precio unitario en la orden de compra.'
+    );
   }
 
   const row = {
