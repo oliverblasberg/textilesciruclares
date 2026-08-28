@@ -12425,6 +12425,46 @@ function showOPDetail(id) {
           <div><div style="font-size:10px;color:var(--text3)">Merma Real</div><div style="font-size:13px;font-weight:600;color:${envio.peso_recibido_kg && pesoEnviadoDetail>envio.peso_recibido_kg?'var(--red)':'var(--text2)'}">${envio.peso_recibido_kg?((pesoEnviadoDetail-envio.peso_recibido_kg)/pesoEnviadoDetail*100).toFixed(2)+'%':'—'}</div></div>
         </div>` : ''}
 
+        ${(() => {
+          // INSUMOS — total a consumir / reabastecido / pendiente
+          // (26/Ago/2026, a pedido explícito). Se renderiza SIEMPRE que la OP
+          // tenga receta, no solo cuando ya hay consumos: el objetivo es ver
+          // qué falta reabastecer ANTES de producir, que es cuando sirve.
+          const resumen = insumosOPResumen(op);
+          if (!resumen.length) return '';
+          const totPend = resumen.reduce((s,r) => s + r.pendiente, 0);
+          return `
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">
+          Insumos — Requerimiento y Abastecimiento
+          ${totPend > 0.0001
+            ? `<span class="badge badge-yellow" style="font-size:10px;margin-left:8px">Pendiente de reabastecer</span>`
+            : `<span class="badge badge-green" style="font-size:10px;margin-left:8px">Abastecido</span>`}
+        </div>
+        <div class="table-wrap" style="margin-bottom:20px">
+          <table>
+            <thead><tr>
+              <th>Insumo</th>
+              <th style="text-align:right">Total a Consumir</th>
+              <th style="text-align:right">Reabastecido</th>
+              <th style="text-align:right">Pendiente</th>
+              <th style="text-align:right">Consumo Real</th>
+            </tr></thead>
+            <tbody>${resumen.map(r => `<tr>
+              <td>
+                <div style="font-weight:500">${r.insumo?.description||'—'}</div>
+                <div style="font-size:11px;color:var(--text3)">${r.insumo?.codigo_interno||r.insumo?.code||''}</div>
+              </td>
+              <td class="td-mono" style="text-align:right;font-weight:600">${fmtNum(r.total)} ${r.unidad}</td>
+              <td class="td-mono" style="text-align:right;color:var(--green)">${fmtNum(r.reabastecido)} ${r.unidad}</td>
+              <td class="td-mono" style="text-align:right;font-weight:600;color:${r.pendiente > 0.0001 ? 'var(--red)' : 'var(--text3)'}">
+                ${fmtNum(r.pendiente)} ${r.unidad}</td>
+              <td class="td-mono" style="text-align:right;color:${r.consumoReal > 0 ? 'var(--accent3)' : 'var(--text3)'}">
+                ${r.consumoReal > 0 ? fmtNum(r.consumoReal)+' '+r.unidad : '—'}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>`;
+        })()}
+
         ${consumos.length ? `
         <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Consumo de Materiales</div>
         <div class="table-wrap" style="margin-bottom:16px">
@@ -14247,6 +14287,55 @@ function lineasQueRequierenReabastecimiento(receta) {
 // subcontrato): cuánto se requiere de cada insumo vs. cuánto ya se asignó
 // en erp_reabastecimiento, y si ya está completo (habilita Iniciar
 // Producción / Confirmar OC).
+// Resumen de insumos de una OP: cuánto hay que consumir en total, cuánto se
+// ha reabastecido y cuánto queda pendiente (26/Ago/2026, a pedido explícito).
+//
+// Se diferencia de estadoReabastecimiento() en dos cosas: cubre TODOS los
+// insumos de la receta (no solo los marcados "obtener bajo pedido"), y
+// devuelve además el consumo real ya registrado, para mostrar el panorama
+// completo en la ficha de la OP.
+//
+// "Reabastecido" es NETO de devoluciones: una línea de reabastecimiento que
+// se devolvió parcialmente aporta solo la diferencia. Se reutiliza
+// cantidadDevueltaReab(), que ya maneja las devoluciones parciales.
+function insumosOPResumen(op) {
+  if (!op) return [];
+  const receta = (state.recetas||[]).find(r => r.id === op.receta_id);
+  if (!receta) return [];
+  const lineas   = (state.recetaLineas||[]).filter(l => l.receta_id === receta.id);
+  const base     = Number(op.cantidad_prog||0);
+  const reabs    = (state.reabastecimiento||[]).filter(r => r.op_id === op.id);
+  const consumos = (state.opConsumos||[]).filter(c => c.op_id === op.id);
+
+  return lineas.map(l => {
+    const insumo = state.productos.find(p => p.id === l.insumo_id);
+    // Total a consumir = cantidad base por kg × merma × cantidad programada.
+    // Mismo cálculo que usa estadoReabastecimiento, para que ambos coincidan.
+    const total = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * base;
+    const reabastecido = reabs
+      .filter(r => r.insumo_id === l.insumo_id)
+      .reduce((s,r) => s + Math.max(0, Number(r.cantidad||0) - cantidadDevueltaReab(r.id)), 0);
+    const consumoReal = consumos
+      .filter(c => c.insumo_id === l.insumo_id)
+      .reduce((s,c) => s + Number(c.cantidad_real||0), 0);
+    return {
+      insumo_id: l.insumo_id,
+      insumo,
+      unidad: insumo?.unidad || 'kg',
+      total,
+      reabastecido,
+      // Nunca negativo: si se reabasteció de más, pendiente es 0, no un
+      // número negativo que se leería como un faltante inverso.
+      pendiente: Math.max(0, total - reabastecido),
+      consumoReal,
+      // Tolerancia de 0.0001 igual que estadoReabastecimiento, para que
+      // redondeos de punto flotante no dejen algo "pendiente" por 1e-13.
+      completo: reabastecido >= total - 0.0001,
+      requiereReab: !!insumo?.ruta_obtener_bajo_pedido,
+    };
+  });
+}
+
 function estadoReabastecimiento(tipoDoc, docId, receta, cantidadBase) {
   const lineasReq = lineasQueRequierenReabastecimiento(receta);
   if (!lineasReq.length) return { requiere: false, completo: true, detalle: [] };
