@@ -735,7 +735,10 @@ function renderDiarioGeneral() {
     sumDebe  += debeGTQ;
     sumHaber += haberGTQ;
 
-    const numCell    = `<span class="td-mono" style="font-weight:700;color:var(--accent);font-size:11px">${a.numero||'—'}</span>`;
+    // El número abre la hoja de detalle del asiento (26/Ago/2026, a pedido
+    // explícito). El Libro Mayor se deja tal cual — una fila por línea —;
+    // esto solo agrega el acceso al detalle desde el correlativo.
+    const numCell    = `<span class="td-mono" onclick="showAsientoDetail('${a.id}')" title="Ver detalle del asiento" style="font-weight:700;color:var(--accent);font-size:11px;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px">${a.numero||'—'}</span>`;
     const diarioCell = `<span class="badge ${DIARIO_COLOR[a.diario]||'badge-gray'}" style="font-size:10px">${DIARIO_LABEL[a.diario]||a.diario}</span>`;
     const refCell    = a.referencia||'—';
     const estadoCell = pendienteTC
@@ -778,10 +781,163 @@ function renderDiarioGeneral() {
     </tr>` : ''}`;
 }
 
-// showAsientoDetail / closeAsientoDetail no longer needed —
-// Diario Mayor General now shows one row per line directly
-function showAsientoDetail() {}
-function closeAsientoDetail() {}
+// ── DETALLE DE ASIENTO CONTABLE (26/Ago/2026, a pedido explícito) ──
+// Hoja con la cabecera del asiento y todas sus líneas, imprimible, con
+// drill-through al documento que lo originó. El Libro Mayor no cambia:
+// sigue mostrando una fila por línea; esto es la vista de un asiento.
+//
+// Antes estas dos funciones existían vacías (`function showAsientoDetail(){}`)
+// de una versión anterior en que el diario mostraba una fila por asiento.
+
+// Resuelve a qué documento apunta un asiento y cómo abrirlo. La referencia
+// guardada es el correlativo de negocio (OC-…, OP-…, REA-…, MV-…), así que
+// se identifica por prefijo. Devuelve null si no hay destino conocido —
+// en ese caso simplemente no se ofrece el botón, en vez de fallar.
+function _asientoDrillDestino(a) {
+  const ref = (a?.referencia||'').trim();
+  if (!ref) return null;
+
+  if (/^OC-/.test(ref)) {
+    const oc = (state.oc||[]).find(o => o.numero === ref);
+    return oc ? { label:`Ver ${ref}`, fn:`closeModal('modal-asiento-detail');showOCPanel('${oc.id}')` } : null;
+  }
+  if (/^OP-/.test(ref)) {
+    const op = (state.op||[]).find(o => o.numero === ref);
+    return op ? { label:`Ver ${ref}`, fn:`closeModal('modal-asiento-detail');showOPDetail('${op.id}')` } : null;
+  }
+  if (/^REA-/.test(ref)) {
+    const existe = (state.reabastecimiento||[]).some(r => r.numero === ref);
+    return existe ? { label:`Ver ${ref}`, fn:`closeModal('modal-asiento-detail');verReabastecimiento('${ref}')` } : null;
+  }
+  if (/^MV-/.test(ref)) {
+    // Los movimientos de inventario no tienen ficha propia; el destino útil
+    // es el Kardex del producto involucrado.
+    const mov = (state.movimientos||[]).find(m => m.mov_id === ref);
+    return mov ? { label:'Ver en Kardex', fn:`closeModal('modal-asiento-detail');showPage('kardex',null)` } : null;
+  }
+  return null;
+}
+
+function showAsientoDetail(id) {
+  const a = (state.asientos||[]).find(x => x.id === id);
+  if (!a) { toast('Asiento no encontrado','error'); return; }
+  const lineas = (state.asientoLineas||[]).filter(l => l.asiento_id === a.id);
+  const totDebe  = lineas.reduce((s,l) => s + Number(l.debe||0), 0);
+  const totHaber = lineas.reduce((s,l) => s + Number(l.haber||0), 0);
+  // Tolerancia de un centavo: los montos se redondean a 4 decimales por
+  // línea, así que exigir igualdad exacta daría falsos descuadres.
+  const cuadra = Math.abs(totDebe - totHaber) < 0.01;
+  const esUSD  = a.moneda === 'USD';
+
+  document.getElementById('asiento-detail-title').textContent = `${a.numero} — ${DIARIO_LABEL[a.diario]||a.diario}`;
+  document.getElementById('asiento-detail-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px">
+      <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Fecha</div>
+        <div style="font-size:13px;font-weight:600">${fmtDate(a.fecha)}</div></div>
+      <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Diario</div>
+        <span class="badge ${DIARIO_COLOR[a.diario]||'badge-gray'}">${DIARIO_LABEL[a.diario]||a.diario}</span></div>
+      <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Referencia</div>
+        <div class="td-mono" style="font-size:13px;font-weight:600">${a.referencia||'—'}</div></div>
+      <div><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:3px">Moneda</div>
+        <div style="font-size:13px;font-weight:600">${a.moneda||'GTQ'}${esUSD?` · TC ${Number(a.tipo_cambio||0).toFixed(4)}`:''}</div></div>
+    </div>
+
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:4px">Descripción</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:20px">${a.descripcion||'—'}</div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Cuenta</th><th>Descripción</th>
+          ${esUSD?'<th style="text-align:right">Monto Orig.</th>':''}
+          <th style="text-align:right">Debe</th><th style="text-align:right">Haber</th>
+        </tr></thead>
+        <tbody>${lineas.map(l => `<tr>
+          <td><div class="td-mono" style="font-weight:600;font-size:12px">${l.cuenta_codigo||'—'}</div>
+              <div style="font-size:11px;color:var(--text3)">${l.cuenta_nombre||''}</div></td>
+          <td style="font-size:12px;color:var(--text2)">${l.descripcion||'—'}</td>
+          ${esUSD?`<td class="td-mono" style="text-align:right;color:var(--text3);font-size:12px">${l.moneda_orig||''} ${fmtNum(l.monto_orig)}</td>`:''}
+          <td class="td-mono" style="text-align:right">${Number(l.debe||0)?fmtGTQ(l.debe):''}</td>
+          <td class="td-mono" style="text-align:right">${Number(l.haber||0)?fmtGTQ(l.haber):''}</td>
+        </tr>`).join('')}</tbody>
+        <tfoot><tr style="border-top:2px solid var(--border);font-weight:700">
+          <td colspan="${esUSD?3:2}" style="text-align:right;padding-right:12px">Totales</td>
+          <td class="td-mono" style="text-align:right;color:var(--accent3)">${fmtGTQ(totDebe)}</td>
+          <td class="td-mono" style="text-align:right;color:var(--accent3)">${fmtGTQ(totHaber)}</td>
+        </tr></tfoot>
+      </table>
+    </div>
+    <div style="margin-top:12px">
+      ${cuadra
+        ? '<span class="badge badge-green">✓ Cuadra</span>'
+        : `<span class="badge badge-red">✗ Descuadrado por ${fmtGTQ(Math.abs(totDebe-totHaber))}</span>`}
+      ${a.estado_tc==='pendiente_tc'?'<span class="badge badge-yellow" style="margin-left:6px">Pendiente de TC</span>':''}
+    </div>`;
+
+  const destino = _asientoDrillDestino(a);
+  document.getElementById('asiento-detail-footer-actions').innerHTML =
+    `<button class="btn btn-ghost btn-sm" onclick="imprimirAsiento('${a.id}')">🖨 Imprimir</button>` +
+    (destino ? `<button class="btn btn-ghost btn-sm" onclick="${destino.fn}">${destino.label}</button>` : '');
+
+  openModal('modal-asiento-detail');
+}
+
+function closeAsientoDetail() { closeModal('modal-asiento-detail'); }
+
+function imprimirAsiento(id) {
+  const a = (state.asientos||[]).find(x => x.id === id);
+  if (!a) return;
+  const lineas   = (state.asientoLineas||[]).filter(l => l.asiento_id === a.id);
+  const totDebe  = lineas.reduce((s,l) => s + Number(l.debe||0), 0);
+  const totHaber = lineas.reduce((s,l) => s + Number(l.haber||0), 0);
+  const esUSD    = a.moneda === 'USD';
+
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/>
+    <title>${a.numero}</title>
+    <style>
+      body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;padding:32px;color:#1a1a1a;font-size:12px}
+      h1{font-size:18px;margin:0 0 2px}
+      .sub{color:#666;font-size:12px;margin-bottom:18px}
+      .meta{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+      .meta div span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700}
+      .meta div strong{font-size:12px}
+      table{width:100%;border-collapse:collapse;margin-top:8px}
+      th,td{padding:7px 8px;border-bottom:1px solid #e5e5e5;text-align:left}
+      th{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#666;border-bottom:1.5px solid #999}
+      .r{text-align:right}
+      .mono{font-family:'DM Mono',Menlo,Consolas,monospace}
+      tfoot td{font-weight:700;border-top:2px solid #999;border-bottom:none}
+      .desc{color:#666;font-size:11px}
+      .foot{margin-top:22px;font-size:10px;color:#888;border-top:1px solid #e5e5e5;padding-top:8px}
+    </style></head><body>
+    <h1>${a.numero}</h1>
+    <div class="sub">${DIARIO_LABEL[a.diario]||a.diario} · ${fmtDate(a.fecha)}</div>
+    <div class="meta">
+      <div><span>Referencia</span><strong class="mono">${a.referencia||'—'}</strong></div>
+      <div><span>Moneda</span><strong>${a.moneda||'GTQ'}</strong></div>
+      <div><span>Tipo de Cambio</span><strong>${esUSD?Number(a.tipo_cambio||0).toFixed(4):'—'}</strong></div>
+      <div><span>Estado</span><strong>${a.estado_tc==='pendiente_tc'?'Pendiente de TC':'Aplicado'}</strong></div>
+    </div>
+    <div><span style="font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700">Descripción</span><br/>${a.descripcion||'—'}</div>
+    <table>
+      <thead><tr><th>Cuenta</th><th>Descripción</th>${esUSD?'<th class="r">Monto Orig.</th>':''}<th class="r">Debe</th><th class="r">Haber</th></tr></thead>
+      <tbody>${lineas.map(l=>`<tr>
+        <td><strong class="mono">${l.cuenta_codigo||'—'}</strong><br/><span class="desc">${l.cuenta_nombre||''}</span></td>
+        <td class="desc">${l.descripcion||'—'}</td>
+        ${esUSD?`<td class="r mono desc">${l.moneda_orig||''} ${fmtNum(l.monto_orig)}</td>`:''}
+        <td class="r mono">${Number(l.debe||0)?fmtGTQ(l.debe):''}</td>
+        <td class="r mono">${Number(l.haber||0)?fmtGTQ(l.haber):''}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="${esUSD?3:2}" class="r">Totales</td>
+        <td class="r mono">${fmtGTQ(totDebe)}</td><td class="r mono">${fmtGTQ(totHaber)}</td></tr></tfoot>
+    </table>
+    <div class="foot">Impreso el ${fmtDate(today())}${Math.abs(totDebe-totHaber)>=0.01?' · ATENCIÓN: asiento descuadrado':''}</div>
+    <script>window.onload=()=>window.print();<\/script>
+    </body></html>`;
+
+  const w = window.open('', '_blank');
+  if (!w) { toast('El navegador bloqueó la ventana de impresión','error'); return; }
+  w.document.write(html); w.document.close();
+}
 
 // Imprime exactamente lo que está filtrado/visible en pantalla — reusa
 // los mismos 3 filtros (búsqueda, diario, mes) que renderDiarioGeneral(),
