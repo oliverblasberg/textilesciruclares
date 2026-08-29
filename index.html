@@ -6162,6 +6162,26 @@ function toast(msg, type='success') {
   setTimeout(() => t.className = '', 3000);
 }
 
+// ═══ AUDITORÍA (bitácora de acciones) ═══
+// Fire-and-forget: nunca bloquea el flujo principal ni interrumpe al
+// usuario si falla — pero tampoco falla en silencio total (console.error).
+// Base para el futuro análisis de patrones por Claude (28/Ago/2026).
+async function logAuditoria(modulo, accion, documentoTipo, documentoId, documentoNumero, detalle) {
+  try {
+    const { error } = await sb.from('erp_audit_log').insert({
+      usuario_email:    window._currentUser?.email || null,
+      modulo, accion,
+      documento_tipo:   documentoTipo,
+      documento_id:     documentoId || null,
+      documento_numero: documentoNumero || null,
+      detalle:          detalle || null
+    });
+    if (error) console.error('[auditoria] insert falló:', error.message);
+  } catch (e) {
+    console.error('[auditoria] excepción:', e);
+  }
+}
+
 // ═══ HELPERS ═══
 
 // Valor por defecto para un <input type="datetime-local"> — hora LOCAL, no
@@ -7530,6 +7550,9 @@ async function savePedido() {
     }
     const {error:ie} = await sb.from('erp_ov_items').insert(lines.map(l=>({...l, order_id: orderId})));
     if (ie) { toast('Error guardando líneas: '+ie.message,'error'); return; }
+    if (estadoElegido !== 'borrador' && (!existente || existente.status === 'borrador')) {
+      logAuditoria('ventas', 'confirmar', 'OV', orderId, row.order_number);
+    }
     toast(row.order_number ? `Orden de Venta OV-${String(row.order_number).padStart(4,'0')} guardada` : 'Borrador de Orden de Venta guardado');
     closeModal('modal-ped');
     await loadAll();
@@ -8249,7 +8272,7 @@ async function guardarPagoLibre() {
 
   if (tipo === 'oc') {
     const prov = (state.proveedores||[]).find(p=>p.id===entidadId);
-    const num_pago = nextNumPago();
+    const num_pago = await nextNumPago();
     const { data: pagoRow, error } = await sb.from('erp_pagos_oc').insert({
       proveedor_id: entidadId, factura_id: null,
       fecha, forma, cuenta_id, monto, referencia, num_pago, notas, moneda,
@@ -8364,15 +8387,21 @@ function _pagoCtaOpts() {
       .map(n=>`<option value="${n.id}">${n.codigo} — ${n.nombre}</option>`).join('');
 }
 
-function nextNumPago() {
-  const now   = new Date();
-  const year  = now.getFullYear();
-  const month = String(now.getMonth()+1).padStart(2,'0');
+// CORRELATIVOS — consultan Supabase directamente, NUNCA state en memoria
+// (26/Ago/2026, auditoría). Antes estas cinco funciones calculaban el
+// siguiente número desde `state`, que solo se refresca al llamar loadAll().
+// En una cascada —varios pagos, reabastecimientos o recepciones seguidos sin
+// recarga en medio— todas devolvían el MISMO número y el segundo insert
+// fallaba por clave duplicada, o peor, quedaban dos documentos con el mismo
+// correlativo. Consultar la base en cada llamada elimina esa ventana.
+async function nextNumPago() {
+  const now    = new Date();
+  const year   = now.getFullYear();
+  const month  = String(now.getMonth()+1).padStart(2,'0');
   const prefix = `NP-${year}-${month}-`;
-  const nums  = (state.pagosOC||[])
-    .filter(p => (p.num_pago||'').startsWith(prefix))
-    .map(p => parseInt((p.num_pago||'').slice(-3))||0);
-  const next  = (nums.length ? Math.max(...nums) : 0) + 1;
+  const { data } = await sb.from('erp_pagos_oc').select('num_pago').ilike('num_pago', `${prefix}%`);
+  const nums = (data||[]).map(p => parseInt((p.num_pago||'').slice(-3))||0);
+  const next = (nums.length ? Math.max(...nums) : 0) + 1;
   return `${prefix}${String(next).padStart(3,'0')}`;
 }
 
@@ -8751,7 +8780,7 @@ function _pagoHistorial(facturaId) {
 }
 
 // Single factura payment
-function openPagoOC(facturaId) {
+async function openPagoOC(facturaId) {
   const f      = state.ocFacturas.find(x=>x.id===facturaId);
   if (!f) return;
   const oc     = state.oc.find(o=>o.id===f.oc_id);
@@ -8762,7 +8791,7 @@ function openPagoOC(facturaId) {
   const pend   = Math.max(0, total - pagado);
   const monedaOC = getMonedaOC(oc?.id);
 
-  const _numPago = nextNumPago();
+  const _numPago = await nextNumPago();
   document.getElementById('pago-num-correlativo').textContent = _numPago;
   document.getElementById('pago-factura-id').dataset.numPago = _numPago;
   document.getElementById('pago-modo').value       = 'single';
@@ -8976,7 +9005,7 @@ async function savePago() {
       const oc   = state.oc.find(o=>o.id===f?.oc_id);
       const prov = state.proveedores.find(p=>p.id===document.getElementById('pago-proveedor-id').value);
 
-      const num_pago = document.getElementById('pago-factura-id').dataset.numPago || nextNumPago();
+      const num_pago = document.getElementById('pago-factura-id').dataset.numPago || await nextNumPago();
       // OJO: la columna real se llama "forma", no "metodo" — un desajuste de
       // nombre que hacía fallar CADA intento de guardar un pago (Supabase
       // rechaza inserts con columnas inexistentes).
@@ -9059,7 +9088,7 @@ async function savePago() {
       // las demás). Comparten num_pago para poder agruparse visualmente,
       // pero cada fila de erp_pagos_oc y su asiento son independientes y
       // reversables por separado — mismo requisito que single-mode.
-      const num_pago_multi = document.getElementById('pago-factura-id').dataset.numPago || nextNumPago();
+      const num_pago_multi = document.getElementById('pago-factura-id').dataset.numPago || await nextNumPago();
       const tcPagoMulti = esUSD ? getTCFecha(fecha) : 1;
       const ctaTransitoriaMulti = transitoriaNomenclatura(moneda, 'pago');
       const cuentaBancariaMulti = (state.cuentas||[]).find(c => c.id === cuenta_id);
@@ -10379,8 +10408,12 @@ async function nextLoteNum() {
   const nums = (data||[]).map(o => parseInt((o.lote_produccion||'').slice(-4))||0);
   return `LOTE-${y}-${String((nums.length ? Math.max(...nums) : 0)+1).padStart(4,'0')}`;
 }
-function nextRecNum() {
-  const nums = (state.recetas||[]).map(r => parseInt((r.codigo||'').replace('REC-',''))||0);
+async function nextRecNum() {
+  // Correlativo de RECETAS (REC-NNNN, sin año) — distinto de
+  // nextRecepcionNum(), que numera recepciones de OC como REC-YYYY-NNNN.
+  // Tablas distintas, no colisionan.
+  const { data } = await sb.from('erp_recetas').select('codigo').ilike('codigo', 'REC-%');
+  const nums = (data||[]).map(r => parseInt((r.codigo||'').replace('REC-',''))||0);
   return `REC-${String((nums.length ? Math.max(...nums) : 0)+1).padStart(4,'0')}`;
 }
 
@@ -10595,9 +10628,9 @@ function calcRecCantReal(rowId) {
 // tabla de "Costos de Conversión" que ya no existe en el HTML. Ver
 // comentario en el HTML de modal-receta y costoConversionPredeterminado().
 
-function openNewReceta() {
+async function openNewReceta() {
   document.getElementById('rec-id').value     = '';
-  const newCode = nextRecNum();
+  const newCode = await nextRecNum();
   document.getElementById('rec-codigo').value = newCode;
   document.getElementById('rec-codigo-display').textContent = newCode;
   document.getElementById('rec-tipo').value    = 'tejido_interno';
@@ -11762,12 +11795,57 @@ async function confirmarRollo() {
   if (!tejedor) { toast('Seleccioná el tejedor','error'); return; }
   if (!maquina) { toast('Seleccioná la máquina','error'); return; }
 
+  // Tolerancia de sobre-producción del 3%, compartida por los dos controles
+  // de abajo: el techo por material puesto y el techo por cantidad
+  // programada. Se declara acá arriba porque `const` no se iza — usarla
+  // antes de esta línea lanza ReferenceError y rompe toda la recepción.
+  const TOLERANCIA_SOBRE_RECEPCION_OP = 0.03;
+
+  // TOPE POR MATERIAL PUESTO (26/Ago/2026, detectado en pruebas: "en una OP
+  // me está dejando ingresar producción sin haber asignado MP").
+  //
+  // El bloque de tolerancia de abajo compara contra cantidad_prog, o sea
+  // contra lo que se PLANEÓ producir — no contra lo que el material
+  // realmente da. Con cero hilo asignado se podían ingresar rollos hasta la
+  // cantidad programada completa, creando tela de la nada.
+  //
+  // El mismo techo que aplica confirmarCompletarOP: si un insumo pide r kg
+  // por cada kg de salida y se pusieron c kg, el máximo es c/r. Manda el
+  // insumo que primero se agota. Va ANTES de la tolerancia del 3% porque es
+  // una restricción física, no una variación de proceso.
+  {
+    const resumenMat = insumosOPResumen(op);
+    const topesMat = resumenMat.map(r => {
+      const ratio = Number(op.cantidad_prog||0) > 0 ? r.total / Number(op.cantidad_prog) : 0;
+      if (!(ratio > 0)) return null;
+      const puesto = Math.max(Number(r.reabastecido||0), Number(r.consumoReal||0));
+      return { insumo: r.insumo?.description || '—', maxSalida: puesto / ratio, puesto };
+    }).filter(Boolean);
+
+    if (topesMat.length) {
+      const lim = topesMat.reduce((a,b) => a.maxSalida <= b.maxSalida ? a : b);
+      const recibidoPrevio = kgRecibidosOP(opId);
+      // Se compara el ACUMULADO (lo ya recibido más este rollo) contra el
+      // techo: rollo por rollo cada uno pasaría, pero la suma no debe.
+      const maxConTol = lim.maxSalida * (1 + TOLERANCIA_SOBRE_RECEPCION_OP);
+      if (recibidoPrevio + peso > maxConTol + 0.001) {
+        toast(
+          lim.puesto <= 0.0001
+            ? `No se puede recibir producción: esta OP no tiene material asignado. Asigná ${lim.insumo} antes de ingresar rollos.`
+            : `Este rollo excede lo que da el material puesto: con ${fmtNum(lim.puesto)} de ${lim.insumo} el máximo es ${fmtNum(lim.maxSalida)} kg ` +
+              `(${fmtNum(maxConTol)} con tolerancia del 3%) y ya se recibieron ${fmtNum(recibidoPrevio)} kg. Reabastecé el faltante.`,
+          'error'
+        );
+        return;
+      }
+    }
+  }
+
   // Tolerancia de sobre-recepción (22/Ago/2026, a pedido explícito — mismo
   // criterio que Recepción de OC: "hay veces por humedad o mejor
   // eficiencia que se produce un poco más de lo estipulado por la
   // merma"). Hasta lo programado (cantidad_prog), libre. Hasta +3%, exige
   // justificación manual. Más de +3%, bloqueado.
-  const TOLERANCIA_SOBRE_RECEPCION_OP = 0.03;
   let motivoOverrideRollo = '';
   {
     const recibidoHastaAhora = kgRecibidosOP(opId); // excluye rollos eliminados
@@ -12340,6 +12418,7 @@ async function confirmarCompletarOP() {
     mensajes.push(`ajuste de MP Q${Math.abs(totalDiffValorMP).toFixed(2)}`);
   }
 
+  logAuditoria('produccion', 'confirmar', 'OP', id, op.numero, { mensajes });
   toast(mensajes.length ? `OP completada — ${mensajes.join(', ')}` : 'OP completada');
   closeModal('modal-op-completar');
   await loadAll();
@@ -12451,6 +12530,7 @@ async function confirmarCancelarOP() {
     notas: [op.notas, `Cancelada: ${razon}${notas?' — '+notas:''}`].filter(Boolean).join(' | '),
   }).eq('id', id);
 
+  logAuditoria('produccion', 'cancelar', 'OP', id, op.numero, { razon, notas });
   closeModal('modal-cancelar-op');
 
   // If reason is subcontract → generate OC using subcontract recipe
@@ -13664,7 +13744,7 @@ function onCompraCheckChange() {
   btn.style.display = '';
 }
 
-function openPagoDesdeCompras() {
+async function openPagoDesdeCompras() {
   const checked = [...document.querySelectorAll('.compra-check:checked')];
   if (!checked.length) { toast('Selecciona al menos una factura','error'); return; }
 
@@ -13678,7 +13758,7 @@ function openPagoDesdeCompras() {
   const prov    = state.proveedores.find(p=>p.id===provId);
   const totalPend = checked.reduce((s,c)=>s+parseFloat(c.dataset.saldo||0),0);
 
-  const _numPago3 = nextNumPago();
+  const _numPago3 = await nextNumPago();
   document.getElementById('pago-num-correlativo').textContent = _numPago3;
   document.getElementById('pago-modo').value         = 'multi';
   const retIsrWrapMulti3 = document.getElementById('pago-retencion-isr-wrap');
@@ -14644,7 +14724,7 @@ async function confirmarAsignacionLotes(idx, insumoId) {
   // Correlativo REA-YYYY-NNNN — uno por cada confirmación (esta llamada =
   // un insumo confirmado), compartido por todas las filas que se insertan
   // en este mismo ciclo. Da visibilidad de qué se envió a cada orden.
-  const numeroReab = nextReabastecimientoNum();
+  const numeroReab = await nextReabastecimientoNum();
   const fechaReab   = today();
   for (const a of asignaciones) {
     const { error } = await sb.from('erp_reabastecimiento').insert({
@@ -15590,12 +15670,11 @@ let currentOCId = null;
 let currentVerFacturaOCId = null;
 
 // ── Correlativos ──
-function nextRecepcionNum() {
-  // Use REC-YYYY-XXXX format, unique across erp_oc_recepciones
+async function nextRecepcionNum() {
+  // REC-YYYY-NNNN, único en erp_oc_recepciones
   const year = new Date().getFullYear();
-  const nums = (state.ocRecepciones||[])
-    .filter(r => (r.numero||'').startsWith(`REC-${year}`))
-    .map(r => parseInt((r.numero||'').slice(-4))||0);
+  const { data } = await sb.from('erp_oc_recepciones').select('numero').ilike('numero', `REC-${year}-%`);
+  const nums = (data||[]).map(r => parseInt((r.numero||'').slice(-4))||0);
   const next = (nums.length ? Math.max(...nums) : 0) + 1;
   return `REC-${year}-${String(next).padStart(4,'0')}`;
 }
@@ -15605,11 +15684,10 @@ function nextRecepcionNum() {
 // REA-..."). Cada llamada a confirmarAsignacionLotes() (una por insumo
 // confirmado) genera UN numero nuevo, compartido por todas las filas de
 // erp_reabastecimiento que esa llamada inserte.
-function nextReabastecimientoNum() {
+async function nextReabastecimientoNum() {
   const year = new Date().getFullYear();
-  const nums = (state.reabastecimiento||[])
-    .filter(r => (r.numero||'').startsWith(`REA-${year}`))
-    .map(r => parseInt((r.numero||'').slice(-4))||0);
+  const { data } = await sb.from('erp_reabastecimiento').select('numero').ilike('numero', `REA-${year}-%`);
+  const nums = (data||[]).map(r => parseInt((r.numero||'').slice(-4))||0);
   const next = (nums.length ? Math.max(...nums) : 0) + 1;
   return `REA-${year}-${String(next).padStart(4,'0')}`;
 }
@@ -15617,11 +15695,13 @@ function nextReabastecimientoNum() {
 // Mismo patrón — correlativo para devoluciones de reabastecimiento
 // (21/Ago/2026, a pedido explícito). Se escanea devuelto_en_numero, no
 // numero (ese campo sigue siendo el REA original, nunca se sobreescribe).
-function nextDevolucionNum() {
+async function nextDevolucionNum() {
   const year = new Date().getFullYear();
-  const nums = (state.reabastecimiento||[])
-    .filter(r => (r.devuelto_en_numero||'').startsWith(`DEV-${year}`))
-    .map(r => parseInt((r.devuelto_en_numero||'').slice(-4))||0);
+  // Se escanea devuelto_en_numero, no numero (ese sigue siendo el REA
+  // original y nunca se sobreescribe).
+  const { data } = await sb.from('erp_reabastecimiento')
+    .select('devuelto_en_numero').ilike('devuelto_en_numero', `DEV-${year}-%`);
+  const nums = (data||[]).map(r => parseInt((r.devuelto_en_numero||'').slice(-4))||0);
   const next = (nums.length ? Math.max(...nums) : 0) + 1;
   return `DEV-${year}-${String(next).padStart(4,'0')}`;
 }
@@ -16021,6 +16101,7 @@ async function confirmarOC() {
   const update = { status: newStatus };
   if (!oc.numero) update.numero = await nextOCNum();
   await sb.from('erp_oc').update(update).eq('id', currentOCId);
+  logAuditoria('compras', 'confirmar', 'OC', currentOCId, update.numero || oc.numero);
   toast(`OC ${update.numero||oc.numero} confirmada`);
   await loadAll();
 
@@ -16048,6 +16129,7 @@ async function cancelarOC() {
     status: 'cancelada',
     notas: [oc.notas, motivo ? `Cancelada: ${motivo}` : 'Cancelada'].filter(Boolean).join(' | ')
   }).eq('id', currentOCId);
+  logAuditoria('compras', 'cancelar', 'OC', currentOCId, oc.numero, { motivo });
   toast(`${oc.numero?`OC ${oc.numero}`:'OC'} cancelada`);
   await loadAll();
   showOCPanel(currentOCId);
@@ -18136,7 +18218,7 @@ async function guardarPLBorrador() {
         recepcionId = existingRec.id;
         numero      = existingRec.numero;
       } else {
-        numero = nextRecepcionNum();
+        numero = await nextRecepcionNum();
         // Add offset for multi-lote to avoid collision
         if (totalRecCreadas > 0) {
           const base = parseInt(numero.slice(-4));
@@ -19432,7 +19514,7 @@ async function devolverReabastecimiento(numero) {
 
   if (!confirm(`¿Devolver ${totalCant.toFixed(3)} ${insumo?.unidad||''} de ${insumo?.description||insumo?.code||''} (${seleccion.length} lote${seleccion.length>1?'s':''})? Esto regresará la cantidad a inventario y revertirá proporcionalmente el asiento contable. Esta acción no se puede deshacer.`)) return;
 
-  const numeroDev = nextDevolucionNum();
+  const numeroDev = await nextDevolucionNum();
   const fechaDev  = today();
 
   for (const { row: r, cantidad } of seleccion) {
@@ -19621,7 +19703,7 @@ async function openRecepcion(ocIdParam, recepcionId) {
 
   // Section 1 — Header
   document.getElementById('rec-fecha').value          = existingRec?.fecha || today();
-  document.getElementById('rec-num').value            = existingRec?.numero || nextRecepcionNum();
+  document.getElementById('rec-num').value            = existingRec?.numero || await nextRecepcionNum();
   document.getElementById('rec-envio-header').value   = existingRec?.envio_numero || '';
   document.getElementById('rec-bodega').innerHTML =
     '<option value="">— Seleccionar —</option>' +
@@ -20563,6 +20645,7 @@ async function saveRecepcion() {
     }).eq('id', ocId);
     await loadAll();
 
+    logAuditoria('inventario', 'crear', 'Recepcion', rec.id, numero, { oc_id: ocId, items: recItems.length, cerrarConFaltante });
     closeModal('modal-recepcion');
     toast(
       `Recepción ${numero} confirmada — ${recItems.length} producto${recItems.length!==1?'s':''} ingresados a inventario` +
@@ -21893,6 +21976,7 @@ async function saveAjuste() {
     });
 
     if (movId) {
+      logAuditoria('inventario', 'ajuste', isConsig ? 'Consignacion' : 'Ajuste', movId, null, { producto_id, tipo, cantidad, notas });
       toast(isConsig ? `Consignación registrada — ${movId}` : `Ajuste registrado — ${movId}`);
       closeModal('modal-ajuste');
       await loadAll();
