@@ -10708,7 +10708,16 @@ async function saveReceta() {
   if (id) {
     ({error:err}=await sb.from('erp_recetas').update(row).eq('id',id));
     if (!err) {
-      await sb.from('erp_receta_lineas').delete().eq('receta_id',id);
+      // FIX (29/Ago/2026, auditoría): sin comprobar error, si este delete
+      // fallaba el insert posterior AGREGABA las líneas nuevas sobre las
+      // viejas — la receta quedaba con los insumos duplicados y la explosión
+      // de BOM pedía el doble de material.
+      const { error: errDel } = await sb.from('erp_receta_lineas').delete().eq('receta_id',id);
+      if (errDel) {
+        console.error('Error limpiando líneas previas de la receta:', errDel.message);
+        toast('No se pudo actualizar la receta: '+errDel.message,'error');
+        return;
+      }
     }
   } else {
     const {data,error}=await sb.from('erp_recetas').insert(row).select().single();
@@ -10744,7 +10753,28 @@ async function saveReceta() {
       requiere_reabastecimiento: !!insumoProd?.ruta_obtener_bajo_pedido,
     });
   });
-  if (insumos.length) await sb.from('erp_receta_lineas').insert(insumos);
+  // FIX (29/Ago/2026, auditoría): este insert no comprobaba error, y al EDITAR
+  // una receta las líneas anteriores ya se borraron unas líneas más arriba.
+  // Si el insert fallaba, la receta quedaba SIN MATERIALES: un BOM vacío que
+  // rompe la explosión de requerimientos, el costeo y la planificación de ese
+  // producto, sin que nada lo delate hasta que alguien intente producirlo.
+  if (insumos.length) {
+    const { error: errLin } = await sb.from('erp_receta_lineas').insert(insumos);
+    if (errLin) {
+      console.error('Error guardando líneas de receta:', errLin.message);
+      alert(
+        'ERROR — No se pudieron guardar los insumos de la receta\n\n' +
+        `${errLin.message}\n\n` +
+        (id
+          ? 'ATENCIÓN: los insumos anteriores ya se habían eliminado, así que la ' +
+            'receta quedó SIN MATERIALES. Vuelva a capturarlos antes de usarla en ' +
+            'una orden de producción.'
+          : 'La receta se creó pero sin insumos. Edítela para agregarlos.')
+      );
+      await loadAll();
+      return;
+    }
+  }
 
   // Bloque "Save costos" eliminado (15/Ago/2026) — la tabla
   // rec-costos ya no existe en el formulario; el costo de conversión
@@ -10759,8 +10789,28 @@ async function saveReceta() {
 
 async function deleteReceta(id) {
   if (!confirm('¿Eliminar esta receta?')) return;
-  await sb.from('erp_receta_lineas').delete().eq('receta_id',id);
-  await sb.from('erp_recetas').delete().eq('id',id);
+  // FIX (29/Ago/2026, auditoría): ninguno de los dos delete comprobaba error.
+  // Si fallaba el primero y pasaba el segundo, quedaban líneas huérfanas
+  // apuntando a una receta inexistente; si fallaba el segundo, quedaba una
+  // receta sin materiales. Se aborta ante el primer fallo para no dejar el
+  // BOM a medias.
+  const { error: errLin } = await sb.from('erp_receta_lineas').delete().eq('receta_id',id);
+  if (errLin) {
+    console.error('Error eliminando líneas de receta:', errLin.message);
+    toast('No se pudo eliminar la receta: '+errLin.message,'error');
+    return;
+  }
+  const { error: errRec } = await sb.from('erp_recetas').delete().eq('id',id);
+  if (errRec) {
+    console.error('Error eliminando receta:', errRec.message);
+    alert(
+      'ERROR — Los insumos se eliminaron pero la receta NO.\n\n' +
+      `${errRec.message}\n\n` +
+      'La receta quedó sin materiales. Vuelva a intentar eliminarla.'
+    );
+    await loadAll();
+    return;
+  }
   toast('Receta eliminada');
   await loadAll();
 }
@@ -11387,13 +11437,27 @@ async function saveOP(estado = 'borrador') {
     // recetaCostos que ya no existe.
     if (esSub_op && costoConvTotal > 0) {
       const provConvOP = state.proveedores.find(p=>p.id===proveedorPredeterminado(prodOP));
-      await sb.from('erp_op_costos').insert([{
+      // FIX (29/Ago/2026, auditoría): sin comprobar error, un fallo acá dejaba
+      // la OP iniciada pero SIN el costo de conversión registrado. El producto
+      // terminado se valorizaría solo con la MP, subvaluando el inventario y
+      // arrastrando ese costo faltante al costo de venta.
+      const { error: errCosto } = await sb.from('erp_op_costos').insert([{
         op_id: opId,
         descripcion: 'Servicio de conversión', tipo: 'por_kg',
         monto: costoConvTotal, moneda: 'GTQ', tipo_cambio: 1,
         monto_gtq: parseFloat(costoConvTotal.toFixed(4)),
         proveedor_id: provConvOP?.id||null,
       }]);
+      if (errCosto) {
+        console.error('Error registrando costo de conversión de la OP:', errCosto.message);
+        alert(
+          'ATENCIÓN — No se registró el costo de conversión de esta OP.\n\n' +
+          `${errCosto.message}\n\n` +
+          'El producto terminado quedará valorizado SOLO con la materia prima, ' +
+          'subvaluando el inventario. Registre el costo manualmente antes de ' +
+          'completar la orden.'
+        );
+      }
     }
 
     // Register inventory movements: entrada de producto terminado + rollo
@@ -13415,9 +13479,11 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
   // confirma manualmente y ahí se asigna el correlativo real.
   // 15/Ago/2026: costo del servicio ya no viene de recetaCostos (sección
   // eliminada de la receta) — se toma de la ficha del producto
-  // (Compra/Proveedores) vía costoConversionPredeterminado(), misma fuente
-  // que ya usa proveedorPredeterminado() dos líneas arriba.
-  const costoServPorKg = costoConversionPredeterminado(prod, tc);
+  // (Compra/Proveedores), misma fuente que ya usa proveedorPredeterminado()
+  // dos líneas arriba. 29/Ago/2026: se lee el precio NATIVO directamente de
+  // proveedores_compra en vez de costoConversionPredeterminado(), que
+  // devuelve el valor ya convertido a GTQ — ver el comentario del fix de
+  // doble tipo de cambio más abajo, en la inserción de la línea.
 
   const { data: ocServ, error: e1 } = await sb.from('erp_oc').insert({
     numero: null, proveedor_id: provSubId||null,
@@ -13437,13 +13503,36 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
 
   if (!e1) {
     // Línea: producto fabricado como servicio
+    //
+    // FIX (29/Ago/2026, reportado en vivo — AS-2026-00026 daba conversión
+    // Q1,884.86 en vez de Q247.24): antes esta línea guardaba
+    // `precio_unit: costoServPorKg` con `moneda:'GTQ'`, pero costoServPorKg
+    // viene de costoConversionPredeterminado(), que YA multiplica por el TC.
+    // O sea: se guardaba un valor GTQ en un campo que el resto del sistema
+    // asume en moneda NATIVA.
+    //
+    // El daño aparecía después: al abrir y guardar la OC, getOCLines()
+    // reconstruye las líneas desde el DOM y, si la fila no trae
+    // dataset.moneda, deduce la moneda desde la ficha del proveedor — que
+    // dice USD. El número (ya en GTQ) quedaba reetiquetado como USD, y la
+    // recepción lo volvía a multiplicar por el TC: doble conversión.
+    //
+    // Se guarda ahora el precio NATIVO con su moneda nativa, igual que la
+    // línea de compra normal de esta misma función (ver arriba). Así hay una
+    // sola convención en erp_oc_items —precio_unit siempre nativo— y la
+    // conversión ocurre una única vez, al final.
+    const infoConv     = (prod?.proveedores_compra||[])[0];
+    const precioServ   = Number(infoConv?.precio || 0);
+    const monedaServ   = infoConv?.moneda || 'GTQ';
+    const tcServ       = monedaServ === 'USD' ? tc : 1;
+    const precioServCta= parseFloat((precioServ * tcServ).toFixed(4));
     const { error: eLineaServ } = await sb.from('erp_oc_items').insert({
       oc_id: ocServ.id, producto_id: prod.id,
       cantidad, unidad: prod.unidad||'kg',
-      precio_unit: costoServPorKg, moneda: 'GTQ', tc: 1,
-      precio_unit_contable: costoServPorKg,
-      total_orig: costoServPorKg * cantidad,
-      total_contable: costoServPorKg * cantidad,
+      precio_unit: precioServ, moneda: monedaServ, tc: tcServ,
+      precio_unit_contable: precioServCta,
+      total_orig: parseFloat((precioServ * cantidad).toFixed(4)),
+      total_contable: parseFloat((precioServCta * cantidad).toFixed(4)),
     });
     if (eLineaServ) console.error('Error creando línea de OC servicio:', eLineaServ);
     toast(`Borrador de OC Servicio → ${provSub?.name||'subcontratista'} | ${cantidad} kg (pendiente de confirmar)`);
@@ -21296,7 +21385,14 @@ async function saveFacturaOC() {
   // Register in Libro de Compras
   // Calculate totals respecting IVA checkboxes per line
   const { neto: valor_neto, iva: valor_iva } = focNetoIvaFromDOM();
-  await sb.from('erp_compras').insert({
+  // FIX (29/Ago/2026, auditoría): este insert no comprobaba error. El Libro de
+  // Compras es un registro FISCAL: si falla, la factura existe en el sistema
+  // pero no aparece en el libro, y el neto que alimenta la retención ISR queda
+  // incompleto. Nadie se enteraba hasta cerrar el período.
+  // No se aborta el flujo —el asiento contable de abajo sigue siendo válido y
+  // la factura ya quedó grabada— pero se avisa con claridad para poder
+  // registrarla a mano.
+  const { error: errCompras } = await sb.from('erp_compras').insert({
     fecha, tipo: tipo||'FC', serie, numero,
     proveedor_id: prov?.id||null,
     valor_neto, valor_iva, valor_total: total,
@@ -21305,6 +21401,16 @@ async function saveFacturaOC() {
     moneda: monedaOC||'GTQ',
     notas: notas||`Factura OC ${oc?.numero||''}`,
   });
+  if (errCompras) {
+    console.error('Error registrando en Libro de Compras:', errCompras.message);
+    alert(
+      'ATENCIÓN — La factura se guardó pero NO se registró en el Libro de Compras.\n\n' +
+      `Factura: ${serie||''}-${numero||''}\n` +
+      `Error: ${errCompras.message}\n\n` +
+      'El Libro de Compras es un registro fiscal y alimenta el cálculo de la ' +
+      'retención ISR. Regístrela manualmente antes de cerrar el período.'
+    );
+  }
 
   // Generate accounting entry
   await loadAll();
