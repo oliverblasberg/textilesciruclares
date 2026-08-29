@@ -241,7 +241,14 @@ async function crearAsiento({ diario, fecha, descripcion, referencia, referencia
 
   const debe_total  = lineasFinal.reduce((s,l) => s + Number(l.debe_gtq||0),  0);
   const haber_total = lineasFinal.reduce((s,l) => s + Number(l.haber_gtq||0), 0);
-  const monto_orig_total = lineas.reduce((s,l) => s + (Number(l.debe||0)||Number(l.haber||0)), 0);
+  // FIX (26/Ago/2026, auditoría): antes esto sumaba TODAS las líneas, las de
+  // debe y las de haber, así que el resultado era siempre el DOBLE del valor
+  // real del asiento — una factura de USD 1,300 se guardaba como 2,600.
+  // Un asiento cuadra por definición: debe = haber = valor del asiento. Se
+  // suman solo las líneas de debe, que es ese valor.
+  // No afecta al mayor: debe_total y haber_total siempre estuvieron bien;
+  // el dato incorrecto era solo esta columna de la cabecera.
+  const monto_orig_total = lineas.reduce((s,l) => s + Number(l.debe||0), 0);
 
   const { data: asiento, error } = await sb.from('erp_asientos').insert({
     numero, diario, fecha: fechaStr, descripcion, referencia, referencia_id,
@@ -259,7 +266,33 @@ async function crearAsiento({ diario, fecha, descripcion, referencia, referencia
   if (error) { console.error('Error creando asiento:', error.message); return null; }
 
   const lineasConId = lineasFinal.map(l => ({ ...l, asiento_id: asiento.id }));
-  await sb.from('erp_asiento_lineas').insert(lineasConId);
+  const { error: errLineas } = await sb.from('erp_asiento_lineas').insert(lineasConId);
+
+  // FIX (29/Ago/2026, auditoría): este insert no comprobaba error. Si fallaba,
+  // la cabecera ya estaba insertada y publicada CON sus totales, pero sin una
+  // sola línea: un asiento fantasma que descuadra el mayor y no deja rastro.
+  //
+  // No hay transacción disponible desde el cliente, así que se compensa
+  // manualmente: se borra la cabecera recién creada para no dejar el asiento
+  // a medias. Si además fallara ese borrado, se avisa con el número para que
+  // se pueda limpiar a mano — es lo único que queda por hacer, pero al menos
+  // el operador se entera en vez de descubrirlo al cuadrar el mes.
+  if (errLineas) {
+    console.error('Error insertando líneas del asiento:', errLineas.message);
+    const { error: errRollback } = await sb.from('erp_asientos').delete().eq('id', asiento.id);
+    if (errRollback) {
+      console.error('Error revirtiendo la cabecera del asiento:', errRollback.message);
+      alert(
+        `ERROR CONTABLE — asiento ${numero} quedó incompleto\n\n` +
+        `No se pudieron guardar las líneas y tampoco revertir la cabecera.\n\n` +
+        `El asiento existe SIN LÍNEAS y descuadra el mayor.\n` +
+        `Elimínelo manualmente desde el Diario General antes de continuar.`
+      );
+    } else {
+      toast(`No se pudo registrar el asiento ${numero} — la operación contable no quedó guardada. Reintente.`, 'error');
+    }
+    return null;
+  }
 
   if (estadoTC === 'pendiente_tc') {
     const badge = document.getElementById('tc-pending-badge');
@@ -2213,11 +2246,20 @@ async function aplicarTCPendientes(fecha, tc) {
   if (!pendientes.length) return;
 
   let procesados = 0;
+  const fallidos = [];
   for (const asiento of pendientes) {
     const tcUsar = asiento.moneda === 'USD' ? tc : 1;
 
     // Update each linea with GTQ conversion
     const lineas = state.asientoLineas.filter(l => l.asiento_id === asiento.id);
+    // FIX (29/Ago/2026, auditoría): estos dos updates no comprobaban error.
+    // El riesgo acá no es solo perder el cambio: si algunas líneas se
+    // convierten y después falla la cabecera, el asiento queda MEZCLADO —
+    // líneas ya con el TC nuevo pero marcado todavía como pendiente_tc.
+    // Por eso, si falla cualquier línea, NO se toca la cabecera: el asiento
+    // sigue pendiente y se puede reintentar sin doble conversión, porque el
+    // cálculo parte de tc_aplicado, que no se modificó.
+    let errorEnLineas = null;
     for (const l of lineas) {
       const esUSD = asiento.moneda === 'USD';
       const monto = Number(l.monto_orig||0) || (Number(l.debe_gtq||0) + Number(l.haber_gtq||0));
@@ -2225,26 +2267,35 @@ async function aplicarTCPendientes(fecha, tc) {
       const haberOrig = Number(l.haber_gtq||0) / (esUSD ? (asiento.tc_aplicado||1) : 1);
       const debeGTQ   = esUSD ? parseFloat((debeOrig  * tcUsar).toFixed(4)) : debeOrig;
       const haberGTQ  = esUSD ? parseFloat((haberOrig * tcUsar).toFixed(4)) : haberOrig;
-      await sb.from('erp_asiento_lineas').update({
+      const { error: errL } = await sb.from('erp_asiento_lineas').update({
         debe: debeGTQ, haber: haberGTQ,
         debe_gtq: debeGTQ, haber_gtq: haberGTQ,
       }).eq('id', l.id);
+      if (errL) { errorEnLineas = errL; break; }
+    }
+    if (errorEnLineas) {
+      console.error(`Error aplicando TC a líneas de ${asiento.numero}:`, errorEnLineas.message);
+      fallidos.push(asiento.numero);
+      continue;   // cabecera intacta → reintentable
     }
 
-    // Update asiento header
-    const lineasActualizadas = lineas.map(l => ({
-      ...l,
-      debe:  asiento.moneda==='USD' ? Number(l.monto_orig||0)*tcUsar : Number(l.debe||0),
-      haber: asiento.moneda==='USD' ? 0 : Number(l.haber||0),
-    }));
-    await sb.from('erp_asientos').update({
+    const { error: errH } = await sb.from('erp_asientos').update({
       estado_tc:   'aplicado',
       fecha_tc:    fecha,
       tc_aplicado: tcUsar,
       tipo_cambio: tcUsar,
     }).eq('id', asiento.id);
+    if (errH) {
+      console.error(`Error marcando TC aplicado en ${asiento.numero}:`, errH.message);
+      fallidos.push(asiento.numero);
+      continue;
+    }
 
     procesados++;
+  }
+
+  if (fallidos.length) {
+    toast(`No se pudo aplicar el TC a ${fallidos.length} asiento(s): ${fallidos.join(', ')}. Siguen pendientes — reintente.`, 'error');
   }
 
   if (procesados > 0) {
