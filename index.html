@@ -7829,7 +7829,10 @@ function editFactura(id) {
   document.getElementById('modal-fact-title').textContent = 'Editar Factura';
   document.getElementById('fact-serie').value  = f.serie||'';
   document.getElementById('fact-number').value = f.invoice_number||'';
-  document.getElementById('fact-date').value = fmtDate(f.date);
+  // FIX (29/Ago/2026): fmtDate da 'dd/Mmm/aaaa' y un <input type="date"> lo
+  // rechaza, dejando el campo VACÍO al editar (mismo bug que oc-entrega y
+  // ped-date). Al guardar se escribía null y se perdía la fecha.
+  document.getElementById('fact-date').value = (f.date||'').split('T')[0];
   document.getElementById('fact-credito').value = f.credito||'inmediato';
   document.getElementById('fact-tipo').value = f.tipo||'cambiaria';
   toggleFactTipoOtro();
@@ -9472,7 +9475,8 @@ async function editPL(id) {
     orderField.outerHTML = `<input type="text" id="pl-order-display" readonly style="background:var(--surface2);color:var(--text2);width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-family:inherit;font-size:13.5px"/>`;
   }
   document.getElementById('pl-order-display').value = ovLabel(order) + ' — ' + clientName(order.customer_id);
-  document.getElementById('pl-date').value = fmtDate(pl.date);
+  // FIX (29/Ago/2026): ver nota en fact-date — <input type="date"> exige ISO.
+  document.getElementById('pl-date').value = (pl.date||'').split('T')[0];
   document.getElementById('pl-destination').value = pl.destination||'';
   document.getElementById('pl-carrier').value = pl.carrier||'';
   document.getElementById('pl-plate').value = pl.plate||'';
@@ -13339,7 +13343,7 @@ function formatOrigenCascada(origen_tipo, origen_id) {
 // real (no el texto) del documento que originó la orden generada, y así
 // poder mostrarlo en un campo estructurado del formulario en vez de solo en
 // notas.
-async function planificarAbastecimiento(productoId, cantidad, fecha, origen_tipo, origen_id, ovId = null, acc = null, origenRowId = null) {
+async function planificarAbastecimiento(productoId, cantidad, fecha, origen_tipo, origen_id, ovId = null, acc = null, origenRowId = null, recetaConsumidora = null) {
   const prod = state.productos.find(p => p.id === productoId);
   if (!prod) return null;
 
@@ -13351,7 +13355,13 @@ async function planificarAbastecimiento(productoId, cantidad, fecha, origen_tipo
     return await planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc, origenRowId);
   }
   if (prod.ruta_comprar) {
-    return await planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc, origenRowId);
+    // recetaConsumidora (29/Ago/2026): la receta que va a CONSUMIR lo que se
+    // compra. Su bodega_entrada_default es donde debe recibirse el material
+    // — para el hilo, BOD-01 según REC-0002. Se pasa desde el llamador
+    // porque en ese momento la receta ya está en alcance; buscarla acá sería
+    // ambiguo (un mismo hilo lo consumen REC-0002 → BOD-01 y REC-0003 →
+    // BOD-04, y no habría forma de saber cuál aplica).
+    return await planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc, origenRowId, recetaConsumidora);
   }
   if (prod.ruta_subcontratar) {
     return await planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_id, ovId, null, acc, origenRowId);
@@ -13425,7 +13435,9 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
   // recién creada (origenRowId = opData.id), no la que originó esta misma OP.
   for (const l of lineas) {
     const cantInsumo = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad;
-    await planificarAbastecimiento(l.insumo_id, cantInsumo, fecha, 'OP', numero, ovId, acc, opData.id);
+    // Se pasa `receta`: su bodega_entrada_default es donde debe recibirse
+    // el insumo que se va a comprar (ver planificarAbastecimiento).
+    await planificarAbastecimiento(l.insumo_id, cantInsumo, fecha, 'OP', numero, ovId, acc, opData.id, receta);
   }
 
   await loadAll();
@@ -13433,7 +13445,7 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
 }
 
 // ── Ruta: COMPRAR → genera OC ──────────────────────────────────
-async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc = null, origenRowId = null) {
+async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, ovId, acc = null, origenRowId = null, recetaConsumidora = null) {
   const provId = proveedorPredeterminado(prod);
   const prov   = state.proveedores.find(p => p.id === provId);
 
@@ -13443,12 +13455,25 @@ async function planificarCompra(prod, cantidad, fecha, origen_tipo, origen_id, o
   // revisa y confirma una por una (confirmarOC), y solo ahí se asigna el
   // correlativo real, para que quede un checkpoint humano visible sobre
   // qué se está comprando, no una asignación 100% automática.
+  //
+  // CAMPOS HEREDADOS (29/Ago/2026, a pedido explícito): antes la OC nacía
+  // sin bodega, incoterms ni términos de pago, y el operador los llenaba a
+  // mano en cada cascada.
+  //  · Bodega → bodega_entrada_default de la receta que va a CONSUMIR este
+  //    material: es donde debe recibirse. Para el hilo da BOD-01 según
+  //    REC-0002. Se lee de la receta y no se hardcodea, igual que en
+  //    planificarSubcontrato.
+  //  · Incoterms y términos de pago → de la ficha del proveedor.
   const tc = tcHoy() || 7.75;
+  const bodegaRecepcion = recetaConsumidora?.bodega_entrada_default || null;
   const { data: ocData, error } = await sb.from('erp_oc').insert({
     numero: null, proveedor_id: provId||null,
     fecha, entrega: fecha,
     status: 'borrador', tipo_oc: 'compra',
     ov_id: ovId,
+    bodega_id:     bodegaRecepcion,
+    incoterms:     prov?.incoterms_default || null,
+    terminos_pago: prov?.terminos_pago     || null,
     op_id: origen_tipo === 'OP' ? origenRowId : null,
     // Mismo patrón que erp_op.oc_id (planificarFabricacion, arriba): cuando
     // el origen del requerimiento es otra OC (ej. OC de tejido subcontratado
@@ -13597,7 +13622,9 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
     const cantMP = Number(l.cantidad_base||0) * (1 + Number(l.merma_pct||0)/100) * cantidad;
     // El origen para ESTOS insumos es la OC de servicio recién creada
     // (ocServ.id), no la que originó la subcontratación en sí.
-    await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', refServ, ovId, acc, ocServ?.id);
+    // Igual que en planificarFabricacion: la receta define en qué bodega se
+    // recibe el material que se compra para abastecer este subcontrato.
+    await planificarAbastecimiento(l.insumo_id, cantMP, fecha, 'OC-SUB', refServ, ovId, acc, ocServ?.id, receta);
   }
 
   await loadAll();
@@ -17905,8 +17932,9 @@ async function editSC(id) {
   const s=state.sc.find(x=>x.id===id);
   document.getElementById('sc-id').value=s.id;
   document.getElementById('sc-num').value=s.numero||'';
-  document.getElementById('sc-fecha').value=fmtDate(s.fecha);
-  document.getElementById('sc-entrega').value=fmtDate(s.entrega);
+  // FIX (29/Ago/2026): ver nota en fact-date — <input type="date"> exige ISO.
+  document.getElementById('sc-fecha').value  = (s.fecha||'').split('T')[0];
+  document.getElementById('sc-entrega').value= (s.entrega||'').split('T')[0];
   document.getElementById('sc-status').value=s.status||'borrador';
   document.getElementById('sc-notas').value=s.notas||'';
   document.getElementById('sc-lines').innerHTML='';
@@ -18024,7 +18052,14 @@ async function editOC(id) {
   document.getElementById('oc-id').value     = o.id;
   document.getElementById('oc-num').value    = o.numero||'';
   document.getElementById('oc-fecha').value  = o.fecha ? fmtDate(o.fecha) : today();
-  document.getElementById('oc-entrega').value= fmtDate(o.entrega);
+  // FIX (29/Ago/2026): acá se hacía `= fmtDate(o.entrega)`, que devuelve
+  // "26/Sep/2026". Un <input type="date"> solo acepta YYYY-MM-DD, así que el
+  // navegador RECHAZABA el valor y el campo quedaba vacío. Al guardar,
+  // saveOC lee ese campo vacío y escribe entrega=null — borrando la fecha
+  // que planificarSubcontrato había heredado de la OV. Por eso la OC de
+  // tintura aparecía sin entrega estimada pese a que el motor sí la ponía.
+  // Mismo bug que tenía editPedido con ped-date (corregido el 26/Ago).
+  document.getElementById('oc-entrega').value = (o.entrega||'').split('T')[0];
   document.getElementById('oc-status').value = o.status||'borrador';
   document.getElementById('oc-notas').value  = o.notas||'';
   document.getElementById('oc-representante').value = o.representante || window._currentUser?.email?.split('@')[0] || '';
