@@ -4843,6 +4843,17 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div class="field field-full"><label>Referencia</label>
           <select id="op-ov"><option value="">— Sin vincular (producción para stock) —</option></select>
         </div>
+        <!-- ORIGEN (29/Ago/2026, a pedido explícito): documento que disparó
+             este requerimiento. Cuando la OP nace de una cascada —típicamente
+             una OC de subcontrato que necesita que se fabrique su insumo— acá
+             se ve cuál. El dato ya se guardaba en erp_op.oc_id; solo faltaba
+             mostrarlo. Es de solo lectura: lo asigna el motor de
+             planificación, no el operador. -->
+        <div class="field field-full"><label>Origen</label>
+          <input type="text" id="op-origen" readonly
+                 placeholder="— Creada manualmente —"
+                 style="background:var(--surface2);color:var(--text2)"/>
+        </div>
         <div class="field"><label>Fecha Inicio</label><input type="date" id="op-fecha-inicio"/></div>
         <div class="field"><label>Fecha Fin Estimada</label><input type="date" id="op-fecha-fin"/></div>
         <div class="field"><label>Bodega Entrada (MP)</label>
@@ -11222,6 +11233,8 @@ async function openNewOP() {
   if (bodDefEnt) document.getElementById('op-bodega-entrada').value = bodDefEnt.id;
   if (bodDefSal) document.getElementById('op-bodega-salida').value  = bodDefSal.id;
   populateOVSelect('op-ov');
+  // OP creada a mano: no hay documento de origen que mostrar.
+  document.getElementById('op-origen').value = '';
 
   document.getElementById('modal-op-title').textContent = 'Nueva Orden de Producción';
   openModal('modal-op');
@@ -11285,6 +11298,15 @@ async function editOP(id) {
 
   populateOVSelect('op-ov');
   document.getElementById('op-ov').value = op.ov_id||'';
+  // ORIGEN: la OC que disparó este requerimiento (erp_op.oc_id, que ya
+  // llenaba el motor de planificación). Si esa OC sigue en borrador todavía
+  // no tiene número, así que se muestra el id corto — mismo criterio que usa
+  // el campo Origen de la OC. Si la OP se creó a mano, queda vacío y el
+  // placeholder aclara "Creada manualmente".
+  const ocOrigenOP = (state.oc||[]).find(x => x.id === op.oc_id);
+  document.getElementById('op-origen').value = ocOrigenOP
+    ? (ocOrigenOP.numero || `OC-borrador-${ocOrigenOP.id.slice(0,8)}`)
+    : '';
 
   document.getElementById('modal-op-title').textContent = op.numero || 'Orden de Producción';
   openModal('modal-op');
@@ -13485,10 +13507,31 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
   // devuelve el valor ya convertido a GTQ — ver el comentario del fix de
   // doble tipo de cambio más abajo, en la inserción de la línea.
 
+  // CAMPOS HEREDADOS (29/Ago/2026, a pedido explícito). Antes esta OC nacía
+  // casi vacía: entrega = fecha del requerimiento, y sin bodega, incoterms ni
+  // términos de pago — el operador tenía que llenarlos a mano en cada cascada.
+  //
+  //  · Entrega  → la fecha comprometida en la OV. Es la que manda: de nada
+  //    sirve que el subcontratista entregue después de la fecha del cliente.
+  //    Si la OV no tiene fecha de entrega, se cae a la fecha del requerimiento.
+  //  · Bodega   → bodega_salida_default de la RECETA, que es donde ya está
+  //    configurado a dónde entra cada producto (REC-0001 teñido → BOD-03
+  //    Producto Terminado, REC-0002 tejido → BOD-02 Tela Cruda). Se lee de
+  //    ahí y no se hardcodea BOD-03: así una receta futura de DF que salga a
+  //    BOD-06 funciona sin tocar código, y no se crea una segunda fuente de
+  //    verdad para un dato que ya existe.
+  //  · Incoterms y términos de pago → de la ficha del proveedor.
+  const ovOrigen   = ovId ? (state.pedidos||[]).find(o => o.id === ovId) : null;
+  const entregaOC  = (ovOrigen?.fecha_entrega || '').split('T')[0] || fecha;
+  const bodegaDest = receta.bodega_salida_default || null;
+
   const { data: ocServ, error: e1 } = await sb.from('erp_oc').insert({
     numero: null, proveedor_id: provSubId||null,
-    fecha, entrega: fecha, status: 'borrador',
+    fecha, entrega: entregaOC, status: 'borrador',
     tipo_oc: 'subcontrato', ov_id: ovId, receta_id: receta.id,
+    bodega_id:     bodegaDest,
+    incoterms:     provSub?.incoterms_default || null,
+    terminos_pago: provSub?.terminos_pago     || null,
     op_id: origen_tipo === 'OP' ? origenRowId : null,
     // Mismo criterio que planificarCompra — ver comentario ahí.
     oc_id: (origen_tipo === 'OC-SUB' || origen_tipo === 'OC') ? origenRowId : null,
@@ -17999,9 +18042,17 @@ async function editOC(id) {
   const sc = state.sc.find(x=>x.id===o.sc_id);
   const opOrigenOC = state.op.find(x=>x.id===o.op_id);
   const ocOrigenOC = state.oc.find(x=>x.id===o.oc_id);
+  // La OV se agregó como origen posible (29/Ago/2026, a pedido explícito):
+  // una OC de servicio de subcontrato nace directamente de una orden de venta
+  // vía el asistente de planificación, pero este campo solo sabía resolver
+  // SC, OP y OC — así que en esas OC el Origen se veía VACÍO pese a tener
+  // ov_id guardado. Se consulta al final para no cambiar la precedencia de
+  // los orígenes que ya funcionaban.
+  const ovOrigenOC = state.pedidos.find(x=>x.id===o.ov_id);
   document.getElementById('oc-sc-ref').value = sc ? sc.numero
     : (opOrigenOC ? opOrigenOC.numero
-    : (ocOrigenOC ? (ocOrigenOC.numero || `OC-borrador-${ocOrigenOC.id.slice(0,8)}`) : ''));
+    : (ocOrigenOC ? (ocOrigenOC.numero || `OC-borrador-${ocOrigenOC.id.slice(0,8)}`)
+    : (ovOrigenOC ? ovLabel(ovOrigenOC) : '')));
   document.getElementById('oc-lines').innerHTML='';
   ocLineCount=0;
   populateProvSelect('oc-proveedor', o.proveedor_id);
