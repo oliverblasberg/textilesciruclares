@@ -7034,6 +7034,13 @@ async function avanzarWizardPlanificacion() {
   if (btnDone) btnDone.style.display    = esUltimo ? 'inline-block' : 'none';
   if (banner)  banner.style.display     = 'flex';
 
+  // Cerrar cualquier modal abierto ANTES de navegar (30/Ago/2026, reportado
+  // en vivo). Sin esto el asistente sí cambiaba de paso y abría el documento
+  // correcto, pero quedaba TAPADO: el modal de la OV seguía encima al
+  // arrancar, y el de la OP al pasar a la OC de hilo. Parecía que la
+  // navegación no funcionaba cuando en realidad ocurría detrás.
+  ['modal-ped','modal-op','modal-oc','modal-op-detail'].forEach(closeModal);
+
   if (item.tipo === 'OP') {
     showPage('op-lista', null);
     setTimeout(() => editOP(item.id), 350);
@@ -11548,13 +11555,15 @@ async function editOP(id) {
   populateOVSelect('op-ov');
   document.getElementById('op-ov').value = op.ov_id||'';
   // ORIGEN: la OC que disparó este requerimiento (erp_op.oc_id, que ya
-  // llenaba el motor de planificación). Si esa OC sigue en borrador todavía
-  // no tiene número, así que se muestra el id corto — mismo criterio que usa
-  // el campo Origen de la OC. Si la OP se creó a mano, queda vacío y el
-  // placeholder aclara "Creada manualmente".
+  // llenaba el motor de planificación). Mientras esa OC siga en BORRADOR no
+  // tiene número asignado —los correlativos se asignan al confirmar— así que
+  // se muestra una etiqueta legible en vez del id crudo. En cuanto se
+  // confirma (al cerrar el asistente), este campo pasa a mostrar el número
+  // real sin hacer nada más: se resuelve al abrir, contra state.oc.
   const ocOrigenOP = (state.oc||[]).find(x => x.id === op.oc_id);
   document.getElementById('op-origen').value = ocOrigenOP
-    ? (ocOrigenOP.numero || `OC-borrador-${ocOrigenOP.id.slice(0,8)}`)
+    ? (ocOrigenOP.numero
+       || `OC de ${ocOrigenOP.tipo_oc === 'subcontrato' ? 'subcontrato' : 'compra'} — pendiente de confirmar`)
     : '';
 
   document.getElementById('modal-op-title').textContent = op.numero || 'Orden de Producción';
