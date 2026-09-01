@@ -5793,9 +5793,34 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
      explícito). Queda visible arriba de todo mientras el asistente navega
      entre Compras y Manufactura, para que el operador siempre sepa qué
      está confirmando y en qué paso va. -->
-<div id="wizard-plan-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:2000;background:var(--accent);color:#fff;padding:10px 20px;align-items:center;justify-content:center;gap:16px;font-size:13px;font-weight:600;box-shadow:var(--shadow-md)">
-  <span id="wizard-plan-text"></span>
-  <button onclick="salirWizardPlanificacion()" style="background:rgba(255,255,255,0.22);border:none;color:#fff;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">✕ Salir del asistente</button>
+<div id="wizard-plan-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:2000;background:var(--accent);color:#fff;padding:10px 20px;align-items:center;justify-content:center;gap:12px;font-size:13px;font-weight:600;box-shadow:var(--shadow-md)">
+  <button id="wizard-plan-prev" onclick="wizardPaso(-1)" title="Documento anterior"
+          style="background:rgba(255,255,255,0.22);border:none;color:#fff;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">← Anterior</button>
+  <span id="wizard-plan-text" style="min-width:340px;text-align:center"></span>
+  <button id="wizard-plan-next" onclick="wizardPaso(1)" title="Siguiente documento"
+          style="background:rgba(255,255,255,0.22);border:none;color:#fff;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Siguiente →</button>
+  <button id="wizard-plan-done" onclick="wizardConfirmarTodo()" title="Revisar y confirmar todos los documentos"
+          style="display:none;background:#fff;border:none;color:var(--accent);padding:5px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700">✓ Confirmar Todo</button>
+  <button onclick="salirWizardPlanificacion()" style="background:rgba(255,255,255,0.22);border:none;color:#fff;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">✕ Salir</button>
+</div>
+
+<!-- RESUMEN DE CONFIRMACIÓN DEL ASISTENTE (30/Ago/2026, a pedido explícito)
+     Se abre con "Confirmar Todo" en el último paso. Muestra qué documentos
+     se van a confirmar y el margen proyectado de la OV, para que la
+     confirmación en lote siga siendo una decisión consciente y no un
+     botón a ciegas. -->
+<div class="modal-overlay" id="modal-wizard-resumen">
+  <div class="modal" style="max-width:720px;width:92vw;max-height:88vh">
+    <div class="modal-header">
+      <div class="modal-title">Confirmar Planificación</div>
+      <button class="modal-close" onclick="closeModal('modal-wizard-resumen')">✕</button>
+    </div>
+    <div class="modal-body" id="wizard-resumen-body" style="padding:20px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-wizard-resumen')">Cancelar</button>
+      <button class="btn btn-primary" id="wizard-resumen-btn" onclick="wizardEjecutarConfirmacion()">✓ Confirmar Documentos</button>
+    </div>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -6916,17 +6941,26 @@ async function planificarAbastecimientoOV(ovId) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ASISTENTE DE PLANIFICACIÓN (15/Ago/2026, a pedido explícito)
+// ASISTENTE DE PLANIFICACIÓN (15/Ago/2026 · rediseñado 30/Ago/2026)
 // ═══════════════════════════════════════════════════════════════
-// Tras "Planificar Abastecimiento" en una OV, en vez de dejar al operador
-// buscando manualmente cada OC/OP generada entre Compras y Manufactura,
-// este asistente lo lleva automáticamente a cada documento, EN EL ORDEN
-// REAL DE LA CASCADA (ej. C-028-00: primero la OC de servicio de tintura,
-// luego la OP de tejido que la abastece, luego la OC de compra del hilo
-// que abastece esa OP) — y al confirmar cada uno, avanza solo al
-// siguiente. El operador sigue confirmando cada paso a mano (no se
-// auto-confirma nada) — el asistente solo elimina la navegación manual
-// entre módulos.
+// Tras "Planificar Abastecimiento" en una OV, lleva al operador a cada
+// OC/OP generada EN EL ORDEN REAL DE LA CASCADA (ej. C-028-00: OC de
+// servicio de tintura → OP de tejido que la abastece → OC de compra del
+// hilo que abastece esa OP), sin tener que buscarlas entre Compras y
+// Manufactura.
+//
+// REDISEÑO (30/Ago/2026, a pedido explícito). Antes el paso avanzaba SOLO
+// al confirmar un documento, y no había forma de retroceder. Eso tenía dos
+// consecuencias molestas: cerrar el modal para revisar un dato dejaba el
+// asistente clavado en el mismo paso (el banner nunca cambiaba), y la OV de
+// arranque ni siquiera tiene botón de confirmar, así que el único camino
+// era cerrarla.
+//
+// Ahora la navegación es libre — Anterior / Siguiente — y la confirmación
+// ocurre una sola vez al final, con un resumen previo. El checkpoint humano
+// se conserva: el resumen ES la confirmación consciente, solo que una vez en
+// vez de N. Los documentos ya existen como BORRADOR desde que se generó la
+// cascada, así que navegar sin confirmar no pierde nada.
 let planWizard = null; // { ovId, queue:[{tipo,id,label}], index }
 
 function iniciarWizardPlanificacion(ovId, queueRaw) {
@@ -6940,30 +6974,66 @@ function salirWizardPlanificacion() {
   planWizard = null;
   const banner = document.getElementById('wizard-plan-banner');
   if (banner) banner.style.display = 'none';
-  toast('Asistente cerrado — podés confirmar los documentos pendientes manualmente desde Compras y Manufactura.');
+  toast('Asistente cerrado — los documentos quedan en borrador y podés confirmarlos desde Compras y Manufactura.');
+}
+
+// Navegación entre pasos. delta = -1 (anterior) o +1 (siguiente).
+// Se limita al rango de la cola: no se sale por los extremos, solo se
+// deshabilitan los botones.
+function wizardPaso(delta) {
+  if (!planWizard) return;
+  const nuevo = planWizard.index + delta;
+  if (nuevo < 0 || nuevo >= planWizard.queue.length) return;
+  planWizard.index = nuevo;
+  avanzarWizardPlanificacion();
+}
+
+// Recalcula la cola descartando documentos que ya no existen o fueron
+// cancelados — pasa cuando se cancela en cascada desde dentro del asistente.
+// Se llama antes de navegar y antes de confirmar, para que el asistente no
+// intente abrir un documento muerto.
+function wizardDepurarCola() {
+  if (!planWizard) return;
+  const w = planWizard;
+  w.queue = w.queue.filter(it => {
+    const doc = it.tipo === 'OP'
+      ? (state.op||[]).find(o => o.id === it.id)
+      : (state.oc||[]).find(o => o.id === it.id);
+    return doc && doc.status !== 'cancelada' && doc.estado !== 'cancelada';
+  });
+  if (w.index >= w.queue.length) w.index = Math.max(0, w.queue.length - 1);
 }
 
 async function avanzarWizardPlanificacion() {
   if (!planWizard) return;
+  await loadAll();
+  wizardDepurarCola();
   const w = planWizard;
 
-  if (w.index >= w.queue.length) {
-    const total = w.queue.length;
-    planWizard = null;
-    const banner = document.getElementById('wizard-plan-banner');
-    if (banner) banner.style.display = 'none';
-    toast(`✓ Cascada completa — ${total} documento${total===1?'':'s'} confirmado${total===1?'':'s'}.`);
+  if (!w.queue.length) {
+    salirWizardPlanificacion();
+    toast('No quedan documentos en la planificación — se cancelaron todos.');
     return;
   }
 
-  const item  = w.queue[w.index];
-  const banner = document.getElementById('wizard-plan-banner');
+  const item      = w.queue[w.index];
+  const banner    = document.getElementById('wizard-plan-banner');
   const tipoLabel = item.tipo === 'OP' ? 'Orden de Producción' : 'Orden de Compra';
-  document.getElementById('wizard-plan-text').textContent =
-    `Asistente de Planificación · Paso ${w.index+1} de ${w.queue.length} — Confirmar ${tipoLabel}: ${item.label||''}`;
-  if (banner) banner.style.display = 'flex';
+  const esUltimo  = w.index === w.queue.length - 1;
 
-  await loadAll();
+  document.getElementById('wizard-plan-text').textContent =
+    `Paso ${w.index+1} de ${w.queue.length} — ${tipoLabel}: ${item.label||''}`;
+
+  // Los botones reflejan dónde estás: sin "Anterior" en el primero, y
+  // "Confirmar Todo" solo aparece al llegar al último.
+  const btnPrev = document.getElementById('wizard-plan-prev');
+  const btnNext = document.getElementById('wizard-plan-next');
+  const btnDone = document.getElementById('wizard-plan-done');
+  if (btnPrev) btnPrev.style.visibility = w.index === 0 ? 'hidden' : 'visible';
+  if (btnNext) btnNext.style.visibility = esUltimo ? 'hidden' : 'visible';
+  if (btnDone) btnDone.style.display    = esUltimo ? 'inline-block' : 'none';
+  if (banner)  banner.style.display     = 'flex';
+
   if (item.tipo === 'OP') {
     showPage('op-lista', null);
     setTimeout(() => editOP(item.id), 350);
@@ -6971,6 +7041,142 @@ async function avanzarWizardPlanificacion() {
     showPage('compras', null);
     setTimeout(() => showOCPanel(item.id), 350);
   }
+}
+
+// ── Resumen previo a confirmar, con P&L proyectado ──
+// El margen sale de los BORRADORES, así que es proyectado: el costo real
+// puede diferir por mermas, sobre-recepciones o variación de TC. Se avisa.
+function wizardConfirmarTodo() {
+  if (!planWizard) return;
+  wizardDepurarCola();
+  const w  = planWizard;
+  const ov = (state.pedidos||[]).find(p => p.id === w.ovId);
+  const tc = tcHoy() || 7.75;
+
+  // Venta: líneas de la OV, normalizadas a GTQ para poder restarles costos
+  // que pueden venir en otra moneda.
+  const lineasOV = (state.pedItems||[]).filter(i => i.order_id === w.ovId);
+  const ventaGTQ = lineasOV.reduce((s,l) => {
+    const monto = Number(l.total || (Number(l.qty_kg||0) * Number(l.unit_price||0)));
+    return s + (l.moneda === 'USD' ? monto * tc : monto);
+  }, 0);
+
+  // Costo: total de cada documento de la cascada, en el orden en que se leen.
+  const filas = w.queue.map(it => {
+    if (it.tipo === 'OP') {
+      const op = (state.op||[]).find(o => o.id === it.id);
+      const costos = (state.opCostos||[]).filter(c => c.op_id === it.id);
+      const total  = costos.reduce((s,c) => s + Number(c.monto_gtq || c.monto || 0), 0);
+      return { doc: op?.numero || '(borrador)', desc: it.label, costoGTQ: total, tipo:'OP' };
+    }
+    const oc    = (state.oc||[]).find(o => o.id === it.id);
+    const items = (state.ocItems||[]).filter(i => i.oc_id === it.id);
+    const total = items.reduce((s,i) => s + Number(i.total_contable || 0), 0);
+    return { doc: oc?.numero || '(borrador)', desc: it.label, costoGTQ: total, tipo:'OC' };
+  });
+
+  const costoGTQ = filas.reduce((s,f) => s + f.costoGTQ, 0);
+  const margen   = ventaGTQ - costoGTQ;
+  const pct      = ventaGTQ > 0 ? (margen / ventaGTQ * 100) : null;
+  const sinPrecio = ventaGTQ <= 0.01;
+
+  document.getElementById('wizard-resumen-body').innerHTML = `
+    <div style="font-size:12px;color:var(--text2);margin-bottom:16px">
+      Se confirmarán <strong>${filas.length}</strong> documento${filas.length===1?'':'s'} en el orden de la cascada.
+      Cada uno recibirá su correlativo definitivo.
+    </div>
+    <div class="table-wrap" style="margin-bottom:20px">
+      <table><thead><tr><th>Documento</th><th>Detalle</th><th style="text-align:right">Costo</th></tr></thead>
+        <tbody>${filas.map(f => `<tr>
+          <td><span class="badge ${f.tipo==='OP'?'badge-blue':'badge-green'}" style="font-size:10px">${f.tipo}</span>
+              <span class="td-mono" style="margin-left:6px;font-weight:600">${f.doc}</span></td>
+          <td style="font-size:12px;color:var(--text2)">${f.desc||''}</td>
+          <td class="td-mono" style="text-align:right">${f.costoGTQ>0?fmtGTQ(f.costoGTQ):'<span style="color:var(--text3)">—</span>'}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    ${sinPrecio ? `
+      <div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:12px;font-size:12px;color:#92400E">
+        <strong>Sin margen calculable.</strong> La orden de venta no tiene precio unitario cargado,
+        así que no se puede proyectar la rentabilidad. Los documentos se pueden confirmar igual.
+      </div>` : `
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:8px">
+        Margen proyectado — ${ovLabel(ov)}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px 20px;font-size:13px;max-width:380px">
+        <div>Venta</div>            <div class="td-mono" style="text-align:right">${fmtGTQ(ventaGTQ)}</div>
+        <div>Costo planificado</div><div class="td-mono" style="text-align:right;color:var(--red)">${fmtGTQ(costoGTQ)}</div>
+        <div style="border-top:1.5px solid var(--border);padding-top:6px;font-weight:700">Margen</div>
+        <div class="td-mono" style="border-top:1.5px solid var(--border);padding-top:6px;text-align:right;font-weight:700;color:${margen>=0?'var(--green)':'var(--red)'}">
+          ${fmtGTQ(margen)}${pct!==null?` (${pct.toFixed(1)}%)`:''}</div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:12px;line-height:1.5">
+        Costos <strong>proyectados</strong> según los borradores. El costo real puede variar por
+        mermas, sobre-recepciones o cambios en el tipo de cambio.
+        ${lineasOV.some(l=>l.moneda==='USD') ? `Convertido a GTQ al TC ${tc.toFixed(4)}.` : ''}
+      </div>`}
+  `;
+  openModal('modal-wizard-resumen');
+}
+
+async function wizardEjecutarConfirmacion() {
+  if (!planWizard) { closeModal('modal-wizard-resumen'); return; }
+  const btn = document.getElementById('wizard-resumen-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Confirmando…'; }
+
+  // Se confirma en el ORDEN DE LA CASCADA (tintura → OP → hilo), a pedido
+  // explícito: así los correlativos quedan en el mismo orden en que se leen
+  // los documentos. Confirmar solo asigna número y cambia el estado — no
+  // dispara asientos ni movimientos — así que el orden no afecta la
+  // integridad de los datos.
+  //
+  // Si algo falla a mitad, los documentos NO confirmados siguen existiendo
+  // como borrador (nunca se pierden) y se informa exactamente cuáles
+  // quedaron pendientes, para no tener que adivinar el estado.
+  const w = planWizard;
+  const ok = [], fallidos = [];
+  for (const it of [...w.queue]) {
+    try {
+      if (it.tipo === 'OP') {
+        const op = (state.op||[]).find(o => o.id === it.id);
+        if (!op || op.estado !== 'borrador') { ok.push(it.label); continue; }
+        const numero = op.numero || await nextOPNum();
+        const { error } = await sb.from('erp_op')
+          .update({ estado: 'confirmada', numero }).eq('id', it.id);
+        if (error) throw new Error(error.message);
+        ok.push(numero);
+      } else {
+        const oc = (state.oc||[]).find(o => o.id === it.id);
+        if (!oc || oc.status !== 'borrador') { ok.push(it.label); continue; }
+        const numero = oc.numero || await nextOCNum();
+        const nuevoStatus = oc.tipo_oc === 'subcontrato' ? 'confirmada' : 'confirmada';
+        const { error } = await sb.from('erp_oc')
+          .update({ status: nuevoStatus, numero }).eq('id', it.id);
+        if (error) throw new Error(error.message);
+        ok.push(numero);
+      }
+    } catch (e) {
+      console.error('Error confirmando documento de la planificación:', e);
+      fallidos.push(it.label || it.id);
+    }
+  }
+
+  closeModal('modal-wizard-resumen');
+  if (btn) { btn.disabled = false; btn.textContent = '✓ Confirmar Documentos'; }
+  await loadAll();
+
+  if (fallidos.length) {
+    alert(
+      `Se confirmaron ${ok.length} documento(s), pero ${fallidos.length} falló(aron):\n\n` +
+      fallidos.map(f => `  · ${f}`).join('\n') +
+      `\n\nLos que fallaron siguen en BORRADOR y no se perdieron. ` +
+      `Confírmelos manualmente desde Compras o Manufactura.`
+    );
+  } else {
+    toast(`✓ Planificación confirmada — ${ok.length} documento${ok.length===1?'':'s'}: ${ok.join(', ')}`);
+  }
+  salirWizardPlanificacion();
+  verPedido(w.ovId);
 }
 
 // ──────────────────────────────────────────────────
@@ -7505,6 +7711,45 @@ async function savePedido() {
     lines.push({ fabric_id, qty_yardas, qty_kg: qty, unit_price: price, total: qty*price });
   });
   if (!valid || !lines.length) { toast('Agregue al menos una tela válida','error'); return; }
+
+  // PRECIO CERO AL CONFIRMAR (30/Ago/2026, a pedido explícito).
+  // Una OV puede guardarse como BORRADOR sin precio —es normal mientras se
+  // cotiza— pero no puede CONFIRMARSE así: la venta se registraría en Q0,
+  // la factura saldría en cero y el margen de toda la cascada de
+  // planificación quedaría sin base de cálculo.
+  //
+  // Se valida acá, junto al resto de validaciones locales y ANTES de tocar
+  // la base, para que la OV no quede a medias. Se aborta con alert (no
+  // toast) porque bloquea una acción, no es un aviso al pasar: al aceptar,
+  // el operador se queda en el mismo modal con las líneas cargadas y puede
+  // corregir el precio de inmediato.
+  {
+    const estadoAConfirmar = document.getElementById('ped-status')?.value;
+    // 'borrador' se permite sin precio (todavía se está cotizando) y
+    // 'cancelado' también: bloquear una cancelación por falta de precio
+    // dejaría la OV atrapada, sin poder confirmarla ni darla de baja.
+    const requierePrecio = estadoAConfirmar
+      && estadoAConfirmar !== 'borrador'
+      && estadoAConfirmar !== 'cancelado';
+    if (requierePrecio) {
+      const sinPrecio = lines.filter(l => !(Number(l.unit_price) > 0));
+      if (sinPrecio.length) {
+        const nombres = sinPrecio.map(l => {
+          const p = state.productos.find(x => x.id === l.fabric_id);
+          return `  · ${p?.description || p?.code || 'producto sin identificar'}`;
+        });
+        alert(
+          'NO SE PUEDE CONFIRMAR — Hay líneas con precio unitario en cero\n\n' +
+          nombres.join('\n') + '\n\n' +
+          'Al confirmarse, la venta se registraría en Q0: la factura saldría en cero ' +
+          'y la planificación no tendría contra qué calcular el margen.\n\n' +
+          'Ingrese el precio unitario y vuelva a confirmar. ' +
+          'Si todavía está cotizando, puede guardarla como Borrador.'
+        );
+        return;   // se queda en el modal, con las líneas intactas
+      }
+    }
+  }
 
   // El guard se activa recién acá — después de las validaciones locales
   // (que no tocan la base de datos, así que no hay riesgo de duplicado
@@ -11500,9 +11745,13 @@ async function saveOP(estado = 'borrador') {
   // Producción" es el equivalente de "confirmar" para una OP. Si esta OP
   // es justo el paso actual del asistente, avanza sola al siguiente
   // documento.
-  if (estado === 'en_proceso' && planWizard && planWizard.queue[planWizard.index]?.id === opId) {
-    planWizard.index++;
-    avanzarWizardPlanificacion();
+  // REDISEÑO (30/Ago/2026): ya NO se auto-avanza al confirmar. La navegación
+  // del asistente es manual (Anterior / Siguiente) y la confirmación ocurre
+  // en lote al final. Auto-avanzar acá arrastraría al operador al siguiente
+  // documento en contra de su navegación. Solo se refresca el banner por si
+  // el estado del paso actual cambió.
+  if (planWizard && planWizard.queue[planWizard.index]?.id === opId) {
+    await loadAll();
   }
 }
 
@@ -16267,11 +16516,9 @@ async function confirmarOC() {
   // Asistente de Planificación (15/Ago/2026, a pedido explícito): si esta
   // OC es justo el paso actual del asistente, avanza sola al siguiente
   // documento en vez del refresh normal del panel.
-  if (planWizard && planWizard.queue[planWizard.index]?.id === currentOCId) {
-    planWizard.index++;
-    avanzarWizardPlanificacion();
-    return;
-  }
+  // REDISEÑO (30/Ago/2026): ver nota equivalente en el cambio de estado de
+  // la OP — la navegación del asistente ya no se mueve sola al confirmar.
+  // Se deja seguir el refresh normal del panel.
 
   showOCPanel(currentOCId);
 }
