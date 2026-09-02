@@ -7061,12 +7061,21 @@ function wizardConfirmarTodo() {
   const tc = tcHoy() || 7.75;
 
   // Venta: líneas de la OV, normalizadas a GTQ para poder restarles costos
-  // que pueden venir en otra moneda.
+  // que ya vienen en GTQ.
+  //
+  // FIX (30/Ago/2026, reportado en vivo): antes se leía `l.moneda` de cada
+  // LÍNEA, pero savePedido construye las líneas sin ese campo —la moneda
+  // vive en la CABECERA de la OV (erp_ov.moneda, que sale de
+  // getMonedaOV(cliente))—. Verificado en la base: moneda_linea = null en
+  // todas las OV. Como la condición nunca se cumplía, una venta en USD se
+  // sumaba como si fuera GTQ y el margen salía inflado ~7.6 veces contra
+  // costos que sí estaban convertidos.
+  const monedaOV = ov?.moneda || 'GTQ';
+  const esVentaUSD = monedaOV === 'USD';
   const lineasOV = (state.pedItems||[]).filter(i => i.order_id === w.ovId);
-  const ventaGTQ = lineasOV.reduce((s,l) => {
-    const monto = Number(l.total || (Number(l.qty_kg||0) * Number(l.unit_price||0)));
-    return s + (l.moneda === 'USD' ? monto * tc : monto);
-  }, 0);
+  const ventaOrig = lineasOV.reduce((s,l) =>
+    s + Number(l.total || (Number(l.qty_kg||0) * Number(l.unit_price||0))), 0);
+  const ventaGTQ = esVentaUSD ? ventaOrig * tc : ventaOrig;
 
   // Costo: total de cada documento de la cascada, en el orden en que se leen.
   const filas = w.queue.map(it => {
@@ -7108,10 +7117,11 @@ function wizardConfirmarTodo() {
         así que no se puede proyectar la rentabilidad. Los documentos se pueden confirmar igual.
       </div>` : `
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:8px">
-        Margen proyectado — ${ovLabel(ov)}
+        Margen proyectado — ${ovLabel(ov)} · todo en GTQ
       </div>
-      <div style="display:grid;grid-template-columns:1fr auto;gap:6px 20px;font-size:13px;max-width:380px">
-        <div>Venta</div>            <div class="td-mono" style="text-align:right">${fmtGTQ(ventaGTQ)}</div>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px 20px;font-size:13px;max-width:420px">
+        <div>Venta${esVentaUSD?` <span style="color:var(--text3);font-size:11px">(${fmtUSD(ventaOrig)} × ${tc.toFixed(4)})</span>`:''}</div>
+        <div class="td-mono" style="text-align:right">${fmtGTQ(ventaGTQ)}</div>
         <div>Costo planificado</div><div class="td-mono" style="text-align:right;color:var(--red)">${fmtGTQ(costoGTQ)}</div>
         <div style="border-top:1.5px solid var(--border);padding-top:6px;font-weight:700">Margen</div>
         <div class="td-mono" style="border-top:1.5px solid var(--border);padding-top:6px;text-align:right;font-weight:700;color:${margen>=0?'var(--green)':'var(--red)'}">
@@ -7120,7 +7130,7 @@ function wizardConfirmarTodo() {
       <div style="font-size:11px;color:var(--text3);margin-top:12px;line-height:1.5">
         Costos <strong>proyectados</strong> según los borradores. El costo real puede variar por
         mermas, sobre-recepciones o cambios en el tipo de cambio.
-        ${lineasOV.some(l=>l.moneda==='USD') ? `Convertido a GTQ al TC ${tc.toFixed(4)}.` : ''}
+        ${esVentaUSD ? `La venta está en USD y se convirtió a GTQ al TC ${tc.toFixed(4)} para poder compararla contra los costos.` : ''}
       </div>`}
   `;
   openModal('modal-wizard-resumen');
