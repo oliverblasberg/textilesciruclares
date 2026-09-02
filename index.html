@@ -17045,8 +17045,8 @@ function _asientosTablaHTML(asientos, forPrint, contexto) {
         <td style="padding:6px 10px;font-size:11px;font-family:'DM Mono',monospace">${l.cuenta_codigo||'—'} ${l.cuenta_nombre||''}</td>
         <td style="padding:6px 10px;font-size:11px;color:${text3}">${l.descripcion||'—'}</td>
         <td style="padding:6px 10px;text-align:right;font-family:'DM Mono',monospace;font-size:11px">${fmtMoney(montoOriginal, l.moneda_orig||monedaAsi)}</td>
-        <td style="padding:6px 10px;text-align:right;font-family:'DM Mono',monospace;font-size:11px">${Number(l.debe||0)>0?fmtMoney(Number(l.debe||0), monedaAsi):''}</td>
-        <td style="padding:6px 10px;text-align:right;font-family:'DM Mono',monospace;font-size:11px">${Number(l.haber||0)>0?fmtMoney(Number(l.haber||0), monedaAsi):''}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:'DM Mono',monospace;font-size:11px">${Number(l.debe||0)>0?fmtGTQ(Number(l.debe||0)):''}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:'DM Mono',monospace;font-size:11px">${Number(l.haber||0)>0?fmtGTQ(Number(l.haber||0)):''}</td>
       </tr>`;
     }).join('');
     return `<div style="margin-bottom:18px">
@@ -17060,8 +17060,8 @@ function _asientosTablaHTML(asientos, forPrint, contexto) {
           <th style="padding:6px 10px;text-align:left;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Cuenta</th>
           <th style="padding:6px 10px;text-align:left;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Descripción</th>
           <th style="padding:6px 10px;text-align:right;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Monto Original</th>
-          <th style="padding:6px 10px;text-align:right;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Debe</th>
-          <th style="padding:6px 10px;text-align:right;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Haber</th>
+          <th style="padding:6px 10px;text-align:right;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Debe (GTQ)</th>
+          <th style="padding:6px 10px;text-align:right;font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${text3}">Haber (GTQ)</th>
         </tr></thead>
         <tbody>${filas}</tbody>
         <tfoot><tr>
