@@ -2771,8 +2771,19 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <div class="field"><label>Email</label><input type="email" id="clt-prod-email" placeholder="produccion@empresa.com"/></div>
           <div class="field"><label>Teléfono</label><input type="text" id="clt-prod-tel" placeholder="+502 0000-0000"/></div>
           <div class="form-section-title">Logística</div>
+          <!-- BODEGA PREDETERMINADA — DESACTIVADA (30/Ago/2026, a pedido
+               explícito). Mostraba las bodegas de LA EMPRESA, que no es lo
+               que corresponde para un cliente: acá debería ir el destino del
+               cliente, no un almacén propio. Se deja visible pero
+               deshabilitada para no perder el campo ni la columna
+               (erp_customers.bodega_id sigue guardando lo que ya hubiera);
+               se retomará cuando se defina el modelo de destinos. -->
           <div class="field field-full"><label>Bodega Predeterminada</label>
-            <select id="clt-bodega"><option value="">— Seleccionar bodega —</option></select>
+            <select id="clt-bodega" disabled
+                    title="Pendiente de definir — se trabajará más adelante"
+                    style="background:var(--surface2);color:var(--text3);cursor:not-allowed">
+              <option value="">— Pendiente de configurar —</option>
+            </select>
           </div>
           <div class="field field-full"><label>Incoterms Predeterminado</label>
             <select id="clt-incoterms"><option value="">— Seleccionar —</option></select>
@@ -2794,7 +2805,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-cliente')">Cerrar</button>
-      <button class="btn btn-primary" onclick="saveCliente()">Guardar</button>
+      <button class="btn btn-primary" id="btn-clt-guardar" onclick="saveCliente()">Guardar</button>
     </div>
   </div>
 </div>
@@ -6348,10 +6359,9 @@ function editCliente(id) {
   document.getElementById('clt-notes').value   = c.notes||'';
   document.getElementById('clt-terminos').innerHTML = terminosPagoOpts(c.terminos_pago||'');
   document.getElementById('clt-incoterms').innerHTML = incotermsOpts(c.incoterms||'');
-  document.getElementById('clt-bodega').innerHTML =
-    '<option value="">— Seleccionar bodega —</option>' +
-    (state.bodegas||[]).filter(b=>b.activa!==false)
-      .map(b=>`<option value="${b.id}"${b.id===c.bodega_id?' selected':''}>${b.codigo?b.codigo+' — ':''}${b.nombre}</option>`).join('');
+  // Bodega Predeterminada desactivada (30/Ago/2026) — ver nota en el HTML.
+  // Ya no se puebla con las bodegas de la empresa; el valor existente en
+  // erp_customers.bodega_id se conserva pero no se muestra ni se edita.
   document.getElementById('clt-moneda').value   = c.moneda||'GTQ';
   document.getElementById('clt-moneda2').value  = c.moneda2||'';
   onCltMonedaChange();
@@ -6366,10 +6376,7 @@ function resetClienteForm() {
   document.getElementById('clt-pais').value = 'GT';
   document.getElementById('clt-terminos').innerHTML = terminosPagoOpts();
   document.getElementById('clt-incoterms').innerHTML = incotermsOpts();
-  document.getElementById('clt-bodega').innerHTML =
-    '<option value="">— Seleccionar bodega —</option>' +
-    (state.bodegas||[]).filter(b=>b.activa!==false)
-      .map(b=>`<option value="${b.id}">${b.codigo?b.codigo+' — ':''}${b.nombre}</option>`).join('');
+  // Bodega Predeterminada desactivada (30/Ago/2026) — ver nota en el HTML.
   document.getElementById('clt-moneda').value  = 'GTQ';
   document.getElementById('clt-moneda2').value = '';
   onCltMonedaChange();
@@ -6378,7 +6385,26 @@ function resetClienteForm() {
   openModal('modal-cliente');
 }
 
+let guardandoCliente = false; // guard contra doble-submit — ver saveCliente()
+
 async function saveCliente() {
+  // GUARD CONTRA DOBLE CLIC (30/Ago/2026, reportado en vivo: "me hizo 2 veces
+  // el mismo registro del cliente").
+  //
+  // La causa era una carrera, no un descuido: la validación de NIT duplicado
+  // consulta `state.clientes`, que solo se refresca al terminar loadAll(). Dos
+  // clics seguidos disparan dos saveCliente() casi simultáneos; ambos leen el
+  // state VIEJO (sin el cliente recién creado), ambos pasan la validación, y
+  // ambos insertan. El chequeo de duplicados no puede atrapar esto porque la
+  // primera fila todavía no existe cuando el segundo la busca.
+  //
+  // Mismo patrón que savePedido(): bandera + botón deshabilitado, para que
+  // además el usuario vea de inmediato que el clic sí se registró.
+  if (guardandoCliente) return;
+
+  const btnGuardar = document.getElementById('btn-clt-guardar');
+  const btnTextoOriginal = btnGuardar?.textContent;
+
   try {
     const id   = document.getElementById('clt-id').value;
     const code = document.getElementById('clt-code').value.trim();
@@ -6387,17 +6413,14 @@ async function saveCliente() {
     const esLocal = !pais || pais === 'GT';
     if (esLocal && !code) { toast('NIT es requerido para clientes de Guatemala','error'); return; }
     if (!name) { toast('El nombre es requerido','error'); return; }
+    // Chequeo de NIT duplicado. Estaba escrito DOS VECES seguidas, idéntico
+    // (30/Ago/2026): se eliminó la copia. Solo aplica si hay NIT — los
+    // clientes del exterior pueden no tenerlo.
     if (code) {
       const duplicate = state.clientes.find(c => c.code === code && c.id !== id);
       if (duplicate) { toast(`Ya existe un cliente con NIT ${code}: "${duplicate.name}"`, 'error'); return; }
     }
 
-    // NIT uniqueness check
-    const duplicate = state.clientes.find(c => c.code === code && c.id !== id);
-    if (duplicate) {
-      toast(`Ya existe un cliente con NIT ${code}: "${duplicate.name}"`, 'error');
-      return;
-    }
     const moneda  = document.getElementById('clt-moneda').value;
     const moneda2 = document.getElementById('clt-moneda2').value;
     const row = {
@@ -6418,8 +6441,17 @@ async function saveCliente() {
       notes:         document.getElementById('clt-notes').value.trim(),
       terminos_pago: document.getElementById('clt-terminos')?.value||null,
       incoterms:     document.getElementById('clt-incoterms')?.value||null,
-      bodega_id:     document.getElementById('clt-bodega')?.value||null,
+      // El selector está deshabilitado y vacío, así que leerlo devolvería ''
+      // y BORRARÍA el bodega_id que el cliente ya tuviera. Se conserva el
+      // valor existente hasta que se retome el campo.
+      bodega_id:     (id ? (state.clientes||[]).find(c=>c.id===id)?.bodega_id : null) || null,
     };
+
+    // El guard se activa recién acá — después de las validaciones locales
+    // (que no tocan la base) y antes de la primera operación async real.
+    guardandoCliente = true;
+    if (btnGuardar) { btnGuardar.disabled = true; btnGuardar.textContent = 'Guardando…'; }
+
     let err;
     if (id) ({error:err} = await sb.from('erp_customers').update(row).eq('id',id));
     else    ({error:err} = await sb.from('erp_customers').insert(row));
@@ -6427,11 +6459,20 @@ async function saveCliente() {
       alert('Error al guardar cliente:\n\n' + err.message + '\nCode: ' + (err.code||'') + '\nDetails: ' + (err.details||''));
       return;
     }
-    toast('✓ Cliente guardado');
     await loadAll();
-    document.getElementById('modal-cliente-title').textContent = 'Editar Cliente';
+    // Cerrar el modal y volver al listado (30/Ago/2026, a pedido explícito).
+    // Antes el modal quedaba abierto tras guardar, así que no había señal
+    // clara de que la operación había terminado — y esa falta de feedback era
+    // justo lo que llevaba a volver a apretar Guardar.
+    closeModal('modal-cliente');
+    toast(`✓ Cliente ${id ? 'actualizado' : 'creado'}: ${name}`);
   } catch(e) {
     alert('Error inesperado en saveCliente:\n\n' + e.message + '\n\n' + e.stack);
+  } finally {
+    // Siempre se libera, incluso si algo falló: si no, el botón quedaría
+    // muerto y el usuario tendría que recargar la página.
+    guardandoCliente = false;
+    if (btnGuardar) { btnGuardar.disabled = false; btnGuardar.textContent = btnTextoOriginal || 'Guardar'; }
   }
 }
 
