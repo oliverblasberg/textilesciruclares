@@ -5870,7 +5870,7 @@ let state = {
   sc: [], scItems: [],
   oc: [], ocItems: [],
   ocRecepciones: [], ocRecepcionItems: [],
-  ocFacturas: [], ocAnticipos: [],
+  ocFacturas: [], ocFacturaItems: [], ocAnticipos: [],
   asientos: [], asientoLineas: [],
   diarios: [],
   bodegas: [],
@@ -5947,7 +5947,7 @@ function enterModule(hub) {
 // ═══ DATA LOAD ═══
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
-         sc, scI, oc, ocI, ocR, ocRI, plC, ocF, pagosOC, ocA, asi, asiL, dj, bod, tc,
+         sc, scI, oc, ocI, ocR, ocRI, plC, ocF, ocFI, pagosOC, ocA, asi, asiL, dj, bod, tc,
          rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
@@ -5974,6 +5974,7 @@ async function loadAll() {
     sb.from('erp_oc_recepcion_items').select('*'),
     sb.from('erp_oc_pl').select('*').order('no_caja'),
     sb.from('erp_oc_facturas').select('*').order('fecha',{ascending:false}),
+    sb.from('erp_oc_factura_items').select('*'),
     sb.from('erp_pagos_oc').select('*').order('fecha',{ascending:false}),
     sb.from('erp_oc_anticipos').select('*').order('fecha',{ascending:false}),
     sb.from('erp_asientos').select('*').order('fecha',{ascending:false}),
@@ -6005,7 +6006,8 @@ async function loadAll() {
     erp_hilos:hil, erp_price_lists:prc, erp_proveedores:prov, erp_compras:cmp,
     erp_productos:prod, erp_categorias:catg, erp_movimientos_inv:mov, erp_nomenclatura:nom,
     erp_sc:sc, erp_sc_items:scI, erp_oc:oc, erp_oc_items:ocI, erp_oc_recepciones:ocR,
-    erp_oc_recepcion_items:ocRI, erp_oc_pl:plC, erp_oc_facturas:ocF, erp_pagos_oc:pagosOC,
+    erp_oc_recepcion_items:ocRI, erp_oc_pl:plC, erp_oc_facturas:ocF,
+    erp_oc_factura_items:ocFI, erp_pagos_oc:pagosOC,
     erp_oc_anticipos:ocA, erp_asientos:asi, erp_asiento_lineas:asiL, erp_diarios:dj,
     erp_bodegas:bod, erp_tipos_cambio:tc, erp_recetas:rec, erp_receta_lineas:recL,
     erp_op:op_, erp_op_consumos:opC, erp_op_costos:opCo, erp_reabastecimiento:reab,
@@ -6043,6 +6045,9 @@ async function loadAll() {
   state.ocRecepcionItems   = ocRI.data || [];
   state.plCajas            = plC.data  || [];
   state.ocFacturas         = ocF.data      || [];
+  // Detalle por línea de las facturas de compra (30/Ago/2026). Es lo que
+  // permite validar cantidad facturada contra cantidad recibida.
+  state.ocFacturaItems     = ocFI.data     || [];
   state.pagosOC            = pagosOC.data  || [];
   state.ocAnticipos        = ocA.data  || [];
   state.asientos           = asi.data  || [];
@@ -14320,10 +14325,15 @@ function renderCompras() {
     const total   = Number(c.valor_total||0);
     const saldo   = factura ? Math.max(0, Number(factura.total||total) - pagado) : total;
     const esPagado = saldo <= 0.01;
-    const esCancelada = factura?.status === 'cancelada';
+    // El estado se lee de la columna propia del libro (30/Ago/2026) y, como
+    // respaldo, del estado de la factura — así las filas anteriores a esa
+    // columna siguen mostrándose bien.
+    const esCancelada = c.estado === 'cancelada' || factura?.status === 'cancelada';
     const estadoColor = esCancelada ? 'badge-gray' : esPagado ? 'badge-green' : pagado>0 ? 'badge-yellow' : 'badge-blue';
     const estadoLabel = esCancelada ? 'Cancelada' : esPagado ? 'Pagada' : pagado>0 ? 'Parcialmente Pagada' : 'Generada';
-    sumTotal += total;
+    // Las canceladas se muestran (es un libro fiscal: la anulación debe
+    // verse) pero NO suman a los totales ni al IVA crédito fiscal.
+    if (!esCancelada) sumTotal += total;
     const fechaFmt = fmtDate(c.fecha);
     return `<tr id="compra-row-${c.id}">
       <td style="padding:8px 10px;text-align:center">
@@ -16210,6 +16220,71 @@ function ocValorRecibido(ocId) {
     }, 0);
 }
 // Saldo pendiente por facturar = valor recibido - lo ya facturado (no cancelado)
+// ── FACTURACIÓN POR LÍNEA (30/Ago/2026, a pedido explícito) ──
+// La factura de compra se valida por CANTIDAD, no solo por valor: "no se
+// puede facturar más kilogramos de los recibidos físicamente; el valor puede
+// variar pero la cantidad no".
+//
+// Estas dos funciones leen erp_oc_factura_items, la tabla de detalle que
+// permite acumular lo facturado producto por producto entre varias facturas
+// parciales. Antes solo existía el total de la factura, así que no había
+// forma de saber cuánto se llevaba facturado de cada producto.
+
+// Cantidad ya facturada de un producto en una OC, sumando TODAS sus facturas.
+//
+// EXCLUYE LAS CANCELADAS (30/Ago/2026): al cancelar una factura, sus líneas
+// NO se borran —el sistema maneja ciclo de vida por estados, no por borrado
+// físico— así que hay que filtrarlas acá. Sin esto, cancelar una factura de
+// 600 kg dejaba esos kilos contados como facturados para siempre y ya no se
+// podían volver a facturar.
+function ocFacturadoQty(ocId, productoId) {
+  const facturasOC = (state.ocFacturas||[])
+    .filter(f => f.oc_id === ocId && f.status !== 'cancelada')
+    .map(f => f.id);
+  return (state.ocFacturaItems||[])
+    .filter(li => facturasOC.includes(li.factura_id) && li.producto_id === productoId)
+    .reduce((s,li) => s + Number(li.cantidad||0), 0);
+}
+
+// Cantidad que TODAVÍA se puede facturar: recibido menos ya facturado.
+// Nunca negativo — si se facturó de más (con justificación), el pendiente es
+// cero, no un número negativo que se leería como un crédito a favor.
+function ocPendienteFacturarLinea(ocId, productoId) {
+  return Math.max(0, ocRecibidoQty(ocId, productoId) - ocFacturadoQty(ocId, productoId));
+}
+
+// Lee las líneas marcadas del modal de factura. Solo devuelve las que están
+// tildadas y con cantidad > 0 — así se puede facturar parcialmente por línea
+// (ej. el jersey rojo hoy y el verde la semana que viene) sin obligar a que
+// todas las líneas de la OC estén en cada factura.
+function getFocLineas(ocId, monedaOC) {
+  const out = [];
+  document.querySelectorAll('[id^="foc-item-row-"]').forEach(tr => {
+    const idx = tr.id.replace('foc-item-row-','');
+    const inc = document.getElementById(`foc-incluir-${idx}`);
+    if (inc && !inc.checked) return;
+    const cantidad = parseFloat(document.getElementById(`foc-cant-${idx}`)?.value) || 0;
+    const precio   = parseFloat(document.getElementById(`foc-precio-${idx}`)?.value) || 0;
+    if (cantidad <= 0) return;
+    const prodId  = tr.dataset.productoId;
+    const ocItemId= tr.dataset.ocItemId || null;
+    const prod    = state.productos.find(p => p.id === prodId);
+    const llevaIva= document.getElementById(`foc-iva-${idx}`)?.checked !== false;
+    const totalLn = parseFloat((cantidad * precio).toFixed(4));
+    const neto    = llevaIva ? parseFloat((totalLn / 1.12).toFixed(4)) : totalLn;
+    out.push({
+      producto_id: prodId, oc_item_id: ocItemId,
+      unidad: prod?.unidad || tr.dataset.unidad || '',
+      cantidad, precio_unit: precio, lleva_iva: llevaIva,
+      neto, iva: parseFloat((totalLn - neto).toFixed(4)), total: totalLn,
+      moneda: monedaOC,
+      motivo_cantidad: null, motivo_precio: null,
+      precio_oc: null, diferencia_precio: 0,
+    });
+  });
+  return out;
+}
+
 function ocSaldoPorFacturar(ocId) {
   return ocValorRecibido(ocId) - ocFacturadoTotal(ocId);
 }
@@ -16402,6 +16477,67 @@ function onGlobalSearch(q) {
     const prod = (state.productos||[]).find(p=>p.id===m.producto_id);
     if ((m.mov_id||'').toLowerCase().includes(q) || (prod?.description||'').toLowerCase().includes(q) || (m.tipo||'').toLowerCase().includes(q) || (m.lote||'').toLowerCase().includes(q))
       results.push({ tipo:'Movimiento', icono:'📊', titulo:m.mov_id||'—', sub:`${m.tipo||''} · ${prod?.description||''}`, action:`showPage('inventario',null)`, color:'#0891B2' });
+  });
+
+  // ALBARANES (30/Ago/2026, a pedido explícito): REA, DEV y REC.
+  // La búsqueda solo cubría proveedores, clientes, productos, OC, OV,
+  // facturas y movimientos — así que escribir un correlativo de
+  // reabastecimiento, devolución o recepción no encontraba nada, aunque son
+  // los documentos que uno busca por número cuando algo no cuadra.
+  //
+  // DES (despachos) todavía NO se indexa: ese módulo no existe (Tanda 4).
+  // Cuando se cree, agregar acá el bloque equivalente.
+
+  // Reabastecimientos (REA-YYYY-NNNN). Varias filas comparten el mismo
+  // número —una por lote asignado— así que se agrupan para no repetir el
+  // mismo albarán N veces en los resultados.
+  {
+    const vistos = new Set();
+    (state.reabastecimiento||[]).forEach(r => {
+      const num = r.numero || '';
+      if (!num || vistos.has(num)) return;
+      const insumo = (state.productos||[]).find(p => p.id === r.insumo_id);
+      if (!num.toLowerCase().includes(q) && !(insumo?.description||'').toLowerCase().includes(q)) return;
+      vistos.add(num);
+      // El destino puede ser una OP o una OC de subcontrato.
+      const op = r.op_id ? (state.op||[]).find(o => o.id === r.op_id) : null;
+      const oc = r.oc_id ? (state.oc||[]).find(o => o.id === r.oc_id) : null;
+      results.push({
+        tipo:'Reabastecimiento', icono:'🔄', titulo:num,
+        sub:`${insumo?.description||''}${op?` → ${op.numero||'OP'}`:oc?` → ${oc.numero||'OC'}`:''}`,
+        action:`verReabastecimiento('${num}')`, color:'#7C3AED',
+      });
+    });
+  }
+
+  // Devoluciones de reabastecimiento (DEV-YYYY-NNNN)
+  {
+    const vistos = new Set();
+    (state.reabastecimiento||[]).forEach(r => {
+      const num = r.devuelto_en_numero || '';
+      if (!num || vistos.has(num) || !num.toLowerCase().includes(q)) return;
+      vistos.add(num);
+      const insumo = (state.productos||[]).find(p => p.id === r.insumo_id);
+      results.push({
+        tipo:'Devolución', icono:'↩️', titulo:num,
+        sub:`${insumo?.description||''} · desde ${r.numero||''}`,
+        action:`verReabastecimiento('${r.numero}')`, color:'#DC2626',
+      });
+    });
+  }
+
+  // Recepciones de OC (REC-YYYY-NNNN) — llevan al panel de su OC
+  (state.ocRecepciones||[]).forEach(rec => {
+    const num = rec.numero || '';
+    const oc  = (state.oc||[]).find(o => o.id === rec.oc_id);
+    const prov= (state.proveedores||[]).find(p => p.id === oc?.proveedor_id);
+    if (!num.toLowerCase().includes(q) && !(prov?.name||'').toLowerCase().includes(q)) return;
+    results.push({
+      tipo:'Recepción', icono:'📥', titulo:num,
+      sub:`${oc?.numero||''}${prov?` · ${prov.name}`:''}`,
+      action:oc ? `showPage('compras',null);setTimeout(()=>showOCPanel('${oc.id}'),400)` : `showPage('compras',null)`,
+      color:'#0D9488',
+    });
   });
 
   if (!results.length) {
@@ -16621,6 +16757,22 @@ async function cancelarFacturaOC(facturaId) {
     notas: [f.notas, motivo ? `Cancelada: ${motivo}` : 'Cancelada'].filter(Boolean).join(' | ')
   }).eq('id', facturaId);
   if (error) { toast('Error: '+error.message,'error'); return; }
+
+  // LIBRO DE COMPRAS (30/Ago/2026, a pedido explícito). El registro NO se
+  // borra —es un libro fiscal y la anulación debe poder verse— pero se marca
+  // como cancelado para que deje de sumar a los totales y al IVA crédito
+  // fiscal. Sin esto, una factura anulada seguía declarándose como vigente.
+  const { error: errLibro } = await sb.from('erp_compras')
+    .update({ estado: 'cancelada' }).eq('factura_id', facturaId);
+  if (errLibro) {
+    console.error('Error marcando la compra como cancelada en el Libro de Compras:', errLibro.message);
+    alert(
+      'ATENCIÓN — La factura se canceló pero su registro en el LIBRO DE COMPRAS ' +
+      'no pudo marcarse como anulado.\n\n' + errLibro.message + '\n\n' +
+      'El libro seguirá declarando esta compra como vigente, incluido su IVA ' +
+      'crédito fiscal. Corríjalo antes de cerrar el período.'
+    );
+  }
 
   // Reversar el/los asiento(s) ya posteados para esta factura (Asiento de
   // Factura de Compra: Gasto/Inventario + IVA Crédito Fiscal contra
@@ -21478,8 +21630,25 @@ function calcFocItemIva(idx, qty, precio, moneda) {
   // nunca se debe caer al default de fmtMoney (GTQ), o la factura "cambia"
   // de moneda visualmente al tocar el checkbox de IVA de una línea.
   moneda = moneda || getMonedaOC(document.getElementById('foc-oc-id')?.value) || 'GTQ';
+  // CANTIDAD Y PRECIO EDITABLES (30/Ago/2026): se leen de los inputs de la
+  // fila, no de los argumentos. Estos últimos quedan solo como respaldo para
+  // llamadas viejas que pasaban valores fijos.
+  const cantEl   = document.getElementById(`foc-cant-${idx}`);
+  const precioEl = document.getElementById(`foc-precio-${idx}`);
+  if (cantEl)   qty    = parseFloat(cantEl.value)   || 0;
+  if (precioEl) precio = parseFloat(precioEl.value) || 0;
+
+  // Línea excluida de esta factura: aporta cero a los totales, pero la fila
+  // se deja visible y en gris para que se vea que existe y quedó fuera.
+  const incluir = document.getElementById(`foc-incluir-${idx}`);
+  const activa  = !incluir || incluir.checked;
+  const fila    = document.getElementById(`foc-item-row-${idx}`);
+  if (fila) fila.style.opacity = activa ? '1' : '0.45';
+  if (cantEl)   cantEl.disabled   = !activa;
+  if (precioEl) precioEl.disabled = !activa;
+
   const conIva = document.getElementById(`foc-iva-${idx}`)?.checked;
-  const total  = parseFloat((qty * precio).toFixed(2));
+  const total  = activa ? parseFloat((qty * precio).toFixed(2)) : 0;
   const neto   = conIva ? parseFloat((total / 1.12).toFixed(2)) : total;
   const iva    = conIva ? parseFloat((total - neto).toFixed(2)) : 0;
 
@@ -21602,6 +21771,31 @@ function openFacturaOC() {
   const items  = state.ocItems.filter(i=>i.oc_id===currentOCId);
   const esServicio = items.every(i => state.productos.find(p=>p.id===i.producto_id)?.tipo === 'servicio');
 
+  // LA FACTURA SIEMPRE VA DESPUÉS DE LA RECEPCIÓN (30/Ago/2026, a pedido
+  // explícito). Para productos ALMACENABLES no puede existir factura sin que
+  // el material haya ingresado antes — es la regla del negocio.
+  //
+  // Además tiene sustento contable: el asiento de la factura DEBITA la cuenta
+  // transitoria de "recibido pendiente de facturar", que solo se acredita al
+  // recibir. Sin recepción previa esa cuenta quedaría con saldo deudor
+  // permanente, imposible de cerrar.
+  //
+  // Los SERVICIOS quedan exentos: no pasan por recepción física, la factura
+  // debita directo la cuenta de gasto y no hay transitoria involucrada.
+  if (!esServicio) {
+    const tieneRecepcion = (state.ocRecepciones||[]).some(r => r.oc_id === currentOCId);
+    if (!tieneRecepcion) {
+      alert(
+        'NO SE PUEDE FACTURAR — Esta orden no tiene ninguna recepción registrada.\n\n' +
+        `Orden: ${oc?.numero || '(sin número)'}\n\n` +
+        'La factura de un producto almacenable se registra siempre DESPUÉS de ' +
+        'recibir el material.\n\n' +
+        'Registre primero la recepción de los productos.'
+      );
+      return;
+    }
+  }
+
   document.getElementById('foc-oc-id').value          = currentOCId;
   document.getElementById('foc-factura-id').value      = '';
   const focBtn = document.getElementById('foc-btn-guardar');
@@ -21645,6 +21839,7 @@ function openFacturaOC() {
   document.getElementById('foc-items-display').innerHTML = `
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead><tr style="background:var(--surface2)">
+        <th style="padding:8px 6px;text-align:center;width:34px" title="Incluir esta línea en la factura">✓</th>
         <th style="padding:8px 12px;text-align:left">Producto / Servicio</th>
         <th style="padding:8px 12px;text-align:right">Cantidad</th>
         <th style="padding:8px 12px;text-align:right">Precio Unit.</th>
@@ -21655,7 +21850,11 @@ function openFacturaOC() {
       </tr></thead>
       <tbody>${items.map((i, idx) => {
         const prod   = state.productos.find(p=>p.id===i.producto_id);
-        const qty    = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(currentOCId, i.producto_id);
+        // CANTIDAD SUGERIDA = lo PENDIENTE DE FACTURAR de esta línea
+        // (30/Ago/2026, a pedido explícito: "lo que ya está facturado no lo
+        // puedes facturar nuevamente"). Antes se proponía todo lo recibido,
+        // así que en una segunda factura parcial se repetía lo ya facturado.
+        const qty    = esServicio ? Number(i.cantidad||0) : ocPendienteFacturarLinea(currentOCId, i.producto_id);
         const precio = Number(i.precio_unit||0);
         const total  = parseFloat((qty * precio).toFixed(2));
         // El checkbox de IVA parte del valor predeterminado configurado en el
@@ -21664,12 +21863,34 @@ function openFacturaOC() {
         const conIva = prod?.lleva_iva !== false;
         const neto   = conIva ? parseFloat((total / 1.12).toFixed(2)) : total;
         const iva    = conIva ? parseFloat((total - neto).toFixed(2)) : 0;
-        return `<tr style="border-bottom:1px solid var(--border)" id="foc-item-row-${idx}">
+        // Línea EDITABLE (30/Ago/2026): cantidad y precio se pueden ajustar
+        // a lo que realmente dice la factura del proveedor, y el check
+        // permite dejar líneas fuera para facturarlas después.
+        // Sin pendiente por facturar, la línea viene desmarcada.
+        const pendiente = esServicio ? qty : ocPendienteFacturarLinea(currentOCId, i.producto_id);
+        return `<tr style="border-bottom:1px solid var(--border)" id="foc-item-row-${idx}"
+                    data-producto-id="${i.producto_id}" data-oc-item-id="${i.id||''}" data-unidad="${i.unidad||''}">
+          <td style="padding:8px 6px;text-align:center">
+            <input type="checkbox" id="foc-incluir-${idx}" ${pendiente>0.001?'checked':''}
+                   onchange="calcFocItemIva(${idx}, ${qty}, ${precio}, '${monedaOC}')"
+                   style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer"/>
+          </td>
           <td style="padding:8px 12px">${prod?.description||prodName(i.producto_id)}
             ${esServicio?'<span class="badge badge-blue" style="margin-left:6px;font-size:10px">Servicio</span>':''}
+            <div style="font-size:10px;color:var(--text3);margin-top:2px">
+              Pendiente de facturar: ${fmtNum(pendiente)} ${i.unidad||''}</div>
           </td>
-          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace">${qty.toFixed(esServicio?0:3)} ${i.unidad||''}</td>
-          <td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace">${fmtMoney(precio, monedaOC)}</td>
+          <td style="padding:8px 12px;text-align:right">
+            <input type="number" id="foc-cant-${idx}" value="${qty.toFixed(esServicio?0:3)}" step="0.001" min="0"
+                   onchange="calcFocItemIva(${idx}, ${qty}, ${precio}, '${monedaOC}')"
+                   style="width:100px;text-align:right;font-family:'DM Mono',monospace;font-size:12px;padding:4px 6px"/>
+            <span style="font-size:10px;color:var(--text3);margin-left:3px">${i.unidad||''}</span>
+          </td>
+          <td style="padding:8px 12px;text-align:right">
+            <input type="number" id="foc-precio-${idx}" value="${precio.toFixed(4)}" step="0.0001" min="0"
+                   onchange="calcFocItemIva(${idx}, ${qty}, ${precio}, '${monedaOC}')"
+                   style="width:110px;text-align:right;font-family:'DM Mono',monospace;font-size:12px;padding:4px 6px"/>
+          </td>
           <td style="padding:8px 12px;text-align:center">
             <label style="display:flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;font-size:11px;font-weight:600;color:var(--text2)">
               <input type="checkbox" id="foc-iva-${idx}" ${conIva?'checked':''}
@@ -21724,11 +21945,73 @@ async function saveFacturaOC() {
   const prov = state.proveedores.find(p=>p.id===oc?.proveedor_id);
   const monedaOC = getMonedaOC(oc_id);
 
-  // No permitir facturar más de lo recibido en la OC (saldo = recibido - ya facturado)
-  const saldoPorFacturar = ocSaldoPorFacturar(oc_id);
-  if (total > saldoPorFacturar + 0.01) {
-    toast(`No puedes generar esta factura por ${fmtMoney(total, monedaOC)}: el saldo pendiente por facturar según lo recibido en la OC es ${fmtMoney(Math.max(saldoPorFacturar,0), monedaOC)}.`,'error');
+  // VALIDACIÓN POR LÍNEA (30/Ago/2026, a pedido explícito). Reemplaza al
+  // chequeo global por VALOR (ocSaldoPorFacturar), que dejaba pasar dos casos
+  // reales al revés de lo que corresponde:
+  //   · Facturar la cantidad correcta a MAYOR precio se bloqueaba, cuando el
+  //     precio legítimamente puede variar.
+  //   · Facturar MÁS cantidad a menor precio pasaba sin aviso, porque el
+  //     total cuadraba.
+  //
+  // La regla es: la cantidad no puede exceder lo PENDIENTE DE FACTURAR
+  // (recibido − ya facturado); el precio puede diferir. Ninguna de las dos
+  // bloquea de forma dura — ambas piden una razón escrita, que se guarda en
+  // la línea para poder auditarla después.
+  // Se revalida acá porque el bloqueo de openFacturaOC() es solo la UI: el
+  // modal pudo quedar abierto y anularse la recepción mientras tanto, o
+  // forzarse la llamada desde consola.
+  const focLineas = getFocLineas(oc_id, monedaOC);
+  const esServicioOC = (state.ocItems||[]).filter(i => i.oc_id === oc_id)
+    .every(i => state.productos.find(p => p.id === i.producto_id)?.tipo === 'servicio');
+  if (!esServicioOC && !(state.ocRecepciones||[]).some(r => r.oc_id === oc_id)) {
+    toast('No se puede facturar: la orden no tiene recepciones registradas. Registre primero la recepción.','error');
     return;
+  }
+  if (!focLineas.length) {
+    toast('Seleccione al menos una línea para facturar','error');
+    return;
+  }
+
+  for (const ln of focLineas) {
+    const nombre = prodName(ln.producto_id);
+
+    // 1. Cantidad contra lo pendiente de facturar
+    const pendiente = ocPendienteFacturarLinea(oc_id, ln.producto_id);
+    if (ln.cantidad > pendiente + 0.001) {
+      const exceso = ln.cantidad - pendiente;
+      const motivo = prompt(
+        `CANTIDAD MAYOR A LO PENDIENTE — ${nombre}\n\n` +
+        `Recibido:            ${fmtNum(ocRecibidoQty(oc_id, ln.producto_id))} ${ln.unidad||''}\n` +
+        `Ya facturado:        ${fmtNum(ocFacturadoQty(oc_id, ln.producto_id))} ${ln.unidad||''}\n` +
+        `Pendiente:           ${fmtNum(pendiente)} ${ln.unidad||''}\n` +
+        `Se está facturando:  ${fmtNum(ln.cantidad)} ${ln.unidad||''}  (exceso ${fmtNum(exceso)})\n\n` +
+        `Se estaría facturando material que no se recibió físicamente.\n\n` +
+        `Escriba la razón para continuar (queda registrada en la factura):`
+      );
+      if (!motivo || !motivo.trim()) { toast('Se requiere una razón para facturar más de lo pendiente','error'); return; }
+      ln.motivo_cantidad = motivo.trim();
+    }
+
+    // 2. Precio contra el de la OC
+    const itemOC = (state.ocItems||[]).find(i => i.oc_id === oc_id && i.producto_id === ln.producto_id);
+    const precioOC = Number(itemOC?.precio_unit || 0);
+    ln.precio_oc = precioOC;
+    if (precioOC > 0 && Math.abs(ln.precio_unit - precioOC) > 0.0001) {
+      const dif    = ln.precio_unit - precioOC;
+      const difTot = dif * ln.cantidad;
+      const motivo = prompt(
+        `PRECIO DISTINTO AL DE LA ORDEN — ${nombre}\n\n` +
+        `Precio en la OC:      ${fmtMoney(precioOC, monedaOC)}\n` +
+        `Precio facturado:     ${fmtMoney(ln.precio_unit, monedaOC)}\n` +
+        `Diferencia unitaria:  ${dif>0?'+':''}${fmtMoney(dif, monedaOC)}\n` +
+        `Impacto en la línea:  ${difTot>0?'+':''}${fmtMoney(difTot, monedaOC)}\n\n` +
+        `La diferencia se sumará al costo del producto en inventario.\n\n` +
+        `Escriba la razón para continuar (queda registrada en la factura):`
+      );
+      if (!motivo || !motivo.trim()) { toast('Se requiere una razón para facturar a un precio distinto','error'); return; }
+      ln.motivo_precio = motivo.trim();
+      ln.diferencia_precio = parseFloat(difTot.toFixed(4));
+    }
   }
 
   const diasCredito = oc?.dias_credito ?? null;
@@ -21774,6 +22057,44 @@ async function saveFacturaOC() {
 
   // Marcar como grabada de inmediato para bloquear reintentos aunque algo falle más abajo
   document.getElementById('foc-factura-id').value = focArr[0].id;
+
+  // LÍNEAS DE LA FACTURA (30/Ago/2026). Sin esto el desglose se perdía y no
+  // había forma de acumular lo facturado por producto entre facturas
+  // parciales — que es la base de la validación por cantidad.
+  // Se insertan en UNA sola llamada (array), no una por una: además de ser
+  // un solo viaje de red, así o entran todas o no entra ninguna.
+  if (focLineas.length) {
+    const { error: eLineas } = await sb.from('erp_oc_factura_items').insert(
+      focLineas.map(ln => ({
+        factura_id:  focArr[0].id,
+        oc_item_id:  ln.oc_item_id || null,
+        producto_id: ln.producto_id,
+        cantidad:    ln.cantidad,
+        unidad:      ln.unidad,
+        precio_unit: ln.precio_unit,
+        moneda:      ln.moneda,
+        tc,
+        lleva_iva:   ln.lleva_iva,
+        neto:        ln.neto,
+        iva:         ln.iva,
+        total:       ln.total,
+        total_gtq:   parseFloat((ln.total * (ln.moneda === 'USD' ? tc : 1)).toFixed(4)),
+        motivo_cantidad:   ln.motivo_cantidad || null,
+        motivo_precio:     ln.motivo_precio   || null,
+        precio_oc:         ln.precio_oc,
+        diferencia_precio: ln.diferencia_precio || 0,
+      }))
+    );
+    if (eLineas) {
+      console.error('Error guardando líneas de la factura:', eLineas.message);
+      alert(
+        'ATENCIÓN — La factura se creó pero NO se guardó su detalle por línea.\n\n' +
+        eLineas.message + '\n\n' +
+        'Sin el detalle, el sistema no podrá validar cuánto queda pendiente de ' +
+        'facturar de cada producto. Revise la factura antes de continuar.'
+      );
+    }
+  }
 
   // Register in Libro de Compras
   // Calculate totals respecting IVA checkboxes per line
