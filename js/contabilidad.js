@@ -422,7 +422,18 @@ function ctaPorPagarOC(oc_id) {
 // usuario desmarcó el checkbox de sus líneas (la mayoría de materia prima
 // no paga IVA). Si NO se reciben (llamadas antiguas/sin ese dato), cae al
 // criterio anterior basado en el tipo de factura (FX = exportación = sin IVA).
-function buildLineasFacturaCompra({ oc_id, tipo, total, neto=null, iva=null }) {
+// Cuenta de variación de precio de compra. Recibe la diferencia entre lo
+// facturado por el proveedor y lo pedido en la OC (30/Ago/2026).
+// Si la cuenta no existe en la nomenclatura, devuelve null y crearAsiento
+// grabará la línea con el código suelto — el asiento igual cuadra y queda
+// visible que falta crear la cuenta, en vez de fallar en silencio.
+// desfavorable = true cuando se facturó MÁS que lo pactado (mayor costo).
+function ctaVariacionPrecioCompra(desfavorable) {
+  const codigo = desfavorable ? CTA_VARIACION_PRECIO_DESF : CTA_VARIACION_PRECIO_FAV;
+  return state.nomenclatura.find(n => n.codigo === codigo) || null;
+}
+
+function buildLineasFacturaCompra({ oc_id, tipo, total, neto=null, iva=null, diferenciaPrecio=0 }) {
   const totalOrig  = Number(total||0);
   const tieneNetoIva = neto !== null && iva !== null;
   const esIVA      = tieneNetoIva ? Number(iva) > 0.001 : tipo !== 'FX';
@@ -487,7 +498,70 @@ function buildLineasFacturaCompra({ oc_id, tipo, total, neto=null, iva=null }) {
       netoLinea = parseFloat((netoLinea * factor).toFixed(4));
       ivaLinea  = parseFloat((totalOrig - netoLinea).toFixed(4));
     }
-    lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: netoLinea, haber: 0 });
+    // DIFERENCIA DE PRECIO CONTRA LA OC (30/Ago/2026, a pedido explícito).
+    //
+    // La recepción capitalizó el inventario al precio de la ORDEN y dejó la
+    // cuenta puente acreditada por ese mismo importe. Si el proveedor factura
+    // a otro precio, debitar la puente por el neto COMPLETO la dejaría
+    // descuadrada, así que el débito se parte en dos.
+    //
+    // DECISIÓN (evaluada y cambiada en la misma sesión): la diferencia va a
+    // una cuenta de RESULTADO (variación de precio de compra), NO al costo
+    // del inventario.
+    //
+    // Se evaluó primero cargarla al inventario para no afectar el Estado de
+    // Resultados. Se descartó porque dejaba residuos permanentes: el asiento
+    // subía el inventario a Q21,000 pero erp_movimientos_inv seguía con
+    // Q19,821.62, así que al consumirse el material el FIFO acreditaba solo
+    // ese importe y la diferencia quedaba atascada en el balance para
+    // siempre, acumulándose con cada factura. Corregir eso exigía además
+    // reescribir el costo del movimiento, y aun así quedaba sin resolver el
+    // caso de material ya consumido (no hay capa FIFO que ajustar).
+    //
+    // Mandarla a resultado cierra el problema de raíz: nada queda en el
+    // balance, el mayor nunca se separa del Kardex, y la regla es una sola
+    // sin importar si el material está en bodega, en proceso o vendido.
+    // Es el criterio por defecto de SAP y Odoo (Purchase Price Variance).
+    // ¿A qué cuenta va la variación? Depende del TIPO DEL ARTÍCULO
+    // (30/Ago/2026, a pedido explícito), no de cómo esté configurada la
+    // valoración de su categoría:
+    //
+    //  · ALMACENABLE: la recepción capitalizó inventario al precio de la
+    //    orden y dejó la cuenta puente acreditada. La variación NO puede ir
+    //    al inventario —el FIFO consume al costo del movimiento y la
+    //    diferencia quedaría atascada en el balance— así que se separa a las
+    //    cuentas de variación (51101097 / 51101098), dentro del costo de
+    //    ventas.
+    //
+    //  · SERVICIO: la compra debita directo la cuenta de gasto. No hay
+    //    inventario ni cuenta puente, así que no existe el problema del
+    //    residuo: la variación se queda en esa misma cuenta y el gasto
+    //    simplemente registra el importe realmente facturado.
+    //
+    // Se usa producto.tipo y no cat.valoracion porque el tipo es la
+    // definición del artículo en sí — si algo es almacenable, pasó por
+    // inventario, independientemente de cómo esté configurada su categoría.
+    const hayAlmacenable = ocItems.some(i =>
+      state.productos.find(p => p.id === i.producto_id)?.tipo === 'almacenable');
+    const difNeta = parseFloat(Number(diferenciaPrecio||0).toFixed(4));
+    if (Math.abs(difNeta) > 0.01 && hayAlmacenable) {
+      // Cuenta según el signo: desfavorable (facturaron de más) va al debe y
+      // aumenta el costo; favorable (facturaron de menos) va al haber y lo
+      // reduce. Dos cuentas distintas para que el ER muestre cada concepto
+      // por separado en vez de un neto.
+      const desfavorable = difNeta > 0;
+      const ctaVariacion = ctaVariacionPrecioCompra(desfavorable);
+      const codigoFallback = desfavorable ? CTA_VARIACION_PRECIO_DESF : CTA_VARIACION_PRECIO_FAV;
+      const basePuente = parseFloat((netoLinea - difNeta).toFixed(4));
+      lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||'Inventario', debe: basePuente, haber: 0,
+        descripcion: 'Cancela recepción pendiente de facturar' });
+      lineas.push({ cuenta_id: ctaVariacion?.id||null, cuenta_codigo: ctaVariacion?.codigo||codigoFallback,
+        cuenta_nombre: ctaVariacion?.nombre||`Variación precio compra - ${desfavorable?'Desfavorable':'Favorable'}`,
+        debe: desfavorable ? difNeta : 0, haber: desfavorable ? 0 : Math.abs(difNeta),
+        descripcion: `Variación de precio: facturado ${desfavorable?'por encima':'por debajo'} de la orden de compra` });
+    } else {
+      lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: netoLinea, haber: 0 });
+    }
     lineas.push({ cuenta_id: ctaIVACred?.id||null, cuenta_codigo: ctaIVACred?.codigo||'IVA-CRED', cuenta_nombre: ctaIVACred?.nombre||'IVA Crédito Fiscal', debe: ivaLinea, haber: 0 });
   } else {
     lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: totalOrig, haber: 0 });
@@ -510,10 +584,19 @@ async function asientoFacturaCompra(ocFacturaId) {
   // el asiento NUNCA quede desincronizado de lo que el usuario vio/aprobó
   // en pantalla, sin volver a inferir el IVA a partir del tipo de factura.
   const compra = (state.compras||[]).find(c => c.factura_id === ocFacturaId);
+  // Diferencia de precio contra la OC, acumulada de las líneas de la factura
+  // (30/Ago/2026). Es la porción del neto que NO corresponde a lo capitalizado
+  // en la recepción y que por lo tanto no debe cerrar la cuenta puente, sino
+  // integrarse al costo del producto — ver buildLineasFacturaCompra().
+  const difPrecio = (state.ocFacturaItems||[])
+    .filter(li => li.factura_id === ocFacturaId)
+    .reduce((s,li) => s + Number(li.diferencia_precio||0), 0);
+
   const lineas = buildLineasFacturaCompra({
     oc_id: fc.oc_id, tipo: fc.tipo, total: fc.total,
     neto: compra ? Number(compra.valor_neto||0) : null,
     iva:  compra ? Number(compra.valor_iva||0)  : null,
+    diferenciaPrecio: difPrecio,
   });
 
   await crearAsiento({
