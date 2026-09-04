@@ -1,3 +1,4 @@
+
 // ═══════════════════════════════════════════════════════
 // CONSTANTES DE NEGOCIO — extraídas de index.html (Fase 2 modularización, 25/Ago/2026)
 // Cero lógica, cero dependencia de state/sb/DOM. Cargar ANTES del script principal,
@@ -76,6 +77,21 @@ const DIARIO_COLOR = {
 // ── Contabilidad — cuentas contables (códigos fijos del catálogo) ──
 const CTA_GANANCIA_CAMBIARIA = '71101002';
 const CTA_PERDIDA_CAMBIARIA  = '71201003';
+
+// Variación de precio de compra (30/Ago/2026). Reciben la diferencia entre el
+// precio facturado por el proveedor y el precio pactado en la orden.
+//
+// Van a RESULTADO, no al costo del inventario: cargarlas al inventario dejaba
+// residuos permanentes en el balance, porque el FIFO consume al costo del
+// movimiento (precio de orden) y la diferencia nunca salía.
+//
+// Son DOS cuentas, mismo patrón que el diferencial cambiario: separar
+// desfavorable de favorable deja ver en el Estado de Resultados cuánto se
+// pagó de más y cuánto de menos, en vez de un neto que esconde ambos.
+// Ubicadas en 51101xxx (costos de materia prima) para que afecten el MARGEN
+// BRUTO. Ambos son movimientos DEFINITIVOS: no se liquidan después.
+const CTA_VARIACION_PRECIO_DESF = '51101097'; // facturaron de más  → mayor costo
+const CTA_VARIACION_PRECIO_FAV  = '51101098'; // facturaron de menos → menor costo
 const DIARIO_CAMBIARIO       = 'CAMBIARIO';
 
 const CTA_INV_HILO      = '11301001'; // Inventario de Hilo
