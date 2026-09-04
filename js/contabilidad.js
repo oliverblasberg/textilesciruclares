@@ -1977,14 +1977,28 @@ function populateNomDropdowns() {
 const nomOpenGroups = new Set();
 
 // Ordered group definitions
+// GRUPOS DEL MENÚ DE NOMENCLATURA
+// Reorganizados el 30/Ago/2026 (a pedido explícito: "si la cuenta empieza con
+// 1, va en el menú 1"). Antes las etiquetas y los prefijos estaban cruzados:
+//   · "2. Pasivos" incluía el prefijo 3, que es Capital.
+//   · "3. Capital" apuntaba al prefijo 4, que son Ingresos.
+//   · "4. Costo de Ingresos" apuntaba al 5.
+//   · "6. Ingresos" apuntaba al 4.
+//   · El grupo 7 (diferencial cambiario y otros) no tenía entrada propia
+//     pese a tener cuentas, y caía en "Otros" solo por el tipo.
+// Resultado: buscar las cuentas de venta (41xxxxxx) llevaba al menú 6.
+//
+// Ahora cada grupo corresponde exactamente a su dígito inicial. El orden es
+// el del plan de cuentas: balance (1-3), resultados (4-7).
 const NOM_GROUPS = [
-  { key:'1-activo',    label:'1. Activos',                 prefix:['1'], tipos:['Activos Circulantes','Activos no-circulantes','Por cobrar','Banco y efectivo'] },
-  { key:'2-pasivo',    label:'2. Pasivos',                 prefix:['2','3'], tipos:['Pasivos Circulantes','Pasivos no-circulantes','Por pagar'] },
-  { key:'4-capital',   label:'3. Capital',                 prefix:['4'], tipos:['Capital','Ganancias del año actual'] },
-  { key:'5-costo',     label:'4. Costo de Ingresos',       prefix:['5'], tipos:['Costo de ingresos'] },
-  { key:'6-gastos',    label:'5. Gastos',                  prefix:['6'], tipos:['Gastos'] },
-  { key:'7-ingresos',  label:'6. Ingresos',                prefix:['4','41','42'], tipos:['Ingreso','Otro Ingreso'] },
-  { key:'9-otros',     label:'7. Otros',                   prefix:['9'], tipos:[] },
+  { key:'1-activo',    label:'1. Activos',           prefix:['1'], tipos:['Activos Circulantes','Activos no-circulantes','Por cobrar','Banco y efectivo'] },
+  { key:'2-pasivo',    label:'2. Pasivos',           prefix:['2'], tipos:['Pasivos Circulantes','Pasivos no-circulantes','Por pagar'] },
+  { key:'3-capital',   label:'3. Capital',           prefix:['3'], tipos:['Capital','Ganancias del año actual'] },
+  { key:'4-ingresos',  label:'4. Ingresos',          prefix:['4'], tipos:['Ingreso'] },
+  { key:'5-costo',     label:'5. Costo de Ingresos', prefix:['5'], tipos:['Costo de ingresos'] },
+  { key:'6-gastos',    label:'6. Gastos',            prefix:['6'], tipos:['Gastos'] },
+  { key:'7-otros',     label:'7. Otros Ingresos y Gastos', prefix:['7'], tipos:['Otro Ingreso'] },
+  { key:'9-otros',     label:'9. Cuentas de Sistema', prefix:['9'], tipos:[] },
 ];
 
 // Compute hierarchy depth from code length
@@ -2011,10 +2025,26 @@ function renderNomenclatura() {
   grouped['__otros__'] = [];
 
   data.forEach(n => {
+    // AGRUPACIÓN POR CÓDIGO (30/Ago/2026, a pedido explícito). Antes se
+    // agrupaba por `tipo` y el campo `prefix` no se usaba nunca. Eso hacía
+    // que una cuenta apareciera en un menú que no corresponde a su número:
+    // por ejemplo 51101098 "Variación precio compra - Favorable" y 51101099
+    // "Devoluciones sobre compras" son de tipo Ingreso, así que caían bajo
+    // "Ingresos" pese a empezar con 5 y pertenecer a Costo de Ingresos.
+    //
+    // Ahora manda el primer dígito del código, que es lo que define de qué
+    // grupo es la cuenta en el plan. El `tipo` queda solo como respaldo para
+    // cuentas cuyo prefijo no esté contemplado.
+    const primerDigito = String(n.codigo||'').charAt(0);
     let placed = false;
     for (const g of NOM_GROUPS) {
-      if (g.tipos.includes(n.tipo)) {
+      if (g.prefix.includes(primerDigito)) {
         grouped[g.key].push(n); placed = true; break;
+      }
+    }
+    if (!placed) {
+      for (const g of NOM_GROUPS) {
+        if (g.tipos.includes(n.tipo)) { grouped[g.key].push(n); placed = true; break; }
       }
     }
     if (!placed) grouped['__otros__'].push(n);
