@@ -1,4 +1,3 @@
-
 // ═══════════════════════════════════════════════════════
 // CONSTANTES DE NEGOCIO — extraídas de index.html (Fase 2 modularización, 25/Ago/2026)
 // Cero lógica, cero dependencia de state/sb/DOM. Cargar ANTES del script principal,
