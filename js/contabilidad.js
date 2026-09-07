@@ -564,7 +564,32 @@ function buildLineasFacturaCompra({ oc_id, tipo, total, neto=null, iva=null, dif
     }
     lineas.push({ cuenta_id: ctaIVACred?.id||null, cuenta_codigo: ctaIVACred?.codigo||'IVA-CRED', cuenta_nombre: ctaIVACred?.nombre||'IVA Crédito Fiscal', debe: ivaLinea, haber: 0 });
   } else {
-    lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: totalOrig, haber: 0 });
+    // Factura SIN IVA (típicamente proveedor del extranjero, tipo FX).
+    // FIX (30/Ago/2026, detectado en pruebas con Parkdale): el split de la
+    // variación de precio estaba solo en la rama `if (esIVA)`, así que las
+    // facturas sin IVA mandaban el total completo a la cuenta puente y la
+    // diferencia contra la OC se perdía —revalorizando de hecho el
+    // inventario en tránsito—. Se replica acá la misma lógica.
+    //
+    // Sin IVA no hay neto que separar: la diferencia se compara contra el
+    // total, que ya es el neto.
+    const difNetaFX = parseFloat(Number(diferenciaPrecio||0).toFixed(4));
+    const hayAlmacenableFX = ocItems.some(i =>
+      state.productos.find(p => p.id === i.producto_id)?.tipo === 'almacenable');
+    if (Math.abs(difNetaFX) > 0.01 && hayAlmacenableFX) {
+      const desfavorableFX = difNetaFX > 0;
+      const ctaVarFX = ctaVariacionPrecioCompra(desfavorableFX);
+      const codigoFallbackFX = desfavorableFX ? CTA_VARIACION_PRECIO_DESF : CTA_VARIACION_PRECIO_FAV;
+      lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||'Inventario',
+        debe: parseFloat((totalOrig - difNetaFX).toFixed(4)), haber: 0,
+        descripcion: 'Cancela recepción pendiente de facturar' });
+      lineas.push({ cuenta_id: ctaVarFX?.id||null, cuenta_codigo: ctaVarFX?.codigo||codigoFallbackFX,
+        cuenta_nombre: ctaVarFX?.nombre||`Variación precio compra - ${desfavorableFX?'Desfavorable':'Favorable'}`,
+        debe: desfavorableFX ? difNetaFX : 0, haber: desfavorableFX ? 0 : Math.abs(difNetaFX),
+        descripcion: `Variación de precio: facturado ${desfavorableFX?'por encima':'por debajo'} de la orden de compra` });
+    } else {
+      lineas.push({ cuenta_id: ctaDebeId||null, cuenta_codigo: ctaDebe?.codigo||'GASTO', cuenta_nombre: ctaDebe?.nombre||(esServicio?'Gasto':'Inventario'), debe: totalOrig, haber: 0 });
+    }
   }
   lineas.push({ cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'POR-PAGAR', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas por Pagar Proveedores', debe: 0, haber: totalOrig });
 
