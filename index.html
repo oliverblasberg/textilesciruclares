@@ -21667,24 +21667,18 @@ function calcFocItemIva(idx, qty, precio, moneda) {
   if (ivaEl)  ivaEl.textContent  = conIva ? fmtMoney(iva, moneda) : '—';
   if (totEl)  totEl.textContent  = fmtMoney(total, moneda);
 
-  // Recalculate grand totals
-  let sumNeto = 0, sumIva = 0, sumTotal = 0;
-  document.querySelectorAll('[id^="foc-neto-"]').forEach((el, i) => {
-    sumNeto  += parseFloat(el.textContent.replace(/[^0-9.]/g,''))||0;
-    sumIva   += parseFloat(document.getElementById(`foc-iva-val-${i}`)?.textContent.replace(/[^0-9.]/g,'')||0);
-    sumTotal += parseFloat(document.getElementById(`foc-total-${i}`)?.textContent.replace(/[^0-9.]/g,'')||0);
-  });
-  document.getElementById('foc-subtotal-display').textContent = fmtMoney(sumNeto, moneda);
-  document.getElementById('foc-iva-display').textContent      = fmtMoney(sumIva, moneda);
-  document.getElementById('foc-total-display').textContent    = fmtMoney(sumTotal, moneda);
-  document.getElementById('foc-total').value                  = sumTotal.toFixed(2);
-  renderFocSaldoOC();
-  // El tab "Apuntes Contables" no se refresca solo al cambiar el checkbox de
-  // IVA de una línea (solo se recalculaba al VOLVER a hacer clic en ese tab)
-  // — por eso quitar el check de IVA seguía mostrando la línea de IVA vieja
-  // si el usuario ya tenía ese tab abierto. Se refresca aquí también, en
-  // cada toggle, para que nunca quede desactualizado.
-  renderFocApuntesPreview();
+  // Recalcular totales generales (30/Ago/2026): se delega en calcFocTotales()
+  // en vez de sumar leyendo el TEXTO de las celdas del DOM. Ese método fallaba
+  // con las líneas excluidas: una línea destildada seguía mostrando su total
+  // en pantalla, así que se sumaba igual al total de la factura.
+  const ocIdFoc = document.getElementById('foc-oc-id')?.value;
+  const itemsFoc = (state.ocItems||[]).filter(i => i.oc_id === ocIdFoc);
+  const esServFoc = itemsFoc.length > 0 &&
+    itemsFoc.every(i => state.productos.find(p=>p.id===i.producto_id)?.tipo === 'servicio');
+  calcFocTotales(itemsFoc, moneda, esServFoc);
+  // calcFocTotales() ya llama a renderFocSaldoOC() y renderFocApuntesPreview(),
+  // así que la previsualización de apuntes se refresca en cada cambio de
+  // cantidad, precio o check de IVA — no solo al volver a abrir ese tab.
 }
 
 // Muestra cuánto se ha recibido, cuánto ya se facturó y el saldo disponible
@@ -21712,12 +21706,34 @@ function renderFocSaldoOC() {
 }
 
 function calcFocTotales(items, monedaOC, esServicio) {
+  // FIX (30/Ago/2026, reportado en vivo): esta función recalculaba desde
+  // ocRecibidoQty() y i.precio_unit —los valores ORIGINALES— ignorando los
+  // inputs editables y los checkboxes. Cambiar la cantidad de 1000 a 500 no
+  // movía el total, y como saveFacturaOC toma el total de este campo, la
+  // factura se grababa por el monto viejo mientras sus líneas decían otra
+  // cosa: total y detalle quedaban inconsistentes.
+  //
+  // Ahora lee exactamente lo mismo que getFocLineas(): solo las líneas
+  // tildadas, con la cantidad y el precio que haya en pantalla.
   let sumNeto = 0, sumIva = 0, sumTotal = 0;
   items.forEach((i, idx) => {
-    const qty   = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(currentOCId, i.producto_id);
-    const total = parseFloat((qty * Number(i.precio_unit||0)).toFixed(2));
-    const prod  = state.productos.find(p=>p.id===i.producto_id);
-    const conIva = prod?.lleva_iva !== false;
+    const incluir = document.getElementById(`foc-incluir-${idx}`);
+    if (incluir && !incluir.checked) return;   // línea excluida: no suma
+
+    const cantEl   = document.getElementById(`foc-cant-${idx}`);
+    const precioEl = document.getElementById(`foc-precio-${idx}`);
+    const qty = cantEl
+      ? (parseFloat(cantEl.value) || 0)
+      : (esServicio ? Number(i.cantidad||0) : ocPendienteFacturarLinea(currentOCId, i.producto_id));
+    const precio = precioEl ? (parseFloat(precioEl.value) || 0) : Number(i.precio_unit||0);
+
+    const total = parseFloat((qty * precio).toFixed(2));
+    // El IVA se toma del checkbox de la línea si existe; si no, de la ficha
+    // del producto. Antes solo miraba el producto, así que destildar el IVA
+    // en una línea no afectaba los totales.
+    const ivaEl  = document.getElementById(`foc-iva-${idx}`);
+    const prod   = state.productos.find(p=>p.id===i.producto_id);
+    const conIva = ivaEl ? ivaEl.checked : (prod?.lleva_iva !== false);
     const neto  = conIva ? parseFloat((total / 1.12).toFixed(2)) : total;
     const iva   = conIva ? parseFloat((total - neto).toFixed(2)) : 0;
     sumNeto  += neto;
