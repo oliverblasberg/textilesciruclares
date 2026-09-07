@@ -16607,9 +16607,16 @@ function showOCPanel(ocId) {
   // "producto recibido" todavía.
   const hasRecepcionesConfirmadas = state.ocRecepciones.some(r=>r.oc_id===ocId && r.status==='completada');
   // Servicios: factura disponible al confirmar; físicos: requieren recepción confirmada.
-  // En ambos casos, una vez lo recibido (o lo pedido, si es servicio) ya está
-  // facturado en su totalidad, se esconde el botón — no se puede sobre-facturar.
-  const canInvoice = isConfirmada && (esServicio || hasRecepcionesConfirmadas) && ocSaldoPorFacturar(ocId) > 0.01;
+  // El tope es por CANTIDAD PENDIENTE DE FACTURAR (30/Ago/2026), no por saldo
+  // en valor: antes esto usaba ocSaldoPorFacturar(), la validación por VALOR
+  // que se reemplazó al pasar a facturación por línea. Con precios distintos
+  // al de la orden el saldo en dinero se agota antes que los kilos, y el botón
+  // desaparecía dejando material recibido sin poder facturar.
+  const hayPendientePorFacturar = esServicio
+    ? ocSaldoPorFacturar(ocId) > 0.01   // servicios: no hay cantidad recibida, el tope sigue siendo el valor
+    : (state.ocItems||[]).filter(i => i.oc_id === ocId)
+        .some(i => ocPendienteFacturarLinea(ocId, i.producto_id) > 0.001);
+  const canInvoice = isConfirmada && (esServicio || hasRecepcionesConfirmadas) && hayPendientePorFacturar;
 
   // Confirmar — solo en borrador
   const btnConf = document.getElementById('btn-confirmar-oc');
@@ -21794,6 +21801,19 @@ function openFacturaOC() {
       );
       return;
     }
+    // Todo lo recibido ya está facturado (30/Ago/2026, a pedido explícito).
+    // El botón normalmente ya está oculto en este caso, pero se valida igual
+    // por si se llega acá con el panel desactualizado o desde consola.
+    const pendientes = items.filter(i => ocPendienteFacturarLinea(currentOCId, i.producto_id) > 0.001);
+    if (!pendientes.length) {
+      alert(
+        'NO SE PUEDE FACTURAR MÁS DE LO RECIBIDO\n\n' +
+        `Orden: ${oc?.numero || '(sin número)'}\n\n` +
+        'Todo el material recibido en esta orden ya fue facturado.\n\n' +
+        'Si falta facturar producto, regístre primero su recepción.'
+      );
+      return;
+    }
   }
 
   document.getElementById('foc-oc-id').value          = currentOCId;
@@ -21980,7 +22000,7 @@ async function saveFacturaOC() {
     if (ln.cantidad > pendiente + 0.001) {
       const exceso = ln.cantidad - pendiente;
       const motivo = prompt(
-        `CANTIDAD MAYOR A LO PENDIENTE — ${nombre}\n\n` +
+        `NO SE PUEDE FACTURAR MÁS DE LO RECIBIDO — ${nombre}\n\n` +
         `Recibido:            ${fmtNum(ocRecibidoQty(oc_id, ln.producto_id))} ${ln.unidad||''}\n` +
         `Ya facturado:        ${fmtNum(ocFacturadoQty(oc_id, ln.producto_id))} ${ln.unidad||''}\n` +
         `Pendiente:           ${fmtNum(pendiente)} ${ln.unidad||''}\n` +
@@ -21988,7 +22008,7 @@ async function saveFacturaOC() {
         `Se estaría facturando material que no se recibió físicamente.\n\n` +
         `Escriba la razón para continuar (queda registrada en la factura):`
       );
-      if (!motivo || !motivo.trim()) { toast('Se requiere una razón para facturar más de lo pendiente','error'); return; }
+      if (!motivo || !motivo.trim()) { toast('No se puede facturar más de lo recibido sin una razón registrada','error'); return; }
       ln.motivo_cantidad = motivo.trim();
     }
 
