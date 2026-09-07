@@ -9105,6 +9105,13 @@ function _pagoHistorial(facturaId) {
 async function openPagoOC(facturaId) {
   const f      = state.ocFacturas.find(x=>x.id===facturaId);
   if (!f) return;
+  // Última línea de defensa (30/Ago/2026): los botones y selectores ya
+  // excluyen las canceladas, pero si se llega acá desde un panel
+  // desactualizado o desde consola, no se puede pagar una factura anulada.
+  if (f.status === 'cancelada') {
+    toast(`La factura ${f.num_interno||f.numero||''} está cancelada — no se puede pagar.`,'error');
+    return;
+  }
   const oc     = state.oc.find(o=>o.id===f.oc_id);
   const prov   = state.proveedores.find(p=>p.id===oc?.proveedor_id);
   const pagos  = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
@@ -9171,6 +9178,9 @@ function openPagoProveedor(ocId) {
     .sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
 
   const facturasPendientes = facturasP.filter(f => {
+    // Las canceladas no son pagables (30/Ago/2026). Sin este filtro aparecían
+    // en el selector de facturas a pagar como si siguieran vigentes.
+    if (f.status === 'cancelada') return false;
     const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===f.id).reduce((s,p)=>s+Number(p.monto||0),0);
     return Number(f.total||0) - pagado > 0;
   });
@@ -18085,21 +18095,28 @@ function renderOCPanel(ocId) {
     const saldo    = Math.max(0, Number(f.total||0) - pagado);
     const esPagada = saldo <= 0.01;
     const esParcial = pagado > 0 && !esPagada;
-    const statusLabel = esPagada ? 'Pagada' : esParcial ? 'Pagada Parcialmente' : 'Generada';
-    const statusColor = esPagada ? 'badge-green' : esParcial ? 'badge-yellow' : 'badge-blue';
-    return `<tr style="${esPagada?'opacity:0.75':''}">
-      <td class="td-mono" style="font-size:11px;color:var(--accent);cursor:pointer;text-decoration:underline" onclick="verFacturaOC('${f.id}')">${f.num_interno||'—'}</td>
+    // FIX (30/Ago/2026, reportado en vivo): esta lista nunca miraba f.status,
+    // así que una factura CANCELADA seguía mostrándose como "Generada" y con
+    // su botón de Pagar activo — se podía pagar una factura anulada.
+    // El estado cancelado manda sobre el de pago.
+    const esCancelada = f.status === 'cancelada';
+    const statusLabel = esCancelada ? 'Cancelada' : esPagada ? 'Pagada' : esParcial ? 'Pagada Parcialmente' : 'Generada';
+    const statusColor = esCancelada ? 'badge-red' : esPagada ? 'badge-green' : esParcial ? 'badge-yellow' : 'badge-blue';
+    return `<tr style="${esCancelada?'opacity:0.55':esPagada?'opacity:0.75':''}">
+      <td class="td-mono" style="font-size:11px;color:var(--accent);cursor:pointer;text-decoration:underline${esCancelada?';text-decoration-line:line-through underline':''}" onclick="verFacturaOC('${f.id}')">${f.num_interno||'—'}</td>
       <td class="td-mono">${f.serie||'—'}${f.numero||'—'}</td>
       <td>${fmtDate(f.fecha)}</td>
       <td class="td-mono">${fmtMoney(f.total, monedaOCFacturas)}</td>
       <td class="td-mono" style="color:var(--green)">${pagado>0
         ? (pagosF.filter(p=>p.num_pago).map(p=>`<span style="cursor:pointer;text-decoration:underline" onclick="verDetallePago('${p.id}')" title="Ver detalle del pago">${p.num_pago}</span>`).join(', ') || fmtMoney(pagado, monedaOCFacturas))
         : '—'}</td>
-      <td class="td-mono" style="color:${esPagada?'var(--text3)':'var(--accent)'};font-weight:${esPagada?'400':'700'}">${esPagada?'—':fmtMoney(saldo, monedaOCFacturas)}</td>
+      <td class="td-mono" style="color:${esCancelada||esPagada?'var(--text3)':'var(--accent)'};font-weight:${esPagada||esCancelada?'400':'700'}">${esCancelada||esPagada?'—':fmtMoney(saldo, monedaOCFacturas)}</td>
       <td><span class="badge ${statusColor}">${statusLabel}</span></td>
-      <td>${!esPagada
-        ? `<button class="btn btn-sm btn-primary" onclick="openPagoOC('${f.id}')">💳 Pagar</button>`
-        : `<span style="font-size:11px;color:var(--green)">✓ Completada</span>`
+      <td>${esCancelada
+        ? `<span style="font-size:11px;color:var(--text3)">—</span>`
+        : !esPagada
+          ? `<button class="btn btn-sm btn-primary" onclick="openPagoOC('${f.id}')">💳 Pagar</button>`
+          : `<span style="font-size:11px;color:var(--green)">✓ Completada</span>`
       }</td>
     </tr>`;
   }).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:12px">Sin facturas</td></tr>';
@@ -21913,8 +21930,25 @@ function openFacturaOC() {
           </td>
           <td style="padding:8px 12px">${prod?.description||prodName(i.producto_id)}
             ${esServicio?'<span class="badge badge-blue" style="margin-left:6px;font-size:10px">Servicio</span>':''}
-            <div style="font-size:10px;color:var(--text3);margin-top:2px">
-              Pendiente de facturar: ${fmtNum(pendiente)} ${i.unidad||''}</div>
+            ${esServicio ? '' : (() => {
+              // Desglose de dónde sale la cantidad sugerida (30/Ago/2026, a
+              // pedido explícito). Ver solo el pendiente no deja detectar por
+              // qué es menor de lo esperado: si el usuario esperaba facturar
+              // más, comparar contra lo PEDIDO en la OC le dice si el faltante
+              // es porque ya se facturó o porque bodega todavía no terminó de
+              // ingresar el producto.
+              const pedido    = Number(i.cantidad||0);
+              const recibido  = ocRecibidoQty(currentOCId, i.producto_id);
+              const facturado = ocFacturadoQty(currentOCId, i.producto_id);
+              const faltaRecibir = pedido - recibido;
+              return `<div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.5">
+                Recibido ${fmtNum(recibido)} − facturado ${fmtNum(facturado)} =
+                <strong style="color:${pendiente>0.001?'var(--accent)':'var(--text3)'}">${fmtNum(pendiente)} ${i.unidad||''}</strong> por facturar
+                ${faltaRecibir > 0.001
+                  ? `<br/><span style="color:var(--orange,#D97706)">⚠ Faltan ${fmtNum(faltaRecibir)} ${i.unidad||''} por recibir de los ${fmtNum(pedido)} pedidos</span>`
+                  : ''}
+              </div>`;
+            })()}
           </td>
           <td style="padding:8px 12px;text-align:right">
             <input type="number" id="foc-cant-${idx}" value="${qty.toFixed(esServicio?0:3)}" step="0.001" min="0"
