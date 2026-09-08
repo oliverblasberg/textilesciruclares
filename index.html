@@ -1435,37 +1435,28 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             </table>
           </div>
         </div>
-        <!-- PACKING LIST PANEL -->
-        <div id="pl-panel" style="display:none; margin-top:24px;">
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <div class="card-title" id="pl-panel-title">Listas de Empaque</div>
-                <div style="font-size:12px;color:var(--text2);margin-top:2px" id="pl-panel-sub"></div>
-              </div>
-              <div style="display:flex;gap:8px;align-items:center">
-                <button class="btn btn-primary btn-sm" onclick="openNewPL()">+ Nueva Lista</button>
-                <button class="btn btn-ghost btn-sm" onclick="closePLPanel()">✕ Cerrar</button>
-              </div>
-            </div>
-            <div class="card-body table-wrap">
-              <table>
-                <thead><tr><th>No.</th><th>Fecha</th><th>Producto</th><th>Bultos</th><th>Peso Neto</th><th>Peso Bruto</th><th>Estado</th><th></th></tr></thead>
-                <tbody id="tbl-pl"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
       </div>
 
-      <!-- LISTAS DE EMPAQUE (standalone page) -->
+      <!-- LISTAS DE EMPAQUE (standalone page) — solo lectura/edición de
+           listas ya existentes (creadas por Generar Despacho). El panel
+           "PACKING LIST PANEL" que vivía acá arriba (id="pl-panel") se
+           eliminó (08/Sep/2026, a pedido explícito: "configuración inicial
+           que ya no estamos utilizando") — era inalcanzable desde ningún
+           botón real (showPLPanel() nunca se llamaba, ya estaba en la
+           lista de funciones huérfanas del checklist), y su botón
+           "+ Nueva Lista" abría la misma ruta manual rota que se quitó del
+           modal de OV: bultos escritos a mano, sin rollos, sin movimiento
+           de Kardex ni asiento de Costo de Venta. Se quitó también el
+           "+ Nueva Lista" de esta página: Generar Despacho (dentro de la
+           OV) es ahora el único camino soportado para crear una lista de
+           empaque. Editar/Eliminar de una lista ya existente se mantienen
+           abajo — no se tocó esa parte, no fue lo que se pidió. -->
       <div class="page" id="page-packing">
         <div class="filters-row">
           <div class="search-box">
             <span class="search-icon">⌕</span>
             <input type="text" id="search-pl" placeholder="Buscar lista..." oninput="renderAllPL()"/>
           </div>
-          <button class="btn btn-primary" onclick="openNewPLStandalone()">+ Nueva Lista</button>
         </div>
         <div class="card">
           <div class="table-wrap">
@@ -5732,18 +5723,20 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   <div class="modal modal-lg" style="max-width:90vw;width:90vw;max-height:90vh">
     <div class="modal-header">
       <div class="modal-title" id="vped-title">Orden de Venta</div>
+      <!-- Editar / Planificar / Generar Despacho + Imprimir, todos en el
+           header junto a la ✕ (08/Sep/2026, a pedido explícito — antes
+           Editar/Planificar/Generar Despacho vivían en el footer;
+           estandariza con el patrón que ya usa modal-asiento-detail).
+           vped-header-actions lo puebla verPedido() según el estado de la
+           OV, igual que antes hacía con vped-footer-actions. -->
       <div style="display:flex;align-items:center;gap:8px">
+        <div id="vped-header-actions" style="display:flex;gap:8px"></div>
         <button class="btn btn-ghost btn-sm" onclick="imprimirOV(currentVerPedidoId)">🖨 Imprimir</button>
         <button class="modal-close" onclick="closeModal('modal-ver-pedido')">✕</button>
       </div>
     </div>
     <div class="modal-body" id="vped-body" style="padding:20px"></div>
     <div class="modal-footer">
-      <!-- Editar / Generar Despacho — poblado por verPedido() según el
-           estado de la OV. Editar y Generar Despacho vivían antes como
-           botones sueltos en la fila del Libro de Ventas; ahora viven aquí
-           adentro, a pedido del usuario. -->
-      <div id="vped-footer-actions" style="display:flex;gap:8px"></div>
       <button class="btn btn-ghost" onclick="closeModal('modal-ver-pedido')">Cerrar</button>
     </div>
   </div>
@@ -5944,7 +5937,6 @@ let state = {
   enviosTerceros: [], enviosTercerosItems: [],
   rollos: []
 };
-let currentPLOrderId = null;
 
 // ═══ AUTH ═══
 async function doLogin() {
@@ -6915,11 +6907,17 @@ function verPedido(id) {
       </div>
     </div>
 
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3)">
-        Listas de Empaque — ${despachado.toFixed(2)} / ${totalKg.toFixed(2)} kg despachado
-      </div>
-      <button class="btn btn-primary btn-sm" onclick="closeModal('modal-ver-pedido');currentPLOrderId='${id}';openNewPL()">+ Nueva Lista</button>
+    <!-- (08/Sep/2026, a pedido explícito) Se eliminó el botón "+ Nueva
+         Lista" que vivía acá — visualmente parecía un atajo más para lo
+         mismo que "Generar Despacho", pero en realidad llamaba a una ruta
+         distinta y más vieja (openNewPL → savePL, modal-pl): esa ruta deja
+         escribir bultos a mano sin elegir rollos, y por eso NO marca
+         ningún erp_rollos como despachado, NO genera movimiento de
+         Kardex/FIFO, y NO postea el asiento de Costo de Venta. Generar
+         Despacho (confirmarGenerarDespacho, arriba en el header) es ahora
+         el único camino soportado para despachar contra esta OV. -->
+    <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">
+      Listas de Empaque — ${despachado.toFixed(2)} / ${totalKg.toFixed(2)} kg despachado
     </div>
     <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
       <table style="width:100%;border-collapse:collapse">
@@ -6971,7 +6969,7 @@ function verPedido(id) {
     ? `<button class="btn btn-ghost btn-sm" onclick="planificarAbastecimientoOV('${id}')" title="Esta OV ya tiene OP/OC generadas — revisa antes de repetir para no duplicar">🔄 Re-planificar Abastecimiento</button>`
     : `<button class="btn btn-primary btn-sm" onclick="planificarAbastecimientoOV('${id}')">🔄 Planificar Abastecimiento</button>`;
 
-  document.getElementById('vped-footer-actions').innerHTML = `
+  document.getElementById('vped-header-actions').innerHTML = `
     <button class="btn btn-ghost btn-sm" onclick="closeModal('modal-ver-pedido');editPedido('${id}')">✎ Editar</button>
     ${btnPlanificar}
     <button class="btn btn-primary btn-sm" onclick="abrirGenerarDespacho('${id}')">📦 Generar Despacho</button>
@@ -10135,50 +10133,13 @@ function plStatus(plId) {
 // Listas de Empaque, más la info completa de la OV, Imprimir y Editar
 // (que antes vivían como botones sueltos en la fila del Libro de Ventas).
 
-function showPLPanel(orderId) {
-  currentPLOrderId = orderId;
-  const order = state.pedidos.find(p => p.id === orderId);
-  document.getElementById('pl-panel').style.display = 'block';
-  document.getElementById('pl-panel-title').textContent = 'Listas de Empaque — ' + ovLabel(order);
-  document.getElementById('pl-panel-sub').textContent = clientName(order.customer_id);
-  renderPLPanel(orderId);
-  document.getElementById('pl-panel').scrollIntoView({behavior:'smooth', block:'start'});
-}
-
-function closePLPanel() {
-  document.getElementById('pl-panel').style.display = 'none';
-  currentPLOrderId = null;
-}
-
-function renderPLPanel(orderId) {
-  const lists = state.packingLists.filter(pl => pl.order_id === orderId);
-  const tbody = document.getElementById('tbl-pl');
-  tbody.innerHTML = lists.length ? lists.map(pl => {
-    const bultos  = state.packingBultos.filter(b => b.packing_list_id === pl.id);
-    const totNeto  = bultos.reduce((s,b) => s + Number(b.peso_neto||0), 0);
-    const totBruto = bultos.reduce((s,b) => s + Number(b.peso_bruto||0), 0);
-    const {status, factura} = plStatus(pl.id);
-    const statusMap   = { despachada:'badge-blue', facturada:'badge-yellow', pagada:'badge-green' };
-    const statusLabel = { despachada:'Despachada', facturada:'Facturada', pagada:'Pagada' };
-    const verFactBtn  = (status === 'facturada' || status === 'pagada') && factura
-      ? `<button class="btn btn-sm btn-ghost" onclick="verFactura('${factura.id}')">📄 Ver Factura</button>` : '';
-    return `<tr>
-      <td class="td-mono">LE-${String(pl.pl_number).padStart(4,'0')}</td>
-      <td>${fmtDate(pl.date)}</td>
-      <td>${fabricName(pl.fabric_id)}</td>
-      <td>${bultos.length}</td>
-      <td class="td-mono">${totNeto.toFixed(2)} kg</td>
-      <td class="td-mono">${totBruto.toFixed(2)} kg</td>
-      <td><span class="badge ${statusMap[status]}">${statusLabel[status]}</span></td>
-      <td><div class="td-actions">
-        <button class="btn btn-sm btn-ghost" onclick="printPL('${pl.id}')">🖨️</button>
-        ${verFactBtn}
-        <button class="btn btn-sm btn-ghost" onclick="editPL('${pl.id}')">Editar</button>
-        <button class="btn btn-sm btn-danger" onclick="deletePL('${pl.id}')">Eliminar</button>
-      </div></td>
-    </tr>`;
-  }).join('') : '<tr><td colspan="8"><div class="empty-state"><p>Sin listas de empaque en este pedido</p></div></td></tr>';
-}
+// showPLPanel/closePLPanel/renderPLPanel (más el panel "pl-panel" en el
+// HTML y la variable currentPLOrderId) se eliminaron el 08/Sep/2026, a
+// pedido explícito — el panel era inalcanzable desde ningún botón real
+// (showPLPanel() nunca se llamaba) y su única entrada era el botón
+// "+ Nueva Lista" que abría la ruta manual de creación de listas de
+// empaque, ya descontinuada. renderAllPL() (abajo) es la vista vigente
+// para ver/editar/eliminar listas de empaque ya existentes.
 
 function renderAllPL() {
   const q = (document.getElementById('search-pl')?.value||'').toLowerCase();
@@ -10255,57 +10216,16 @@ function populatePLFabricSelect(orderId) {
   };
 }
 
-function openNewPL() {
-  const orderId = currentPLOrderId;
-  if (!orderId) return;
-  const order = state.pedidos.find(p => p.id === orderId);
-  document.getElementById('pl-id').value = '';
-  document.getElementById('pl-order-id').value = orderId;
-  document.getElementById('pl-order-display').value = ovLabel(order) + ' — ' + clientName(order.customer_id);
-  document.getElementById('pl-date').value = today();
-  document.getElementById('pl-destination').value = '';
-  document.getElementById('pl-carrier').value = '';
-  document.getElementById('pl-plate').value = '';
-  document.getElementById('pl-notes').value = '';
-  document.getElementById('pl-bultos').innerHTML = '';
-  bultoLineCount = 0;
-  document.getElementById('pl-fabric-kg').textContent = '—';
-  document.getElementById('modal-pl-title').textContent = 'Nueva Lista de Empaque';
-  populatePLFabricSelect(orderId);
-  addBultoLine();
-  openModal('modal-pl');
-}
-
-function openNewPLStandalone() {
-  // From the packing lists page — need to pick an order first
-  const order_opts = state.pedidos.filter(p=>p.status!=='cancelado' && p.order_number).map(p=>
-    `<option value="${p.id}">${ovLabel(p)} — ${clientName(p.customer_id)}</option>`
-  ).join('');
-  // Re-use modal but make order field a select
-  document.getElementById('pl-id').value = '';
-  document.getElementById('pl-order-id').value = '';
-  // Replace readonly input with select temporarily
-  const orderField = document.getElementById('pl-order-display');
-  orderField.outerHTML = `<select id="pl-order-display" onchange="onPLOrderChange(this)" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-family:inherit;font-size:13.5px;outline:none"><option value="">— Seleccionar Orden de Venta —</option>${order_opts}</select>`;
-  document.getElementById('pl-date').value = today();
-  document.getElementById('pl-destination').value = '';
-  document.getElementById('pl-carrier').value = '';
-  document.getElementById('pl-plate').value = '';
-  document.getElementById('pl-notes').value = '';
-  document.getElementById('pl-bultos').innerHTML = '';
-  bultoLineCount = 0;
-  document.getElementById('pl-fabric').innerHTML = '<option value="">— Primero selecciona una Orden de Venta —</option>';
-  document.getElementById('pl-fabric-kg').textContent = '—';
-  document.getElementById('modal-pl-title').textContent = 'Nueva Lista de Empaque';
-  openModal('modal-pl');
-}
-
-function onPLOrderChange(sel) {
-  const orderId = sel.value;
-  document.getElementById('pl-order-id').value = orderId;
-  if (orderId) populatePLFabricSelect(orderId);
-}
-
+// openNewPL/openNewPLStandalone/onPLOrderChange (creación MANUAL de una
+// lista de empaque, sin rollos) se eliminaron el 08/Sep/2026, a pedido
+// explícito: esa ruta no marca rollos como despachados, no genera
+// movimiento de Kardex/FIFO, y no postea el asiento de Costo de Venta —
+// "configuración inicial que ya no estamos utilizando". Generar Despacho
+// (confirmarGenerarDespacho, sección GENERAR DESPACHO) es ahora el único
+// camino para crear una lista de empaque nueva. editPL/savePL (abajo)
+// siguen vigentes para corregir datos de una lista YA creada por esa vía
+// (destino, transportista, notas, bultos) desde la página "Listas de
+// Empaque" — ver nota en savePL() sobre lo que esa edición NO ajusta.
 async function editPL(id) {
   const pl = state.packingLists.find(x => x.id === id);
   const order = state.pedidos.find(p => p.id === pl.order_id);
@@ -10380,9 +10300,8 @@ async function savePL() {
   const od = document.getElementById('pl-order-display');
   if (od && od.tagName === 'SELECT') od.outerHTML = `<input type="text" id="pl-order-display" readonly style="background:var(--surface2);color:var(--text2);width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-family:inherit;font-size:13.5px"/>`;
   await loadAll();
-  await syncOrderStatus(document.getElementById('pl-order-id').value || currentPLOrderId);
+  await syncOrderStatus(document.getElementById('pl-order-id').value);
   await loadAll();
-  if (currentPLOrderId) renderPLPanel(currentPLOrderId);
 }
 
 async function deletePL(id) {
@@ -10395,7 +10314,6 @@ async function deletePL(id) {
   await loadAll();
   await syncOrderStatus(pl?.order_id);
   await loadAll();
-  if (currentPLOrderId) renderPLPanel(currentPLOrderId);
 }
 
 // ═══ PRINT PACKING LIST ═══
