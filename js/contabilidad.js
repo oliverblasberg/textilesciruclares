@@ -81,6 +81,20 @@ function getCtaValoracionProducto(productoId) {
   return cat ? state.nomenclatura.find(n => n.id === cat.cta_valoracion) : null;
 }
 
+// Cuenta de INGRESOS real de un producto, según la categoría a la que está
+// asignado — mismo criterio que getCtaValoracionProducto() de arriba, pero
+// para el lado de Ingresos (08/Sep/2026, facturación de venta por línea).
+// Usada por buildLineasFacturaVenta() para nunca hardcodear la cuenta de
+// Ventas: cada categoría de producto (Tela Cruda, Tela Teñida, Hilo, etc.)
+// puede tener su propia cuenta de ingresos, igual regla que el proyecto ya
+// exige para inventario ("Asientos contables usan cuentas por categoría de
+// producto, nunca constantes hardcodeadas").
+function getCtaIngresosProducto(productoId) {
+  const prod = state.productos.find(p => p.id === productoId);
+  const cat  = prod ? (state.categorias||[]).find(c => c.id === prod.categoria) : null;
+  return cat ? state.nomenclatura.find(n => n.id === cat.cta_ingresos) : null;
+}
+
 /**
  * Obtiene la cuenta de ganancia o pérdida cambiaria de la nomenclatura
  */
@@ -302,39 +316,134 @@ async function crearAsiento({ diario, fecha, descripcion, referencia, referencia
   return asiento.id;
 }
 
+// Cuentas por Cobrar Clientes — por ahora una sola cuenta genérica de tipo
+// 'Por cobrar' (08/Sep/2026). A diferencia de compras (que segmenta
+// Proveedores Locales GTQ/USD/Extranjero — ver ctaPorPagarOC), en ventas no
+// existe hoy esa segmentación: ~99% de la producción se exporta bajo
+// CAFTA-DR, así que casi todos los clientes son del mismo tipo. Se deja como
+// función y no como constante para poder afinar el criterio después (ej. si
+// algún día se necesita separar cliente local vs. exportación) sin tocar
+// buildLineasFacturaVenta().
+function ctaPorCobrarOV() {
+  return state.nomenclatura.find(n => n.tipo === 'Por cobrar');
+}
+
+// Construye las líneas del asiento de una factura de venta a partir de
+// ov_id/total/neto/iva — mismo patrón que buildLineasFacturaCompra() del
+// lado de compras (ver más abajo), para que la previsualización del modal
+// (renderFactApuntesPreview) y el asiento real al guardar (asientoFacturaVenta)
+// nunca puedan desincronizarse: ambos llaman a esta misma función.
+//
+// neto/iva (opcionales): monto real de la factura, ya calculado respetando
+// el checkbox de IVA de CADA línea (ver factNetoIvaFromDOM() / las líneas
+// persistidas en erp_ov_factura_items). Si no se reciben, se parte el total
+// 12% como respaldo (llamadas antiguas o sin ese dato).
+//
+// La cuenta de Ingresos se resuelve por CATEGORÍA DEL PRODUCTO
+// (getCtaIngresosProducto), igual regla que usa Compras para Valoración —
+// nunca una cuenta fija ("Asientos contables usan cuentas por categoría de
+// producto, nunca constantes hardcodeadas"). Simplificación deliberada
+// (misma fidelidad que buildLineasFacturaCompra): se toma la categoría del
+// PRIMER producto de la OV. Si en el futuro una misma factura mezcla
+// productos de categorías con cuentas de ingresos distintas, esto tendría
+// que partirse por línea — hoy no ocurre porque cada OV es de un solo tipo
+// de tela.
+//
+// DECISIÓN (08/Sep/2026, no confirmada explícitamente por el usuario —
+// tratada como el criterio por defecto, a revisar): a diferencia de compras
+// (que separa la diferencia de precio contra la OC en cuentas de variación
+// 51101097/51101098), en ventas NO existe una cuenta de "variación de
+// ingresos" separada. Si se factura a un precio distinto al pactado en la
+// OV, el Ingreso se reconoce directo al valor FACTURADO — la única
+// diferencia queda registrada como auditoría en
+// erp_ov_factura_items.motivo_precio/diferencia_precio, no como una línea
+// contable aparte. Motivo: la variación de precio de COMPRA existe porque
+// el costo ya estaba capitalizado en inventario a otro valor (hay un
+// residuo que reconciliar); en VENTA no hay tal residuo — el Ingreso nace
+// directamente al momento de facturar, así que no hay nada que "variar".
+function buildLineasFacturaVenta({ ov_id, total, neto=null, iva=null }) {
+  const totalOrig = Number(total||0);
+  const tieneNetoIva = neto !== null && iva !== null;
+  let netoLinea = tieneNetoIva ? parseFloat(Number(neto).toFixed(4)) : parseFloat((totalOrig / 1.12).toFixed(4));
+  let ivaLinea  = tieneNetoIva ? parseFloat(Number(iva).toFixed(4))  : parseFloat((totalOrig - netoLinea).toFixed(4));
+
+  // Blindaje: neto+iva DEBE sumar exactamente el total facturado (que es lo
+  // que se debita a Cuentas x Cobrar más abajo) — mismo blindaje que
+  // buildLineasFacturaCompra(). saveFactura() ya bloquea este caso antes de
+  // guardar; esto es la segunda red de seguridad para cualquier otro
+  // llamador (ej. una reconstrucción futura desde erp_invoices con datos ya
+  // desincronizados).
+  const sumaCheck = netoLinea + ivaLinea;
+  if (Math.abs(sumaCheck - totalOrig) > 0.01 && sumaCheck > 0) {
+    console.warn(`buildLineasFacturaVenta: neto+iva (${sumaCheck}) no coincide con total (${totalOrig}) — reescalando proporcionalmente.`);
+    const factor = totalOrig / sumaCheck;
+    netoLinea = parseFloat((netoLinea * factor).toFixed(4));
+    ivaLinea  = parseFloat((totalOrig - netoLinea).toFixed(4));
+  }
+
+  const ovItems     = state.pedItems.filter(i => i.order_id === ov_id);
+  const ctaIngresos = getCtaIngresosProducto(ovItems[0]?.fabric_id)
+    || state.nomenclatura.find(n => n.tipo === 'Ingreso');
+  const ctaPorCobrar = ctaPorCobrarOV();
+  const ctaIVA = state.nomenclatura.find(n => n.codigo === '21104004')
+    || state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('iva') && (n.tipo||'').toLowerCase().includes('pasivo'));
+
+  const lineas = [
+    { cuenta_id: ctaPorCobrar?.id||null, cuenta_codigo: ctaPorCobrar?.codigo||'POR-COBRAR', cuenta_nombre: ctaPorCobrar?.nombre||'Cuentas x Cobrar', debe: totalOrig, haber: 0 },
+    { cuenta_id: ctaIngresos?.id||null,  cuenta_codigo: ctaIngresos?.codigo||'INGRESOS',    cuenta_nombre: ctaIngresos?.nombre||'Ingresos por Ventas', debe: 0, haber: netoLinea },
+  ];
+  if (ivaLinea > 0.001) {
+    lineas.push({ cuenta_id: ctaIVA?.id||null, cuenta_codigo: ctaIVA?.codigo||'IVA-POR-PAGAR', cuenta_nombre: ctaIVA?.nombre||'IVA por Pagar', debe: 0, haber: ivaLinea, descripcion: 'IVA 12%' });
+  }
+  return lineas;
+}
+
 // 1. VENTA — Al publicar factura de venta (con conversión USD→GTQ)
-// moneda: 'GTQ' o 'USD' — la de la factura/cliente, NUNCA forzada a GTQ. Las
-// líneas se arman con los montos en SU MONEDA ORIGINAL (sin convertir); es
+// FIX (08/Sep/2026): esta función existía en el archivo pero NUNCA se
+// llamaba desde saveFactura() — la factura se guardaba y aparecía en el
+// Libro de Ventas (state.facturas ES el libro de ventas), pero no se
+// generaba ningún asiento: ni Cuentas x Cobrar, ni Ingresos, ni IVA por
+// Pagar. Al corregir esa llamada (ver saveFactura() en index.html) se
+// aprovechó para alinear esta función con el patrón ya aprobado de
+// compras (asientoFacturaCompra):
+//   · el neto/IVA reales se leen de state.ovFacturaItems — la tabla de
+//     detalle por línea, que respeta el checkbox de IVA de cada una — en
+//     vez de partir el total 12% a ciegas.
+//   · la cuenta de Ingresos se resuelve por categoría del producto
+//     (getCtaIngresosProducto, vía buildLineasFacturaVenta), nunca una
+//     cuenta fija de tipo 'Ingreso' tomada al azar.
+//
+// moneda: 'GTQ' o 'USD' — la del cliente, NUNCA forzada a GTQ. Las líneas
+// se arman con los montos en SU MONEDA ORIGINAL (sin convertir); es
 // crearAsiento() quien, recibiendo esa moneda a nivel de asiento, calcula el
 // equivalente en GTQ por línea (debe_gtq/haber_gtq, para el balance general)
 // Y conserva el monto real (monto_orig/moneda_orig) — necesario para poder
-// conciliar Cuentas x Cobrar o una cuenta bancaria cuando están configuradas
-// en USD en la nomenclatura. Mismo patrón que buildLineasFacturaCompra()/
-// buildLineasPago().
+// conciliar Cuentas x Cobrar cuando está configurada en USD en la
+// nomenclatura. Mismo patrón que buildLineasFacturaCompra()/buildLineasPago().
 async function asientoFacturaVenta(facturaId) {
   const f = state.facturas.find(x => x.id === facturaId);
   if (!f) return;
   const cliente   = state.clientes.find(c => c.id === f.customer_id);
   const monedaCli = cliente?.moneda || 'GTQ';
   const totalOrig = Number(f.total||0);
-  const ivaOrig   = totalOrig - (totalOrig / 1.12);
-  const netoOrig  = totalOrig - ivaOrig;
 
-  const ctaPorCobrar = state.nomenclatura.find(n => n.tipo === 'Por cobrar');
-  const ctaIngresos  = state.nomenclatura.find(n => n.tipo === 'Ingreso');
-  const ctaIVA       = state.nomenclatura.find(n => n.codigo === '21104004')
-    || state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('iva') && n.tipo === 'Pasivos Circulantes');
+  // Neto/IVA reales de las líneas de la factura (respetando el checkbox de
+  // IVA de cada una). Si por algún motivo la factura no tiene líneas
+  // guardadas en erp_ov_factura_items (no debería ocurrir con el flujo
+  // actual de saveFactura), buildLineasFacturaVenta() cae de regreso al
+  // split 12% plano sobre el total.
+  const lineasFact = (state.ovFacturaItems||[]).filter(li => li.factura_id === facturaId);
+  const netoReal = lineasFact.length ? lineasFact.reduce((s,li) => s + Number(li.neto||0), 0) : null;
+  const ivaReal  = lineasFact.length ? lineasFact.reduce((s,li) => s + Number(li.iva||0),  0) : null;
+
+  const lineas = buildLineasFacturaVenta({ ov_id: f.order_id, total: totalOrig, neto: netoReal, iva: ivaReal });
 
   await crearAsiento({
     diario: 'VENTAS', fecha: f.date,
     descripcion: `Factura ${f.serie||''}${f.invoice_number} — ${cliente?.name||''}`,
     referencia: `Factura ${f.invoice_number}`, referencia_id: facturaId,
     moneda: monedaCli,
-    lineas: [
-      { cuenta_id: ctaPorCobrar?.id||null, cuenta_codigo: ctaPorCobrar?.codigo||'POR COBRAR', cuenta_nombre: ctaPorCobrar?.nombre||'Cuentas x Cobrar', debe: totalOrig, haber: 0, descripcion: `Factura ${f.invoice_number}` },
-      { cuenta_id: ctaIngresos?.id||null,  cuenta_codigo: ctaIngresos?.codigo||'INGRESOS',    cuenta_nombre: ctaIngresos?.nombre||'Ingresos por Ventas', debe: 0, haber: netoOrig, descripcion: 'Ingreso neto' },
-      { cuenta_id: ctaIVA?.id||null,       cuenta_codigo: ctaIVA?.codigo||'IVA-POR-PAGAR',   cuenta_nombre: ctaIVA?.nombre||'IVA por Pagar', debe: 0, haber: ivaOrig, descripcion: 'IVA 12%' },
-    ],
+    lineas,
   });
 }
 
