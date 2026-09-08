@@ -3079,7 +3079,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 </style>
 
 <div class="modal-overlay" id="modal-fact">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg" style="max-width:860px;width:95vw">
     <div class="modal-header">
       <div class="modal-title" id="modal-fact-title">Nueva Factura</div>
       <div style="display:flex;gap:8px;align-items:center">
@@ -3090,8 +3090,27 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <button class="modal-close" onclick="closeModal('modal-fact')">✕</button>
       </div>
     </div>
-    <div class="modal-body">
+    <div class="modal-body" style="padding:0">
       <input type="hidden" id="fact-id"/>
+
+      <!-- TABS (08/Sep/2026 — mismo patrón que modal-factura-oc) -->
+      <div style="display:flex;border-bottom:2px solid var(--border);background:var(--surface2)">
+        <button id="fact-tab-datos" onclick="factTab('datos')"
+          style="padding:12px 20px;font-size:13px;font-weight:600;border:none;background:var(--bg);border-bottom:2px solid var(--accent);color:var(--accent);cursor:pointer;margin-bottom:-2px">
+          📄 Datos de Factura
+        </button>
+        <button id="fact-tab-apuntes" onclick="factTab('apuntes')"
+          style="padding:12px 20px;font-size:13px;font-weight:600;border:none;background:transparent;color:var(--text3);cursor:pointer;margin-bottom:-2px">
+          📊 Apuntes Contables
+        </button>
+      </div>
+
+      <!-- Ambos tabs se apilan en la misma celda de grid para que el modal
+           mantenga siempre la altura del contenido más alto y no se
+           encoja/salte al cambiar a Apuntes Contables. -->
+      <div style="display:grid">
+      <!-- TAB: DATOS -->
+      <div id="fact-panel-datos" style="grid-column:1;grid-row:1;padding:20px">
       <div class="form-grid form-grid-2">
 
         <!-- STEP 1: OV -->
@@ -3143,24 +3162,37 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <input type="text" id="fact-tipo-otro" placeholder="Tipo de factura..."/>
         </div>
 
-        <!-- STEP 7: Listas de empaque (multiple) -->
+        <!-- STEP 7: Detalle por producto (08/Sep/2026) — reemplaza al check
+             de Listas de Empaque completas: factura por línea, parcial,
+             validada contra lo despachado, cantidad y precio editables. -->
         <div class="field field-full">
-          <label>7. Listas de Empaque a Facturar *</label>
-          <div id="fact-packing-list" style="border:1.5px solid var(--border);border-radius:8px;overflow:hidden;max-height:220px;overflow-y:auto">
-            <div style="padding:12px 14px;color:var(--text3);font-size:13px" id="fact-packing-placeholder">— Primero selecciona una OV —</div>
+          <label>7. Detalle a Facturar *</label>
+          <div id="fact-items-display" style="border:1.5px solid var(--border);border-radius:8px;overflow:hidden;max-height:320px;overflow-y:auto">
+            <div style="padding:12px 14px;color:var(--text3);font-size:13px">— Primero selecciona una OV —</div>
           </div>
         </div>
 
-        <!-- AUTO TOTAL -->
+        <!-- TOTALES -->
         <div class="field field-full">
-          <div style="background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:14px 16px;background:var(--surface2);border-radius:8px">
             <div>
-              <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Total Calculado</div>
-              <div style="font-size:11px;color:var(--text2)" id="fact-total-detail">—</div>
+              <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Subtotal (Neto)</div>
+              <div id="fact-subtotal-display" style="font-family:'DM Mono',monospace;font-size:15px;font-weight:600">—</div>
             </div>
-            <div style="font-size:24px;font-weight:600;font-family:'DM Mono',monospace;color:var(--text)" id="fact-total-display">$0.00</div>
+            <div>
+              <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);margin-bottom:3px">IVA (12%)</div>
+              <div id="fact-iva-display" style="font-family:'DM Mono',monospace;font-size:15px">—</div>
+            </div>
+            <div style="background:var(--accent-bg,#EFF6FF);border-radius:6px;padding:8px 12px">
+              <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--accent);margin-bottom:3px">Total Factura</div>
+              <div id="fact-total-display" style="font-family:'DM Mono',monospace;font-size:20px;font-weight:700;color:var(--accent)">—</div>
+              <input type="hidden" id="fact-total"/>
+            </div>
           </div>
-          <input type="hidden" id="fact-total"/>
+        </div>
+
+        <div class="field field-full">
+          <div id="fact-saldo-ov-info" style="display:none;font-size:12px;padding:10px 12px;border-radius:8px"></div>
         </div>
 
         <div class="field field-full"><label>Notas</label><textarea id="fact-notes" rows="2"></textarea></div>
@@ -3193,10 +3225,42 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           </div>
         </div>
       </div>
+      </div>
+
+      <!-- TAB: APUNTES CONTABLES -->
+      <div id="fact-panel-apuntes" style="grid-column:1;grid-row:1;visibility:hidden;padding:20px">
+        <div style="font-size:12px;color:var(--text3);font-style:italic;margin-bottom:12px">
+          Previsualización del asiento que se generará al guardar la factura, según la configuración de la categoría del producto (Cuentas x Cobrar / Ingresos / IVA por Pagar). Los montos se confirman al guardar.
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="background:var(--surface2)">
+            <th style="padding:8px 12px;text-align:left;font-size:11px">Cuenta</th>
+            <th style="padding:8px 12px;text-align:left;font-size:11px">Descripción</th>
+            <th style="padding:8px 12px;text-align:right;font-size:11px">Debe</th>
+            <th style="padding:8px 12px;text-align:right;font-size:11px">Haber</th>
+          </tr></thead>
+          <tbody id="fact-apuntes-tbody">
+            <tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
+              Completa los datos de la factura para previsualizar los apuntes contables.
+            </td></tr>
+          </tbody>
+          <tfoot>
+            <tr style="border-top:2px solid var(--border);font-weight:700">
+              <td colspan="2" style="padding:8px 12px">
+                Total <span id="fact-balance-badge"></span>
+              </td>
+              <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace" id="fact-total-debe">—</td>
+              <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace" id="fact-total-haber">—</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      </div><!-- /grid tabs wrapper -->
+
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-fact')">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveFactura()">Guardar Factura</button>
+      <button class="btn btn-primary" id="fact-btn-guardar" onclick="saveFactura()">💾 Generar Factura</button>
     </div>
   </div>
 </div>
@@ -5948,7 +6012,7 @@ function enterModule(hub) {
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
          sc, scI, oc, ocI, ocR, ocRI, plC, ocF, ocFI, pagosOC, ocA, asi, asiL, dj, bod, tc,
-         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev] = await Promise.all([
+         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev, ovFI] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
     sb.from('erp_ov').select('*').order('order_number', {ascending:false}),
@@ -5994,6 +6058,11 @@ async function loadAll() {
     sb.from('erp_envios_terceros_items').select('*'),
     sb.from('erp_rollos').select('*').order('created_at', {ascending:false}),
     sb.from('erp_reabastecimiento_devoluciones').select('*').order('created_at', {ascending:false}),
+    // FACTURACIÓN DE VENTA POR LÍNEA (08/Sep/2026) — mismo patrón que
+    // erp_oc_factura_items: detalle por producto de cada factura de venta,
+    // para poder acumular lo facturado producto por producto entre varias
+    // facturas parciales de una misma OV (ver ovFacturadoQty()).
+    sb.from('erp_ov_factura_items').select('*'),
   ]);
   // Antes esto fallaba en silencio: si Supabase devolvía un error (RLS, red,
   // columna renombrada, etc.) el resultado quedaba como `[]` sin avisar a
@@ -6014,6 +6083,7 @@ async function loadAll() {
     erp_extracto_lotes:extL, erp_extracto_bancario:extB, erp_envios_terceros:envT,
     erp_envios_terceros_items:envTI, erp_rollos:roll,
     erp_reabastecimiento_devoluciones:reabDev,
+    erp_ov_factura_items:ovFI,
   };
   const _loadErrors = Object.entries(_loadResults).filter(([, r]) => r?.error);
   if (_loadErrors.length) {
@@ -6025,6 +6095,10 @@ async function loadAll() {
   state.pedidos       = p.data   || [];
   state.pedItems      = pI.data  || [];
   state.facturas      = f.data   || [];
+  // Detalle por línea de las facturas de venta (08/Sep/2026) — mismo rol que
+  // state.ocFacturaItems del lado de compras: permite validar cantidad
+  // facturada contra cantidad despachada, producto por producto.
+  state.ovFacturaItems = ovFI.data || [];
   state.packingLists  = pl.data  || [];
   state.packingBultos = pb.data  || [];
   state.cuentas       = cta.data || [];
@@ -7354,7 +7428,17 @@ async function confirmarGenerarDespacho() {
 
       for (const r of rollosProd) {
         const costoUnit = stockLotes.find(l => l.lote === (r.lote||'(sin lote)'))?.costo || 0;
-        await crearMovimiento({
+        // FIX (08/Sep/2026): esto llamaba a crearMovimiento() directo, que solo
+        // inserta la fila del Kardex (erp_movimientos_inv) — nunca disparaba el
+        // asiento de Costo de Venta. El rollo salía del FIFO correctamente pero
+        // no se contabilizaba nada: ni Debe Costo de Venta ni Haber Inventario.
+        // crearMovimientoConAsiento() es la misma función que ya usan
+        // recepción de OC, consumo de OP y ajustes — resuelve las cuentas por
+        // categoría del producto (getCtaValoracionProducto / cta_salida), sin
+        // nada hardcodeado. Es la contraparte de costo del Ingreso que ahora
+        // genera saveFactura() → asientoFacturaVenta() al precio facturado;
+        // son dos asientos independientes que juntos arman el margen bruto.
+        await crearMovimientoConAsiento({
           tipo: 'salida',
           producto_id: r.producto_id,
           cantidad: Number(r.peso_kg||0),
@@ -7898,6 +7982,272 @@ function totalPagado(facturaId) {
   return state.pagos.filter(p => p.factura_id === facturaId).reduce((s,p) => s + Number(p.monto||0), 0);
 }
 
+// ── FACTURACIÓN DE VENTA POR LÍNEA (08/Sep/2026, a pedido explícito) ──
+// Replica el modelo de facturación de compras (30/Ago/2026): por línea,
+// parcial, validada contra CANTIDAD. La diferencia frente a compras es la
+// cantidad de referencia: aquí es lo DESPACHADO (Listas de Empaque / bultos),
+// no lo "recibido" — en ventas no existe una recepción física propia, existe
+// el despacho hacia el cliente. state.ovFacturaItems es la tabla de detalle
+// equivalente a state.ocFacturaItems del lado de compras.
+
+// Cantidad despachada de un producto en una OV — suma de peso_neto de los
+// bultos de todas las Listas de Empaque de esa OV para ese producto. Mismo
+// cálculo que ya usa syncOrderStatus() para el total de la orden, aquí
+// desglosado por producto para poder validar línea por línea.
+function ovDespachadoQty(ovId, productoId) {
+  return state.packingLists
+    .filter(pl => pl.order_id === ovId && pl.fabric_id === productoId)
+    .reduce((s, pl) => s + state.packingBultos
+      .filter(b => b.packing_list_id === pl.id)
+      .reduce((bs, b) => bs + Number(b.peso_neto||0), 0), 0);
+}
+
+// Cantidad ya facturada de un producto en una OV, sumando TODAS sus facturas
+// activas. EXCLUYE LAS CANCELADAS: al cancelar una factura sus líneas no se
+// borran —el sistema maneja ciclo de vida por estados, no por borrado
+// físico— así que hay que filtrarlas acá, igual que ocFacturadoQty().
+function ovFacturadoQty(ovId, productoId) {
+  const facturasOV = state.facturas
+    .filter(f => f.order_id === ovId && f.status !== 'cancelada')
+    .map(f => f.id);
+  return (state.ovFacturaItems||[])
+    .filter(li => facturasOV.includes(li.factura_id) && li.producto_id === productoId)
+    .reduce((s,li) => s + Number(li.cantidad||0), 0);
+}
+
+// Cantidad que todavía se puede facturar: despachado menos ya facturado.
+// Nunca negativo — si se facturó de más (con justificación registrada), el
+// pendiente es cero, no un número negativo que se leería como crédito.
+function ovPendienteFacturarLinea(ovId, productoId) {
+  return Math.max(0, ovDespachadoQty(ovId, productoId) - ovFacturadoQty(ovId, productoId));
+}
+
+// Valor total "despachado" en la OV, al precio pactado en cada línea de la
+// OV — equivalente a ocValorRecibido(). En ventas de tela siempre es
+// producto físico despachado, no existe el caso "servicio" de compras.
+function ovValorDespachado(ovId) {
+  return state.pedItems.filter(i => i.order_id === ovId)
+    .reduce((s,i) => s + ovDespachadoQty(ovId, i.fabric_id) * Number(i.unit_price||0), 0);
+}
+function ovFacturadoTotal(ovId) {
+  return state.facturas.filter(f => f.order_id === ovId && f.status !== 'cancelada')
+    .reduce((s,f) => s + Number(f.total||0), 0);
+}
+function ovSaldoPorFacturar(ovId) {
+  return ovValorDespachado(ovId) - ovFacturadoTotal(ovId);
+}
+
+// Moneda de la OV a partir de su id — getMonedaOV() toma customer_id, esto
+// es un atajo cuando solo se tiene el id de la orden a mano.
+function getMonedaOVById(ovId) {
+  const ov = state.pedidos.find(o => o.id === ovId);
+  return getMonedaOV(ov?.customer_id);
+}
+
+// Lee las líneas marcadas del modal de factura. Solo devuelve las que están
+// tildadas y con cantidad > 0 — así se puede facturar parcialmente por
+// producto (ej. el lote rojo hoy y el verde la semana que viene) sin obligar
+// a que todas las líneas de la OV estén en cada factura.
+function getFactLineas(ovId, monedaOV) {
+  const out = [];
+  document.querySelectorAll('[id^="fact-item-row-"]').forEach(tr => {
+    const idx = tr.id.replace('fact-item-row-','');
+    const inc = document.getElementById(`fact-incluir-${idx}`);
+    if (inc && !inc.checked) return;
+    const cantidad = parseFloat(document.getElementById(`fact-cant-${idx}`)?.value) || 0;
+    const precio   = parseFloat(document.getElementById(`fact-precio-${idx}`)?.value) || 0;
+    if (cantidad <= 0) return;
+    const prodId   = tr.dataset.productoId;
+    const ovItemId = tr.dataset.ovItemId || null;
+    const llevaIva = document.getElementById(`fact-iva-${idx}`)?.checked !== false;
+    const totalLn  = parseFloat((cantidad * precio).toFixed(4));
+    const neto     = llevaIva ? parseFloat((totalLn / 1.12).toFixed(4)) : totalLn;
+    out.push({
+      producto_id: prodId, ov_item_id: ovItemId,
+      unidad: 'kg',
+      cantidad, precio_unit: precio, lleva_iva: llevaIva,
+      neto, iva: parseFloat((totalLn - neto).toFixed(4)), total: totalLn,
+      moneda: monedaOV,
+      motivo_cantidad: null, motivo_precio: null,
+      precio_ov: null, diferencia_precio: 0,
+    });
+  });
+  return out;
+}
+
+function factTab(tab) {
+  // visibility (no display) para que ambos paneles sigan ocupando su celda
+  // del grid y el modal no cambie de tamaño al alternar tabs — mismo patrón
+  // que focTab() del lado de compras.
+  document.getElementById('fact-panel-datos').style.visibility    = tab==='datos'    ? 'visible' : 'hidden';
+  document.getElementById('fact-panel-apuntes').style.visibility  = tab==='apuntes'  ? 'visible' : 'hidden';
+  document.getElementById('fact-tab-datos').style.background     = tab==='datos'    ? 'var(--bg)' : 'transparent';
+  document.getElementById('fact-tab-datos').style.color          = tab==='datos'    ? 'var(--accent)' : 'var(--text3)';
+  document.getElementById('fact-tab-datos').style.borderBottom   = tab==='datos'    ? '2px solid var(--accent)' : 'none';
+  document.getElementById('fact-tab-apuntes').style.background   = tab==='apuntes'  ? 'var(--bg)' : 'transparent';
+  document.getElementById('fact-tab-apuntes').style.color        = tab==='apuntes'  ? 'var(--accent)' : 'var(--text3)';
+  document.getElementById('fact-tab-apuntes').style.borderBottom = tab==='apuntes'  ? '2px solid var(--accent)' : 'none';
+  if (tab === 'apuntes') renderFactApuntesPreview();
+}
+
+// Neto/IVA reales de la factura en pantalla — agregando línea por línea desde
+// el DOM (fact-neto-N / fact-iva-val-N), que calcFactItem()/calcFactTotales()
+// ya llenan respetando el checkbox de IVA de CADA línea. Única fuente de
+// verdad para neto/IVA — mismo patrón que focNetoIvaFromDOM().
+function factNetoIvaFromDOM() {
+  let neto = 0, iva = 0;
+  document.querySelectorAll('[id^="fact-neto-"]').forEach((el, idx) => {
+    neto += parseFloat(el.textContent.replace(/[^0-9.]/g,''))||0;
+    const ivaEl = document.getElementById(`fact-iva-val-${idx}`);
+    iva += ivaEl?.textContent==='—' ? 0 : parseFloat((ivaEl?.textContent||'').replace(/[^0-9.]/g,''))||0;
+  });
+  return { neto: parseFloat(neto.toFixed(2)), iva: parseFloat(iva.toFixed(2)) };
+}
+
+// Previsualiza en vivo las líneas del asiento que se generará al guardar la
+// factura, con totales Debe/Haber para verificar que cuadra antes de grabar.
+// Si la factura ya fue guardada (fact-id tiene valor), no se toca — esa
+// tabla ya muestra el asiento real generado en saveFactura().
+function renderFactApuntesPreview() {
+  const tbody = document.getElementById('fact-apuntes-tbody');
+  if (!tbody) return;
+  if (document.getElementById('fact-id')?.value) return; // ya guardada: no sobreescribir
+
+  const ovId  = document.getElementById('fact-order').value;
+  const total = parseFloat(document.getElementById('fact-total').value) || 0;
+  const monedaOV = getMonedaOVById(ovId);
+  const badgeEl = document.getElementById('fact-balance-badge');
+
+  if (!ovId || !total) {
+    tbody.innerHTML = `<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text3);font-size:12px">
+      Completa los datos de la factura para previsualizar los apuntes contables.
+    </td></tr>`;
+    document.getElementById('fact-total-debe').textContent  = '—';
+    document.getElementById('fact-total-haber').textContent = '—';
+    if (badgeEl) badgeEl.innerHTML = '';
+    return;
+  }
+
+  const { neto, iva } = factNetoIvaFromDOM();
+  const lineas = buildLineasFacturaVenta({ ov_id: ovId, total, neto, iva });
+
+  let totalDebe = 0, totalHaber = 0;
+  tbody.innerHTML = lineas.map(l => {
+    totalDebe  += Number(l.debe||0);
+    totalHaber += Number(l.haber||0);
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:7px 12px;font-size:12px;font-family:'DM Mono',monospace">${l.cuenta_codigo||'—'} ${l.cuenta_nombre||''}</td>
+      <td style="padding:7px 12px;font-size:12px;color:var(--text3)">${l.descripcion||'—'}</td>
+      <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.debe||0)>0  ? fmtMoney(Number(l.debe||0), monedaOV)  : ''}</td>
+      <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.haber||0)>0 ? fmtMoney(Number(l.haber||0), monedaOV) : ''}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('fact-total-debe').textContent  = fmtMoney(totalDebe, monedaOV);
+  document.getElementById('fact-total-haber').textContent = fmtMoney(totalHaber, monedaOV);
+
+  const cuadra = Math.abs(totalDebe - totalHaber) < 0.01;
+  document.getElementById('fact-total-debe').style.color  = cuadra ? '' : 'var(--red)';
+  document.getElementById('fact-total-haber').style.color = cuadra ? '' : 'var(--red)';
+  if (badgeEl) {
+    badgeEl.innerHTML = cuadra
+      ? '<span class="badge badge-green" style="margin-left:8px">✓ Cuadra</span>'
+      : `<span class="badge badge-red" style="margin-left:8px">✗ No cuadra (dif. ${fmtMoney(Math.abs(totalDebe-totalHaber), monedaOV)})</span>`;
+  }
+}
+
+// Muestra cuánto se ha despachado, cuánto ya se facturó y el saldo disponible
+// para facturar en esta OV — visible antes de intentar grabar. Equivalente a
+// renderFocSaldoOC() del lado de compras.
+function renderFactSaldoOV() {
+  const el = document.getElementById('fact-saldo-ov-info');
+  if (!el) return;
+  const ovId = document.getElementById('fact-order').value;
+  if (!ovId) { el.style.display = 'none'; return; }
+
+  const monedaOV = getMonedaOVById(ovId);
+  const valorDespachado = ovValorDespachado(ovId);
+  const yaFacturado     = ovFacturadoTotal(ovId);
+  const saldo           = valorDespachado - yaFacturado;
+  const total           = parseFloat(document.getElementById('fact-total')?.value) || 0;
+  const excede          = total > saldo + 0.01;
+
+  el.style.display    = '';
+  el.style.background = excede ? 'var(--red-bg)' : 'var(--surface2)';
+  el.style.color      = excede ? 'var(--red)' : 'var(--text2)';
+  el.innerHTML = `Despachado en la OV: <strong>${fmtMoney(valorDespachado, monedaOV)}</strong>` +
+    (yaFacturado > 0.009 ? ` &nbsp;·&nbsp; Ya facturado: <strong>${fmtMoney(yaFacturado, monedaOV)}</strong>` : '') +
+    ` &nbsp;·&nbsp; Saldo por facturar: <strong>${fmtMoney(saldo, monedaOV)}</strong>` +
+    (excede ? ` &nbsp;·&nbsp; ⚠️ Esta factura excede el saldo despachado` : '');
+}
+
+// Recalcula subtotal/IVA/total de la factura leyendo SOLO las líneas
+// incluidas y sus inputs de cantidad/precio/IVA actuales en el DOM — nunca
+// sumando el texto ya formateado de las celdas. Mismo criterio que
+// calcFocTotales() del lado de compras (ver su comentario: sumar el texto
+// formateado de las celdas ignoraba ediciones no confirmadas y dejaba
+// factura y detalle desincronizados).
+function calcFactTotales() {
+  const ovId = document.getElementById('fact-order')?.value;
+  const monedaOV = getMonedaOVById(ovId);
+  let sumNeto = 0, sumIva = 0, sumTotal = 0;
+  document.querySelectorAll('[id^="fact-item-row-"]').forEach(tr => {
+    const idx = tr.id.replace('fact-item-row-','');
+    const incluir = document.getElementById(`fact-incluir-${idx}`);
+    if (incluir && !incluir.checked) return;   // línea excluida: no suma
+    const cantEl   = document.getElementById(`fact-cant-${idx}`);
+    const precioEl = document.getElementById(`fact-precio-${idx}`);
+    const qty    = parseFloat(cantEl?.value)   || 0;
+    const precio = parseFloat(precioEl?.value) || 0;
+    const total  = parseFloat((qty * precio).toFixed(2));
+    const ivaEl  = document.getElementById(`fact-iva-${idx}`);
+    const conIva = ivaEl ? ivaEl.checked : true;
+    const neto   = conIva ? parseFloat((total / 1.12).toFixed(2)) : total;
+    const iva    = conIva ? parseFloat((total - neto).toFixed(2)) : 0;
+    sumNeto  += neto;
+    sumIva   += iva;
+    sumTotal += total;
+  });
+  document.getElementById('fact-total').value                  = sumTotal.toFixed(2);
+  document.getElementById('fact-total-display').textContent    = fmtMoney(sumTotal, monedaOV);
+  document.getElementById('fact-subtotal-display').textContent = fmtMoney(sumNeto, monedaOV);
+  document.getElementById('fact-iva-display').textContent      = fmtMoney(sumIva, monedaOV);
+  renderFactSaldoOV();
+  renderFactApuntesPreview();
+}
+
+// Recalcula una línea individual al cambiar cantidad/precio/IVA/incluir, y
+// delega el recálculo de totales generales en calcFactTotales(). Equivalente
+// a calcFocItemIva() del lado de compras.
+function calcFactItem(idx) {
+  const cantEl   = document.getElementById(`fact-cant-${idx}`);
+  const precioEl = document.getElementById(`fact-precio-${idx}`);
+  const incluir  = document.getElementById(`fact-incluir-${idx}`);
+  const activa   = !incluir || incluir.checked;
+  const fila     = document.getElementById(`fact-item-row-${idx}`);
+  if (fila) fila.style.opacity = activa ? '1' : '0.45';
+  if (cantEl)   cantEl.disabled   = !activa;
+  if (precioEl) precioEl.disabled = !activa;
+
+  const qty    = cantEl   ? (parseFloat(cantEl.value)   || 0) : 0;
+  const precio = precioEl ? (parseFloat(precioEl.value) || 0) : 0;
+  const conIva = document.getElementById(`fact-iva-${idx}`)?.checked;
+  const monedaOV = getMonedaOVById(document.getElementById('fact-order')?.value);
+
+  const total = activa ? parseFloat((qty * precio).toFixed(2)) : 0;
+  const neto  = conIva ? parseFloat((total / 1.12).toFixed(2)) : total;
+  const iva   = conIva ? parseFloat((total - neto).toFixed(2)) : 0;
+
+  const netoEl = document.getElementById(`fact-neto-${idx}`);
+  const ivaEl  = document.getElementById(`fact-iva-val-${idx}`);
+  const totEl  = document.getElementById(`fact-total-${idx}`);
+  if (netoEl) netoEl.textContent = fmtMoney(neto, monedaOV);
+  if (ivaEl)  ivaEl.textContent  = conIva ? fmtMoney(iva, monedaOV) : '—';
+  if (totEl)  totEl.textContent  = fmtMoney(total, monedaOV);
+
+  calcFactTotales();
+}
+
 function renderFacturas() {
   const q   = (document.getElementById('search-fact').value||'').toLowerCase();
   const st  = document.getElementById('filter-fact-status').value;
@@ -7948,7 +8298,7 @@ function renderFacturas() {
       <td>${statusBadge(f.status)}</td>
       <td><div class="td-actions">
         ${f.status !== 'pagada' && f.status !== 'cancelada' ? `<button class="btn btn-sm" style="background:var(--green-bg);color:var(--green);border:1px solid #b8dfc8" onclick="openPago('${f.id}')">$ Pago</button>` : ''}
-        <button class="btn btn-sm btn-ghost" onclick="editFactura('${f.id}')">Editar</button>
+        <button class="btn btn-sm btn-ghost" onclick="verFactura('${f.id}')">Ver</button>
         ${f.status !== 'cancelada'
           ? `<button class="btn btn-sm btn-danger" onclick="deleteFactura('${f.id}')">Cancelar</button>`
           : `<button class="btn btn-sm btn-danger" onclick="hardDeleteFactura('${f.id}')">Eliminar</button>`}
@@ -7967,87 +8317,127 @@ function renderFacturas() {
   </tr>` : '';
 }
 
-// Fact order change — populate packing lists as checkboxes
+// Fact order change — construye la tabla de líneas por producto de la OV.
+// FIX (08/Sep/2026, a pedido explícito): reemplaza al modelo anterior de
+// Listas de Empaque como checkboxes de todo-o-nada (una PL completa quedaba
+// "bloqueada" al primer factura que la incluyera). El nuevo modelo replica
+// el de compras: valida por PRODUCTO despachado, no por lista de empaque —
+// permite facturar parcialmente por producto entre varias facturas.
 function onFactOrderChange() {
-  const orderId    = document.getElementById('fact-order').value;
-  const currentId  = document.getElementById('fact-id').value; // editing this invoice
-  const container  = document.getElementById('fact-packing-list');
+  const orderId   = document.getElementById('fact-order').value;
+  const container = document.getElementById('fact-items-display');
+  if (!container) return;
+
+  const limpiarTotales = () => {
+    document.getElementById('fact-total').value = '';
+    document.getElementById('fact-total-display').textContent = fmtMoney(0);
+    document.getElementById('fact-subtotal-display').textContent = fmtMoney(0);
+    document.getElementById('fact-iva-display').textContent = fmtMoney(0);
+    const saldoEl = document.getElementById('fact-saldo-ov-info');
+    if (saldoEl) saldoEl.style.display = 'none';
+  };
+
   if (!orderId) {
     container.innerHTML = '<div style="padding:12px 14px;color:var(--text3);font-size:13px">— Primero selecciona una OV —</div>';
-    document.getElementById('fact-total').value = '';
-    document.getElementById('fact-total-display').textContent = '$0.00';
-    document.getElementById('fact-total-detail').textContent = '—';
+    limpiarTotales();
     return;
   }
-  const lists = state.packingLists.filter(pl => pl.order_id === orderId);
-  if (!lists.length) {
-    container.innerHTML = '<div style="padding:12px 14px;color:var(--text3);font-size:13px">No hay listas de empaque en esta OV</div>';
+
+  const monedaOV = getMonedaOVById(orderId);
+  const items    = state.pedItems.filter(i => i.order_id === orderId);
+
+  // LA FACTURA SIEMPRE VA DESPUÉS DEL DESPACHO (08/Sep/2026, mismo criterio
+  // que compras: no puede existir factura de un producto físico sin que
+  // antes haya salido de bodega). El asiento de la factura reconoce el
+  // Ingreso; el asiento del despacho — confirmarGenerarDespacho(), corregido
+  // en este mismo desarrollo para usar crearMovimientoConAsiento() — ya
+  // reconoció el Costo de Venta al despachar. Sin despacho previo no hay
+  // nada que facturar.
+  const tieneDespacho = state.packingLists.some(pl => pl.order_id === orderId);
+  if (!tieneDespacho) {
+    container.innerHTML = `<div style="padding:14px 16px;background:var(--red-bg);color:var(--red);border-radius:8px;font-size:13px">
+      <strong>No se puede facturar</strong> — esta Orden de Venta no tiene ningún despacho registrado.
+      Registre primero el despacho (Packing List) desde el panel de la OV.
+    </div>`;
+    limpiarTotales();
     return;
   }
-  container.innerHTML = lists.map(pl => {
-    const bultos    = state.packingBultos.filter(b => b.packing_list_id === pl.id);
-    const totNeto   = bultos.reduce((s,b) => s + Number(b.peso_neto||0), 0);
-    const fabric    = state.telas.find(t => t.id === pl.fabric_id);
-    // A PL is invoiced if any OTHER active invoice already includes it
-    const invoicedBy = state.facturas.find(f =>
-      f.id !== currentId &&
-      f.status !== 'cancelada' &&
-      Array.isArray(f.packing_list_ids) && f.packing_list_ids.includes(pl.id)
-    );
-    const locked = !!invoicedBy;
-    const lockLabel = locked ? `<span style="font-size:10px;font-weight:600;background:var(--red-bg);color:var(--red);padding:2px 7px;border-radius:20px;margin-left:6px">Facturada · ${invoicedBy.invoice_number||'—'}</span>` : '';
-    return `<label class="pl-check-item${locked ? ' pl-locked' : ''}" id="plitem-${pl.id}" style="${locked ? 'opacity:0.55;cursor:not-allowed;' : ''}">
-      <input type="checkbox" value="${pl.id}" data-neto="${totNeto}" data-fabric="${pl.fabric_id||''}"
-        onchange="onPLCheckChange(this)" ${locked ? 'disabled' : ''}/>
-      <div class="pl-check-info">
-        <div class="pl-check-num">LE-${String(pl.pl_number).padStart(4,'0')}${lockLabel}</div>
-        <div class="pl-check-sub">${fabric ? fabric+' — '+fabric.description : '—'} · ${bultos.length} bultos · ${fmtDate(pl.date)}</div>
-      </div>
-      <div class="pl-check-kg">${totNeto.toFixed(2)} kg</div>
-    </label>`;
-  }).join('');
-  calcFactTotal();
-}
 
-function onPLCheckChange(cb) {
-  const label = cb.closest('.pl-check-item');
-  label.classList.toggle('checked', cb.checked);
-  calcFactTotal();
-}
-
-function getCheckedPLs() {
-  return Array.from(document.querySelectorAll('#fact-packing-list input[type=checkbox]:checked'));
-}
-
-function calcFactTotal() {
-  const orderId  = document.getElementById('fact-order').value;
-  const checked  = getCheckedPLs();
-  if (!orderId || !checked.length) {
-    document.getElementById('fact-total').value = '';
-    document.getElementById('fact-total-display').textContent = '$0.00';
-    document.getElementById('fact-total-detail').textContent = '—';
+  const pendientes = items.filter(i => ovPendienteFacturarLinea(orderId, i.fabric_id) > 0.001);
+  if (!pendientes.length) {
+    container.innerHTML = `<div style="padding:14px 16px;background:var(--surface2);color:var(--text2);border-radius:8px;font-size:13px">
+      Todo lo despachado en esta Orden de Venta ya fue facturado.
+    </div>`;
+    limpiarTotales();
     return;
   }
-  // Group by fabric to apply correct unit price per fabric
-  const byFabric = {};
-  checked.forEach(cb => {
-    const fabricId = cb.getAttribute('data-fabric');
-    const neto     = parseFloat(cb.getAttribute('data-neto'))||0;
-    byFabric[fabricId] = (byFabric[fabricId]||0) + neto;
-  });
-  let totalAmount = 0;
-  const details   = [];
-  Object.entries(byFabric).forEach(([fabricId, totalNeto]) => {
-    const orderItems = state.pedItems.filter(i => i.order_id === orderId && i.fabric_id === fabricId);
-    const unitPrice  = orderItems.length ? Number(orderItems[0].unit_price) : 0;
-    const subtotal   = totalNeto * unitPrice;
-    totalAmount += subtotal;
-    const fabric = state.telas.find(t => t.id === fabricId);
-    details.push(`${fabric ? fabric.code : '?'}: ${totalNeto.toFixed(2)} kg × ${fmtMoney(unitPrice)}`);
-  });
-  document.getElementById('fact-total').value = totalAmount.toFixed(2);
-  document.getElementById('fact-total-display').textContent = fmtMoney(totalAmount);
-  document.getElementById('fact-total-detail').textContent = details.join(' | ');
+
+  container.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="background:var(--surface2)">
+        <th style="padding:8px 6px;text-align:center;width:34px" title="Incluir esta línea en la factura">✓</th>
+        <th style="padding:8px 12px;text-align:left">Producto</th>
+        <th style="padding:8px 12px;text-align:right">Cantidad</th>
+        <th style="padding:8px 12px;text-align:right">Precio Unit.</th>
+        <th style="padding:8px 12px;text-align:center">IVA</th>
+        <th style="padding:8px 12px;text-align:right">Subtotal</th>
+        <th style="padding:8px 12px;text-align:right">IVA Q</th>
+        <th style="padding:8px 12px;text-align:right">Total</th>
+      </tr></thead>
+      <tbody>${items.map((i, idx) => {
+        const fabric = state.telas.find(t => t.id === i.fabric_id);
+        const prod   = state.productos.find(p => p.id === i.fabric_id);
+        // CANTIDAD SUGERIDA = lo PENDIENTE DE FACTURAR de esta línea
+        // (despachado − ya facturado), mismo criterio que en compras: "lo que
+        // ya está facturado no lo puedes facturar nuevamente".
+        const qty    = ovPendienteFacturarLinea(orderId, i.fabric_id);
+        const precio = Number(i.unit_price||0);
+        const total  = parseFloat((qty * precio).toFixed(2));
+        const conIva = prod?.lleva_iva !== false;
+        const neto   = conIva ? parseFloat((total / 1.12).toFixed(2)) : total;
+        const iva    = conIva ? parseFloat((total - neto).toFixed(2)) : 0;
+        const despachado = ovDespachadoQty(orderId, i.fabric_id);
+        const facturado   = ovFacturadoQty(orderId, i.fabric_id);
+        return `<tr style="border-bottom:1px solid var(--border)" id="fact-item-row-${idx}"
+                    data-producto-id="${i.fabric_id}" data-ov-item-id="${i.id||''}">
+          <td style="padding:8px 6px;text-align:center">
+            <input type="checkbox" id="fact-incluir-${idx}" ${qty>0.001?'checked':''}
+                   onchange="calcFactItem(${idx})"
+                   style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer"/>
+          </td>
+          <td style="padding:8px 12px">${fabric ? fabric.code+' — '+(fabric.description||'') : (prod?.description||prodName(i.fabric_id))}
+            <div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.5">
+              Despachado ${fmtNum(despachado)} − facturado ${fmtNum(facturado)} =
+              <strong style="color:${qty>0.001?'var(--accent)':'var(--text3)'}">${fmtNum(qty)} kg</strong> por facturar
+            </div>
+          </td>
+          <td style="padding:8px 12px;text-align:right">
+            <input type="number" id="fact-cant-${idx}" value="${qty.toFixed(3)}" step="0.001" min="0"
+                   onchange="calcFactItem(${idx})"
+                   style="width:100px;text-align:right;font-family:'DM Mono',monospace;font-size:12px;padding:4px 6px"/>
+            <span style="font-size:10px;color:var(--text3);margin-left:3px">kg</span>
+          </td>
+          <td style="padding:8px 12px;text-align:right">
+            <input type="number" id="fact-precio-${idx}" value="${precio.toFixed(4)}" step="0.0001" min="0"
+                   onchange="calcFactItem(${idx})"
+                   style="width:110px;text-align:right;font-family:'DM Mono',monospace;font-size:12px;padding:4px 6px"/>
+          </td>
+          <td style="padding:8px 12px;text-align:center">
+            <label style="display:flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;font-size:11px;font-weight:600;color:var(--text2)">
+              <input type="checkbox" id="fact-iva-${idx}" ${conIva?'checked':''}
+                onchange="calcFactItem(${idx})"
+                style="width:14px;height:14px;accent-color:var(--accent);cursor:pointer"/>
+              IVA
+            </label>
+          </td>
+          <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace" id="fact-neto-${idx}">${fmtMoney(neto, monedaOV)}</td>
+          <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;color:#D97706" id="fact-iva-val-${idx}">${conIva?fmtMoney(iva, monedaOV):'—'}</td>
+          <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:700" id="fact-total-${idx}">${fmtMoney(total, monedaOV)}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+
+  calcFactTotales();
 }
 
 // ═══ FACTURA DOCUMENT UPLOAD ═══
@@ -8122,116 +8512,250 @@ function openNewFactura() {
   document.getElementById('fact-tipo-otro').value = '';
   document.getElementById('fact-notes').value = '';
   document.getElementById('fact-total').value = '';
-  document.getElementById('fact-total-display').textContent = '$0.00';
-  document.getElementById('fact-total-detail').textContent = '—';
-  document.getElementById('fact-packing-list').innerHTML = '<div style="padding:12px 14px;color:var(--text3);font-size:13px">— Primero selecciona una OV —</div>';
+  document.getElementById('fact-total-display').textContent = fmtMoney(0);
+  document.getElementById('fact-subtotal-display').textContent = fmtMoney(0);
+  document.getElementById('fact-iva-display').textContent = fmtMoney(0);
+  document.getElementById('fact-items-display').innerHTML = '<div style="padding:12px 14px;color:var(--text3);font-size:13px">— Primero selecciona una OV —</div>';
+  const saldoEl = document.getElementById('fact-saldo-ov-info');
+  if (saldoEl) saldoEl.style.display = 'none';
+  const factBtn = document.getElementById('fact-btn-guardar');
+  if (factBtn) { factBtn.disabled = false; factBtn.textContent = '💾 Generar Factura'; }
+  const badgeEl = document.getElementById('fact-balance-badge');
+  if (badgeEl) badgeEl.innerHTML = '';
   const opts = state.pedidos.filter(p=>p.order_number).map(p=>`<option value="${p.id}" data-cid="${p.customer_id}">${ovLabel(p)} — ${clientName(p.customer_id)}</option>`).join('');
   document.getElementById('fact-order').innerHTML = '<option value="">— Seleccionar OV —</option>' + opts;
   resetFactDocUI(null, null);
+  factTab('datos');
   openModal('modal-fact');
 }
 
-function editFactura(id) {
-  const f = state.facturas.find(x => x.id === id);
-  document.getElementById('fact-id').value = f.id;
-  document.getElementById('modal-fact-title').textContent = 'Editar Factura';
-  document.getElementById('fact-serie').value  = f.serie||'';
-  document.getElementById('fact-number').value = f.invoice_number||'';
-  // FIX (29/Ago/2026): fmtDate da 'dd/Mmm/aaaa' y un <input type="date"> lo
-  // rechaza, dejando el campo VACÍO al editar (mismo bug que oc-entrega y
-  // ped-date). Al guardar se escribía null y se perdía la fecha.
-  document.getElementById('fact-date').value = (f.date||'').split('T')[0];
-  document.getElementById('fact-credito').value = f.credito||'inmediato';
-  document.getElementById('fact-tipo').value = f.tipo||'cambiaria';
-  toggleFactTipoOtro();
-  document.getElementById('fact-tipo-otro').value = f.tipo_otro||'';
-  document.getElementById('fact-notes').value = f.notes||'';
-  const opts = state.pedidos.filter(p=>p.order_number).map(p=>`<option value="${p.id}" data-cid="${p.customer_id}">${ovLabel(p)} — ${clientName(p.customer_id)}</option>`).join('');
-  document.getElementById('fact-order').innerHTML = '<option value="">— Seleccionar OV —</option>' + opts;
-  document.getElementById('fact-order').value = f.order_id;
-  onFactOrderChange();
-  setTimeout(() => {
-    const savedIds = Array.isArray(f.packing_list_ids) ? f.packing_list_ids
-      : f.packing_list_id ? [f.packing_list_id] : [];
-    document.querySelectorAll('#fact-packing-list input[type=checkbox]').forEach(cb => {
-      if (savedIds.includes(cb.value)) {
-        cb.checked = true;
-        cb.closest('.pl-check-item')?.classList.add('checked');
-      }
-    });
-    calcFactTotal();
-    document.getElementById('fact-total').value = f.total;
-    document.getElementById('fact-total-display').textContent = fmtMoney(f.total);
-  }, 100);
-  resetFactDocUI(f.doc_url||null, f.doc_path||null);
-  openModal('modal-fact');
-}
+// NOTA (08/Sep/2026): editFactura() se eliminó — las facturas de venta ahora
+// son INMUTABLES una vez generadas (mismo criterio que facturas de compra y
+// que la regla del proyecto para documentos contables/de despacho: correcciones
+// vía documento de reverso — deleteFactura() ya cancela y reversa el asiento
+// — nunca editando el original). El botón "Editar" del listado ahora abre
+// verFactura() ("Ver") en modo solo lectura.
 
 async function saveFactura() {
-  const id             = document.getElementById('fact-id').value;
+  // Evita doble-grabado: si ya se generó en esta apertura del modal, el
+  // botón ahora funciona como "Cerrar" — no se debe reintentar el guardado.
+  if (document.getElementById('fact-id').value) {
+    closeModal('modal-fact');
+    return;
+  }
+  const factBtn = document.getElementById('fact-btn-guardar');
+  if (factBtn?.disabled) return; // ya se está procesando (evita doble-click)
+
   const order_id       = document.getElementById('fact-order').value;
   const invoice_number = document.getElementById('fact-number').value.trim();
   const date           = document.getElementById('fact-date').value;
-  const checkedPLs     = getCheckedPLs();
   const total          = parseFloat(document.getElementById('fact-total').value);
   const tipo           = document.getElementById('fact-tipo').value;
   const tipo_otro      = tipo === 'otro' ? document.getElementById('fact-tipo-otro').value.trim() : '';
-  if (!order_id || !invoice_number || !date || !checkedPLs.length || isNaN(total)) {
-    toast('Completa todos los campos y selecciona al menos una lista de empaque','error'); return;
-  }
-  const packing_list_ids = checkedPLs.map(cb => cb.value);
-  const orderSel    = document.getElementById('fact-order');
-  const customer_id = orderSel.options[orderSel.selectedIndex].getAttribute('data-cid');
+  const serie          = document.getElementById('fact-serie').value.trim();
+  const credito        = document.getElementById('fact-credito').value;
+  const notes          = document.getElementById('fact-notes').value.trim();
 
-  // Determine invoice ID early (need it for storage path)
-  let invoiceId = id || crypto.randomUUID();
+  if (!order_id || !invoice_number || !date || isNaN(total)) {
+    toast('Completa todos los campos requeridos','error'); return;
+  }
+
+  const orderSel    = document.getElementById('fact-order');
+  const customer_id = orderSel.options[orderSel.selectedIndex]?.getAttribute('data-cid');
+  const monedaOV    = getMonedaOVById(order_id);
+
+  // VALIDACIÓN POR LÍNEA (08/Sep/2026, a pedido explícito). Reemplaza el
+  // chequeo global de "todas las Listas de Empaque marcadas" por el mismo
+  // criterio ya aprobado en compras: la cantidad no puede exceder lo
+  // PENDIENTE DE FACTURAR (despachado − ya facturado); el precio puede
+  // diferir del pactado en la OV. Ninguna de las dos bloquea de forma dura
+  // — ambas piden una razón escrita, que se guarda en la línea para poder
+  // auditarla después.
+  // Se revalida acá porque el bloqueo de onFactOrderChange() es solo la UI:
+  // el modal pudo quedar abierto y cambiar el despacho mientras tanto, o
+  // forzarse la llamada desde consola.
+  const factLineas = getFactLineas(order_id, monedaOV);
+  if (!state.packingLists.some(pl => pl.order_id === order_id)) {
+    toast('No se puede facturar: la orden no tiene despachos registrados. Registre primero el despacho.','error');
+    return;
+  }
+  if (!factLineas.length) {
+    toast('Selecciona al menos una línea para facturar','error');
+    return;
+  }
+
+  for (const ln of factLineas) {
+    const nombre = prodName(ln.producto_id);
+
+    // 1. Cantidad contra lo pendiente de facturar
+    const pendiente = ovPendienteFacturarLinea(order_id, ln.producto_id);
+    if (ln.cantidad > pendiente + 0.001) {
+      const exceso = ln.cantidad - pendiente;
+      const motivo = prompt(
+        `NO SE PUEDE FACTURAR MÁS DE LO DESPACHADO — ${nombre}\n\n` +
+        `Despachado:          ${fmtNum(ovDespachadoQty(order_id, ln.producto_id))} kg\n` +
+        `Ya facturado:        ${fmtNum(ovFacturadoQty(order_id, ln.producto_id))} kg\n` +
+        `Pendiente:           ${fmtNum(pendiente)} kg\n` +
+        `Se está facturando:  ${fmtNum(ln.cantidad)} kg  (exceso ${fmtNum(exceso)})\n\n` +
+        `Se estaría facturando material que no se despachó físicamente.\n\n` +
+        `Escriba la razón para continuar (queda registrada en la factura):`
+      );
+      if (!motivo || !motivo.trim()) { toast('No se puede facturar más de lo despachado sin una razón registrada','error'); return; }
+      ln.motivo_cantidad = motivo.trim();
+    }
+
+    // 2. Precio contra el de la OV. A diferencia de compras (donde la
+    // diferencia de precio se capitaliza al costo del inventario), en
+    // ventas no hay una cuenta de "variación de ingresos" separada — el
+    // Ingreso se reconoce directo al valor facturado (buildLineasFacturaVenta
+    // en contabilidad.js). El único requisito es dejar la razón registrada
+    // para auditoría.
+    const itemOV = state.pedItems.find(i => i.order_id === order_id && i.fabric_id === ln.producto_id);
+    const precioOV = Number(itemOV?.unit_price || 0);
+    ln.precio_ov = precioOV;
+    if (precioOV > 0 && Math.abs(ln.precio_unit - precioOV) > 0.0001) {
+      const dif    = ln.precio_unit - precioOV;
+      const difTot = dif * ln.cantidad;
+      const motivo = prompt(
+        `PRECIO DISTINTO AL DE LA ORDEN — ${nombre}\n\n` +
+        `Precio en la OV:      ${fmtMoney(precioOV, monedaOV)}\n` +
+        `Precio facturado:     ${fmtMoney(ln.precio_unit, monedaOV)}\n` +
+        `Diferencia unitaria:  ${dif>0?'+':''}${fmtMoney(dif, monedaOV)}\n` +
+        `Impacto en la línea:  ${difTot>0?'+':''}${fmtMoney(difTot, monedaOV)}\n\n` +
+        `La factura se contabilizará al precio facturado (no hay cuenta de ` +
+        `variación de ingresos separada).\n\n` +
+        `Escriba la razón para continuar (queda registrada en la factura):`
+      );
+      if (!motivo || !motivo.trim()) { toast('Se requiere una razón para facturar a un precio distinto','error'); return; }
+      ln.motivo_precio = motivo.trim();
+      ln.diferencia_precio = parseFloat(difTot.toFixed(4));
+    }
+  }
+
+  // Blindaje: el neto/IVA por línea (factNetoIvaFromDOM) es una fuente de
+  // datos independiente del campo "Total factura" — si no cuadran, el
+  // asiento quedaría desbalanceado (Debe ≠ Haber) sin ningún aviso. Se
+  // bloquea el guardado hasta que el usuario corrija la cantidad/precio de
+  // la línea que no cuadra, o ajuste el total. Mismo blindaje que compras.
+  const { neto: netoCheck, iva: ivaCheck } = factNetoIvaFromDOM();
+  if (Math.abs((netoCheck + ivaCheck) - total) > 0.01) {
+    toast(`Las líneas no cuadran con el total de la factura: líneas suman ${fmtMoney(netoCheck+ivaCheck, monedaOV)}, pero el total es ${fmtMoney(total, monedaOV)}. Revisa la cantidad/precio de cada línea antes de generar la factura.`,'error');
+    return;
+  }
+
+  if (factBtn) { factBtn.disabled = true; factBtn.textContent = 'Generando…'; }
+
+  const invoiceId = crypto.randomUUID();
 
   // Upload document if one is staged
   let doc_url  = null;
   let doc_path = null;
-  const existingF = id ? state.facturas.find(x => x.id === id) : null;
-
   if (factDocFile) {
-    // Delete old doc if replacing
-    if (existingF?.doc_path) {
-      await sb.storage.from('erp-docs').remove([existingF.doc_path]);
-    }
     const result = await uploadFactDoc(invoiceId);
     if (result) { doc_url = result.url; doc_path = result.path; }
-    else return; // upload failed, stop
-  } else if (factDocDeletePath) {
-    // User explicitly removed existing doc
-    await sb.storage.from('erp-docs').remove([factDocDeletePath]);
-    doc_url = null; doc_path = null;
-  } else {
-    // Keep existing
-    doc_url  = existingF?.doc_url  || null;
-    doc_path = existingF?.doc_path || null;
+    else { if (factBtn) { factBtn.disabled = false; factBtn.textContent = '💾 Generar Factura'; } return; }
   }
 
   const row = {
+    id: invoiceId,
     order_id, invoice_number, date, total, customer_id,
-    serie:         document.getElementById('fact-serie').value.trim(),
-    packing_list_ids,
-    packing_list_id: packing_list_ids[0] || null,
-    credito: document.getElementById('fact-credito').value,
-    tipo, tipo_otro,
-    status: existingF?.status || 'pendiente',
-    notes: document.getElementById('fact-notes').value.trim(),
-    doc_url, doc_path,
+    serie, credito, tipo, tipo_otro,
+    status: 'pendiente',
+    notes, doc_url, doc_path,
   };
-  let err;
-  if (id) {
-    ({error:err} = await sb.from('erp_invoices').update(row).eq('id',id));
-  } else {
-    ({error:err} = await sb.from('erp_invoices').insert({...row, id: invoiceId}));
+  const { error: err } = await sb.from('erp_invoices').insert(row);
+  if (err) {
+    toast('Error: '+err.message,'error');
+    if (factBtn) { factBtn.disabled = false; factBtn.textContent = '💾 Generar Factura'; }
+    return;
   }
-  if (err) { toast('Error: '+err.message,'error'); return; }
+
+  // Marcar como grabada de inmediato para bloquear reintentos aunque algo
+  // falle más abajo.
+  document.getElementById('fact-id').value = invoiceId;
+
+  // LÍNEAS DE LA FACTURA (08/Sep/2026). Sin esto el desglose se perdía y no
+  // había forma de acumular lo facturado por producto entre facturas
+  // parciales — que es la base de la validación por cantidad.
+  // Se insertan en UNA sola llamada (array): así o entran todas o no entra
+  // ninguna.
+  if (factLineas.length) {
+    const { error: eLineas } = await sb.from('erp_ov_factura_items').insert(
+      factLineas.map(ln => ({
+        factura_id:  invoiceId,
+        ov_item_id:  ln.ov_item_id || null,
+        producto_id: ln.producto_id,
+        cantidad:    ln.cantidad,
+        unidad:      ln.unidad,
+        precio_unit: ln.precio_unit,
+        moneda:      ln.moneda,
+        lleva_iva:   ln.lleva_iva,
+        neto:        ln.neto,
+        iva:         ln.iva,
+        total:       ln.total,
+        motivo_cantidad:   ln.motivo_cantidad || null,
+        motivo_precio:     ln.motivo_precio   || null,
+        precio_ov:         ln.precio_ov,
+        diferencia_precio: ln.diferencia_precio || 0,
+      }))
+    );
+    if (eLineas) {
+      console.error('Error guardando líneas de la factura:', eLineas.message);
+      alert(
+        'ATENCIÓN — La factura se creó pero NO se guardó su detalle por línea.\n\n' +
+        eLineas.message + '\n\n' +
+        'Sin el detalle, el sistema no podrá validar cuánto queda pendiente de ' +
+        'facturar de cada producto. Revise la factura antes de continuar.'
+      );
+    }
+  }
+
+  // Generar asiento contable.
+  // FIX (08/Sep/2026): asientoFacturaVenta() ya existía en contabilidad.js
+  // pero nunca se llamaba desde aquí — la factura se guardaba y aparecía en
+  // el Libro de Ventas (state.facturas ES el libro de ventas), pero no se
+  // generaba NINGÚN asiento: ni Cuentas x Cobrar, ni Ingresos, ni IVA por
+  // Pagar. Ahora sigue el mismo patrón que asientoFacturaCompra(): se llama
+  // después de insertar la factura y sus líneas, y usa cuentas por categoría
+  // de producto (getCtaIngresosProducto), nunca constantes hardcodeadas.
+  await loadAll();
+  await asientoFacturaVenta(invoiceId);
+  await loadAll();
+
+  // Mostrar los apuntes generados en el tab
+  const asientoFact = (state.asientos||[]).find(a => a.referencia_id === invoiceId);
+  if (asientoFact) {
+    const lineas = (state.asientoLineas||[]).filter(l=>l.asiento_id===asientoFact.id);
+    let totalDebe=0, totalHaber=0;
+    document.getElementById('fact-apuntes-tbody').innerHTML = lineas.map(l => {
+      const cta = (state.nomenclatura||[]).find(n=>n.id===l.cuenta_id);
+      totalDebe  += Number(l.debe_gtq||l.debe||0);
+      totalHaber += Number(l.haber_gtq||l.haber||0);
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:7px 12px;font-size:12px;font-family:'DM Mono',monospace">${cta?.codigo||'—'} ${cta?.nombre||l.cuenta_nombre||'—'}</td>
+        <td style="padding:7px 12px;font-size:12px;color:var(--text3)">${l.descripcion||''}</td>
+        <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.debe_gtq||l.debe||0)>0?fmtGTQ(Number(l.debe_gtq||l.debe||0)):''}</td>
+        <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${Number(l.haber_gtq||l.haber||0)>0?fmtGTQ(Number(l.haber_gtq||l.haber||0)):''}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('fact-total-debe').textContent  = fmtGTQ(totalDebe);
+    document.getElementById('fact-total-haber').textContent = fmtGTQ(totalHaber);
+    const factBadge = document.getElementById('fact-balance-badge');
+    if (factBadge) factBadge.innerHTML = '<span class="badge badge-green" style="margin-left:8px">✓ Factura generada</span>';
+    factTab('apuntes');
+    toast('✓ Factura generada — revisa los apuntes contables');
+  } else {
+    toast('Factura generada');
+    closeModal('modal-fact');
+  }
+
+  // El botón queda habilitado pero ahora funciona como "Cerrar" (ver guard
+  // al inicio de esta función, que detecta fact-id ya seteado).
+  if (factBtn) { factBtn.disabled = false; factBtn.textContent = 'Cerrar'; }
+
   await loadAll();
   await syncOrderStatus(order_id);
   await loadAll();
-  toast('Factura guardada');
-  closeModal('modal-fact');
 }
 
 // Cancelación de factura de venta — ahora en paridad con cancelarFacturaOC():
@@ -8249,7 +8773,7 @@ async function deleteFactura(id) {
   const action = confirm(
     `Factura ${f?.invoice_number||''}\n\n` +
     `¿Cancelar esta factura?\n\n` +
-    `· OK = Cancelar factura (las listas de empaque quedan disponibles)\n` +
+    `· OK = Cancelar factura (el saldo despachado queda disponible para facturar de nuevo)\n` +
     `· Cancelar = No hacer nada`
   );
   if (!action) return;
@@ -8277,7 +8801,7 @@ async function deleteFactura(id) {
   await loadAll();
   await syncOrderStatus(f?.order_id);
   await loadAll();
-  toast(`Factura cancelada${asientosFactura.length?' — asiento de reversa generado':''} — listas de empaque disponibles nuevamente`);
+  toast(`Factura cancelada${asientosFactura.length?' — asiento de reversa generado':''} — saldo despachado disponible para facturar nuevamente`);
 }
 
 function saldoSinAplicarPagoVenta(pagoId) {
@@ -8670,23 +9194,23 @@ async function syncOrderStatus(order_id) {
       .reduce((bs, b) => bs + Number(b.peso_neto||0), 0);
   }, 0);
 
-  // Which PLs are covered by active invoices
-  const invoicedPLIds = new Set(
-    activeInvoices.flatMap(f =>
-      Array.isArray(f.packing_list_ids) ? f.packing_list_ids
-      : f.packing_list_id ? [f.packing_list_id] : []
-    )
-  );
-
-  const allPLsInvoiced = allPLs.length > 0 && allPLs.every(pl => invoicedPLIds.has(pl.id));
+  // ¿Ya se facturó todo lo despachado? (08/Sep/2026)
+  // Antes esto comparaba packing_list_ids contra las facturas — cada factura
+  // debía cubrir listas de empaque completas. Con la facturación por línea
+  // (validada contra cantidad despachada, no contra listas específicas) el
+  // criterio correcto es por PRODUCTO: ningún producto despachado en esta OV
+  // puede tener saldo pendiente de facturar (ver ovPendienteFacturarLinea()).
+  const productosDespachados = [...new Set(allPLs.map(pl => pl.fabric_id).filter(Boolean))];
+  const allDespachadoFacturado = productosDespachados.length > 0 &&
+    productosDespachados.every(pid => ovPendienteFacturarLinea(order_id, pid) <= 0.001);
   const allInvoicesPaid = activeInvoices.length > 0 && activeInvoices.every(f => f.status === 'pagada');
   const kgsComplete = totalKgOrden > 0 && despachado >= totalKgOrden;
 
   // Priority: Pagada > Facturada > Terminada > En Proceso
   let newStatus;
-  if (allPLsInvoiced && allInvoicesPaid) {
+  if (allDespachadoFacturado && allInvoicesPaid) {
     newStatus = 'pagada';
-  } else if (allPLsInvoiced) {
+  } else if (allDespachadoFacturado) {
     newStatus = 'facturada';
   } else if (kgsComplete) {
     newStatus = 'terminada';
@@ -10002,13 +10526,69 @@ function verFactura(facturaId) {
   const pagado = totalPagado(facturaId);
   const pagos  = state.pagos.filter(p => p.factura_id === facturaId);
 
-  // Get packing lists included in this invoice
+  // Detalle de la factura (08/Sep/2026): las facturas NUEVAS (facturación por
+  // línea) tienen su detalle en state.ovFacturaItems — un renglón por
+  // producto, validado contra lo despachado. Las facturas ANTIGUAS (emitidas
+  // antes de este cambio) no tienen líneas ahí; para esas se conserva el
+  // detalle histórico por Lista de Empaque, para no perder trazabilidad de
+  // documentos ya emitidos e inmutables.
+  const lineasFact = (state.ovFacturaItems||[]).filter(li => li.factura_id === facturaId);
+  const esFacturaNueva = lineasFact.length > 0;
+
+  // Get packing lists included in this invoice (solo se usa para facturas
+  // antiguas — ver esFacturaNueva arriba)
   const plIds = Array.isArray(f.packing_list_ids) ? f.packing_list_ids
     : f.packing_list_id ? [f.packing_list_id] : [];
   const pls = plIds.map(id => state.packingLists.find(pl => pl.id === id)).filter(Boolean);
 
   const tipoMap = { cambiaria:'Factura cambiaria', especial:'Factura especial', exportacion:'Factura de exportación', otro: f.tipo_otro||'Otro' };
   const creditoMap = { inmediato:'Pago inmediato', '30':'30 días', '60':'60 días' };
+
+  const detalleSection = esFacturaNueva ? `
+    <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Detalle</div>
+    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+      ${lineasFact.map(li => {
+        const prod = state.productos.find(p => p.id === li.producto_id) || state.telas.find(t => t.id === li.producto_id);
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border)">
+          <div>
+            <span style="font-size:13px;color:var(--text2)">${prod?.description || prod?.code || prodName(li.producto_id)}</span>
+            <span style="color:var(--text2);margin:0 8px">·</span>
+            <span style="font-size:12px;color:var(--text3)">${fmtNum(li.cantidad)} kg × ${fmtMoney(li.precio_unit, li.moneda)}${li.lleva_iva===false?' · sin IVA':''}</span>
+            ${li.motivo_cantidad ? `<div style="font-size:11px;color:#D97706;margin-top:2px">⚠ Cantidad mayor a lo despachado: ${li.motivo_cantidad}</div>` : ''}
+            ${li.motivo_precio ? `<div style="font-size:11px;color:#D97706;margin-top:2px">⚠ Precio distinto al de la OV: ${li.motivo_precio}</div>` : ''}
+          </div>
+          <span style="font-family:'DM Mono',monospace;font-weight:600">${fmtMoney(li.total, li.moneda)}</span>
+        </div>`;
+      }).join('')}
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:var(--surface2);font-weight:600">
+        <span>Total</span>
+        <span style="font-family:'DM Mono',monospace;font-size:18px">${fmtMoney(f.total)}</span>
+      </div>
+    </div>
+  ` : `
+    <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Listas de Empaque Incluidas</div>
+    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+      ${pls.length ? pls.map(pl => {
+        const bultos  = state.packingBultos.filter(b => b.packing_list_id === pl.id);
+        const totNeto = bultos.reduce((s,b) => s + Number(b.peso_neto||0), 0);
+        const fabric  = state.telas.find(t => t.id === pl.fabric_id);
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border)">
+          <div>
+            <span style="font-family:'DM Mono',monospace;font-weight:600">LE-${String(pl.pl_number).padStart(4,'0')}</span>
+            <span style="color:var(--text2);margin:0 8px">·</span>
+            <span style="font-size:13px;color:var(--text2)">${fabric ? fabric+' — '+fabric.description : '—'}</span>
+            <span style="color:var(--text2);margin:0 8px">·</span>
+            <span style="font-size:12px;color:var(--text3)">${bultos.length} bultos · ${fmtDate(pl.date)}</span>
+          </div>
+          <span style="font-family:'DM Mono',monospace;font-weight:600">${totNeto.toFixed(2)} kg</span>
+        </div>`;
+      }).join('') : '<div style="padding:12px 16px;color:var(--text3);font-size:13px">—</div>'}
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:var(--surface2);font-weight:600">
+        <span>Total</span>
+        <span style="font-family:'DM Mono',monospace;font-size:18px">${fmtMoney(f.total)}</span>
+      </div>
+    </div>
+  `;
 
   document.getElementById('vf-title').textContent = `Factura ${f.invoice_number||'—'}`;
   document.getElementById('vf-body').innerHTML = `
@@ -10039,28 +10619,7 @@ function verFactura(facturaId) {
       </div>
     </div>
 
-    <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Listas de Empaque Incluidas</div>
-    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
-      ${pls.length ? pls.map(pl => {
-        const bultos  = state.packingBultos.filter(b => b.packing_list_id === pl.id);
-        const totNeto = bultos.reduce((s,b) => s + Number(b.peso_neto||0), 0);
-        const fabric  = state.telas.find(t => t.id === pl.fabric_id);
-        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border)">
-          <div>
-            <span style="font-family:'DM Mono',monospace;font-weight:600">LE-${String(pl.pl_number).padStart(4,'0')}</span>
-            <span style="color:var(--text2);margin:0 8px">·</span>
-            <span style="font-size:13px;color:var(--text2)">${fabric ? fabric+' — '+fabric.description : '—'}</span>
-            <span style="color:var(--text2);margin:0 8px">·</span>
-            <span style="font-size:12px;color:var(--text3)">${bultos.length} bultos · ${fmtDate(pl.date)}</span>
-          </div>
-          <span style="font-family:'DM Mono',monospace;font-weight:600">${totNeto.toFixed(2)} kg</span>
-        </div>`;
-      }).join('') : '<div style="padding:12px 16px;color:var(--text3);font-size:13px">—</div>'}
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:var(--surface2);font-weight:600">
-        <span>Total</span>
-        <span style="font-family:'DM Mono',monospace;font-size:18px">${fmtMoney(f.total)}</span>
-      </div>
-    </div>
+    ${detalleSection}
 
     <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Pagos</div>
     <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px">
@@ -10104,6 +10663,14 @@ function printFacturaConPL() {
   const creditoMap = { inmediato:'Pago inmediato', '30':'30 días', '60':'60 días' };
   const statusLabel = { pendiente:'Pendiente de cobro', pagada:'Pagada', vencida:'Vencida', cancelada:'Cancelada' };
 
+  // Detalle de la factura (08/Sep/2026): mismo criterio que verFactura() —
+  // facturas nuevas (por línea) imprimen su detalle por producto desde
+  // state.ovFacturaItems; facturas antiguas conservan el formato histórico
+  // por Lista de Empaque (plSections, abajo), para no alterar la impresión
+  // de documentos fiscales ya emitidos.
+  const lineasFact = (state.ovFacturaItems||[]).filter(li => li.factura_id === facturaId);
+  const esFacturaNueva = lineasFact.length > 0;
+
   // Build packing list detail sections for each PL
   const plSections = pls.map(pl => {
     const bultos   = state.packingBultos.filter(b => b.packing_list_id === pl.id).sort((a,b)=>a.bulto_number-b.bulto_number);
@@ -10141,6 +10708,35 @@ function printFacturaConPL() {
       ${pl.notes ? `<div class="obs"><strong>Observaciones:</strong> ${pl.notes}</div>` : ''}
     </div>`;
   }).join('<div class="page-break"></div>');
+
+  // Detalle por línea (facturas nuevas) — mismas clases CSS que plSections
+  // (.pl-section/.section-title/table) para que la impresión luzca igual.
+  const detalleSection = esFacturaNueva ? `
+    <div class="pl-section">
+      <div class="section-title">Detalle de Factura</div>
+      <table>
+        <thead><tr>
+          <th>Producto</th><th class="right">Cantidad (kg)</th><th class="right">Precio Unit.</th><th class="right">Subtotal</th><th class="right">IVA</th><th class="right">Total</th>
+        </tr></thead>
+        <tbody>
+          ${lineasFact.map(li => {
+            const prod = state.productos.find(p=>p.id===li.producto_id) || state.telas.find(t=>t.id===li.producto_id);
+            return `<tr>
+              <td>${prod?.description || prod?.code || '—'}</td>
+              <td class="right mono">${Number(li.cantidad).toFixed(2)}</td>
+              <td class="right mono">${Number(li.precio_unit).toLocaleString('es-GT',{minimumFractionDigits:2,maximumFractionDigits:4})}</td>
+              <td class="right mono">${Number(li.neto).toLocaleString('es-GT',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+              <td class="right mono">${li.lleva_iva===false?'—':Number(li.iva).toLocaleString('es-GT',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+              <td class="right mono">${Number(li.total).toLocaleString('es-GT',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot><tr>
+          <td colspan="5"><strong>TOTAL FACTURADO</strong></td>
+          <td class="right mono"><strong>${Number(f.total).toLocaleString('es-GT',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong></td>
+        </tr></tfoot>
+      </table>
+    </div>` : plSections;
 
   const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/>
 <title>${f.invoice_number||'Factura'} — LE</title>
@@ -10245,8 +10841,8 @@ function printFacturaConPL() {
 
 <hr class="divider"/>
 
-<!-- LISTAS DE EMPAQUE -->
-${plSections}
+<!-- ${esFacturaNueva ? 'DETALLE' : 'LISTAS DE EMPAQUE'} -->
+${detalleSection}
 
 <!-- PAGOS -->
 ${pagos.length ? `
