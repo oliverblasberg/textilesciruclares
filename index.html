@@ -794,7 +794,6 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div class="sidebar-section-label">3.5 Manufactura</div>
       <div class="nav-item" onclick="showPage('op-lista',this)">Órdenes de Producción</div>
       <div class="nav-item" onclick="showPage('recetas',this)">Recetas</div>
-      <div class="nav-item" onclick="showPage('packing',this)">Listas de Empaque</div>
     </div>
 
     <div class="sidebar-section">
@@ -1067,11 +1066,6 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <div class="sub-module-icon">🔄</div>
             <div class="sub-module-name">Movimientos</div>
             <div class="sub-module-desc">Entradas, salidas y transferencias</div>
-          </div>
-          <div class="sub-module-card" onclick="showPage('packing',null)">
-            <div class="sub-module-icon">📦</div>
-            <div class="sub-module-name">Listas de Empaque</div>
-            <div class="sub-module-desc">Preparación y despacho de pedidos</div>
           </div>
           <div class="sub-module-card" onclick="showPage('inv-ajustes',null)">
             <div class="sub-module-icon">⚖️</div>
@@ -1437,36 +1431,21 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         </div>
       </div>
 
-      <!-- LISTAS DE EMPAQUE (standalone page) — solo lectura/edición de
-           listas ya existentes (creadas por Generar Despacho). El panel
-           "PACKING LIST PANEL" que vivía acá arriba (id="pl-panel") se
-           eliminó (08/Sep/2026, a pedido explícito: "configuración inicial
-           que ya no estamos utilizando") — era inalcanzable desde ningún
-           botón real (showPLPanel() nunca se llamaba, ya estaba en la
-           lista de funciones huérfanas del checklist), y su botón
-           "+ Nueva Lista" abría la misma ruta manual rota que se quitó del
-           modal de OV: bultos escritos a mano, sin rollos, sin movimiento
-           de Kardex ni asiento de Costo de Venta. Se quitó también el
-           "+ Nueva Lista" de esta página: Generar Despacho (dentro de la
-           OV) es ahora el único camino soportado para crear una lista de
-           empaque. Editar/Eliminar de una lista ya existente se mantienen
-           abajo — no se tocó esa parte, no fue lo que se pidió. -->
-      <div class="page" id="page-packing">
-        <div class="filters-row">
-          <div class="search-box">
-            <span class="search-icon">⌕</span>
-            <input type="text" id="search-pl" placeholder="Buscar lista..." oninput="renderAllPL()"/>
-          </div>
-        </div>
-        <div class="card">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>No.</th><th>OV</th><th>Cliente</th><th class="hide-mobile">Fecha</th><th>Producto</th><th class="hide-mobile">Bultos</th><th class="hide-mobile">Peso Neto</th><th></th></tr></thead>
-              <tbody id="tbl-all-pl"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+      <!-- (08/Sep/2026, a pedido explícito: "no creo necesario en este
+           momento un módulo que consolide los PL. Cada PL debe estar en
+           su OV") Se eliminó la página standalone "Listas de Empaque"
+           (id="page-packing") completa, junto con su entrada en el
+           sidebar (sección "3.5 Manufactura"), su tarjeta en el hub de
+           Inventario, y su entrada en el mapa de breadcrumbs — las tres
+           apuntaban a esta misma página bajo tres módulos distintos
+           (Manufactura/Inventario/Ventas), lo cual ya era confuso de por
+           sí. Cada Lista de Empaque se ve ahora únicamente dentro del
+           modal de su propia OV (verPedido → tabla "Listas de Empaque"),
+           con Imprimir / Ver Factura / Editar / Eliminar por fila —
+           Editar y Eliminar se movieron ahí (mismo editPL/deletePL de
+           siempre, sin cambios de lógica). El panel "PACKING LIST PANEL"
+           (id="pl-panel") ya se había eliminado antes en esta misma
+           sesión por estar inalcanzable. -->
 
       <!-- FACTURAS -->
       <div class="page" id="page-facturas">
@@ -6139,7 +6118,6 @@ async function loadAll() {
   renderTelas();
   renderPedidos();
   renderFacturas();
-  renderAllPL();
   renderCuentas();
   renderHilos();
   renderPrecios();
@@ -6221,7 +6199,6 @@ function showPage(name, bnav) {
     categorias:'Categorías',
     nomenclatura:'Nomenclatura Contable',
     precios:'Listas de Precios',
-    packing:'Listas de Empaque',
     facturas:'Libro de Ventas',
     pagos:'Pagos',
     clientes:'Clientes',
@@ -6831,6 +6808,18 @@ function verPedido(id) {
     const statusLabel = { despachada:'Despachada', facturada:'Facturada', pagada:'Pagada' };
     const verFactBtn = (status === 'facturada' || status === 'pagada') && factura
       ? `<button class="btn btn-sm btn-ghost" onclick="verFactura('${factura.id}')">📄 Ver Factura</button>` : '';
+    // Editar/Eliminar (08/Sep/2026, a pedido explícito: "cada PL debe estar
+    // en su OV" — antes vivían en la página consolidada que se eliminó)
+    // solo se ofrecen mientras la lista sigue "despachada" (aún sin
+    // facturar). Una vez facturada, sus bultos ya alimentaron
+    // ovDespachadoQty()/erp_ov_factura_items — editarle el peso o
+    // eliminarla correría el riesgo de descuadrar retroactivamente lo que
+    // ya se facturó contra esta OV. Mismo criterio de inmutabilidad que ya
+    // rige facturas/DEV/REA en el proyecto.
+    const editDelBtns = status === 'despachada'
+      ? `<button class="btn btn-sm btn-ghost" onclick="closeModal('modal-ver-pedido');editPL('${pl.id}')">Editar</button>
+         <button class="btn btn-sm btn-danger" onclick="closeModal('modal-ver-pedido');deletePL('${pl.id}')">Eliminar</button>`
+      : '';
     return `<tr>
       <td class="td-mono">LE-${String(pl.pl_number).padStart(4,'0')}</td>
       <td>${fmtDate(pl.date)}</td>
@@ -6841,6 +6830,7 @@ function verPedido(id) {
       <td><div class="td-actions">
         <button class="btn btn-sm btn-ghost" onclick="printPL('${pl.id}')">🖨️</button>
         ${verFactBtn}
+        ${editDelBtns}
       </div></td>
     </tr>`;
   }).join('') : `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:12px">Sin listas de empaque</td></tr>`;
@@ -10133,44 +10123,15 @@ function plStatus(plId) {
 // Listas de Empaque, más la info completa de la OV, Imprimir y Editar
 // (que antes vivían como botones sueltos en la fila del Libro de Ventas).
 
-// showPLPanel/closePLPanel/renderPLPanel (más el panel "pl-panel" en el
-// HTML y la variable currentPLOrderId) se eliminaron el 08/Sep/2026, a
-// pedido explícito — el panel era inalcanzable desde ningún botón real
-// (showPLPanel() nunca se llamaba) y su única entrada era el botón
-// "+ Nueva Lista" que abría la ruta manual de creación de listas de
-// empaque, ya descontinuada. renderAllPL() (abajo) es la vista vigente
-// para ver/editar/eliminar listas de empaque ya existentes.
-
-function renderAllPL() {
-  const q = (document.getElementById('search-pl')?.value||'').toLowerCase();
-  const data = state.packingLists.filter(pl => {
-    const order = state.pedidos.find(p => p.id === pl.order_id);
-    return !q || String(pl.pl_number).includes(q) ||
-      (order && clientName(order.customer_id).toLowerCase().includes(q)) ||
-      fabricName(pl.fabric_id).toLowerCase().includes(q);
-  });
-  const tbody = document.getElementById('tbl-all-pl');
-  if (!tbody) return;
-  tbody.innerHTML = data.length ? data.map(pl => {
-    const order  = state.pedidos.find(p => p.id === pl.order_id);
-    const bultos = state.packingBultos.filter(b => b.packing_list_id === pl.id);
-    const totNeto = bultos.reduce((s,b) => s + Number(b.peso_neto||0), 0);
-    return `<tr>
-      <td class="td-mono">LE-${String(pl.pl_number).padStart(4,'0')}</td>
-      <td class="td-mono">${order ? ovLabel(order) : '—'}</td>
-      <td>${order ? clientName(order.customer_id) : '—'}</td>
-      <td class="hide-mobile">${fmtDate(pl.date)}</td>
-      <td>${fabricName(pl.fabric_id)}</td>
-      <td class="hide-mobile">${bultos.length}</td>
-      <td class="hide-mobile td-mono">${totNeto.toFixed(2)} kg</td>
-      <td><div class="td-actions">
-        <button class="btn btn-sm btn-ghost" onclick="printPL('${pl.id}')">🖨️</button>
-        <button class="btn btn-sm btn-ghost" onclick="editPL('${pl.id}')">Editar</button>
-        <button class="btn btn-sm btn-danger" onclick="deletePL('${pl.id}')">Eliminar</button>
-      </div></td>
-    </tr>`;
-  }).join('') : '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">▤</div><p>Sin listas de empaque</p></div></td></tr>';
-}
+// showPLPanel/closePLPanel/renderPLPanel/renderAllPL (más el panel
+// "pl-panel", la página standalone "page-packing" y la variable
+// currentPLOrderId) se eliminaron el 08/Sep/2026, a pedido explícito: "no
+// creo necesario un módulo que consolide los PL, cada PL debe estar en su
+// OV". El panel ya era inalcanzable desde antes (showPLPanel() nunca se
+// llamaba); la página standalone sí se usaba pero se decidió no
+// mantenerla. Ver/Imprimir/Ver Factura/Editar/Eliminar de cada Lista de
+// Empaque viven ahora únicamente dentro del modal de su propia OV
+// (verPedido, tabla "Listas de Empaque", plsHtml).
 
 // Bulto line counter
 let bultoLineCount = 0;
@@ -15887,7 +15848,6 @@ const MODULE_META = {
   'op-lista':         { label: 'Órdenes de Producción',    parent: 'hub-manufactura' },
   recetas:            { label: 'Recetas',                  parent: 'hub-manufactura' },
   pedidos:          { label: 'Órdenes de Venta',    parent: 'hub-ventas' },
-  packing:          { label: 'Listas de Empaque',   parent: 'hub-ventas' },
   facturas:         { label: 'Libro de Ventas',     parent: 'hub-ventas' },
   precios:          { label: 'Listas de Precios',   parent: 'hub-ventas' },
   sc:               { label: 'Solicitudes de Cotización', parent: 'hub-compras' },
