@@ -3570,62 +3570,11 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 </div>
 
 <!-- PACKING LIST MODAL -->
-<div class="modal-overlay" id="modal-pl">
-  <div class="modal modal-lg">
-    <div class="modal-header">
-      <div class="modal-title" id="modal-pl-title">Nueva Lista de Empaque</div>
-      <button class="modal-close" onclick="closeModal('modal-pl')">✕</button>
-    </div>
-    <div class="modal-body">
-      <input type="hidden" id="pl-id"/>
-      <input type="hidden" id="pl-order-id"/>
-      <div class="form-grid form-grid-2" style="margin-bottom:20px">
-        <div class="field"><label>Orden de Venta</label><input type="text" id="pl-order-display" readonly style="background:var(--surface2);color:var(--text2)"/></div>
-        <div class="field"><label>Fecha *</label><input type="date" id="pl-date"/></div>
-        <div class="field field-full"><label>Destino / Dirección de entrega</label><input type="text" id="pl-destination"/></div>
-        <div class="field"><label>Transportista</label><input type="text" id="pl-carrier"/></div>
-        <div class="field"><label>Placa</label><input type="text" id="pl-plate"/></div>
-        <div class="field field-full"><label>Observaciones</label><textarea id="pl-notes" rows="2"></textarea></div>
-      </div>
-
-      <!-- PRODUCTO SELECTOR -->
-      <div style="margin-bottom:20px">
-        <div class="form-section-title" style="display:block;margin-bottom:12px">Producto</div>
-        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-          <div class="field" style="flex:1;min-width:200px;margin-bottom:0">
-            <label>Tela de la OV *</label>
-            <select id="pl-fabric"></select>
-          </div>
-          <div style="font-size:13px;color:var(--text2);white-space:nowrap;padding-top:18px">
-            Kg en OV: <strong id="pl-fabric-kg" style="color:var(--text)">—</strong>
-          </div>
-        </div>
-      </div>
-
-      <!-- BULTOS -->
-      <div class="form-section-title" style="display:block;margin-bottom:12px">Detalle de Bultos</div>
-      <div class="line-items">
-        <table>
-          <thead><tr><th style="width:80px">Bulto #</th><th>Peso Bruto (kg)</th><th>Peso Neto (kg)</th><th style="width:40px"></th></tr></thead>
-          <tbody id="pl-bultos"></tbody>
-          <tfoot>
-            <tr>
-              <td style="padding:10px 14px;font-size:12px;font-weight:600;color:var(--text2)">TOTALES</td>
-              <td style="padding:10px 14px;font-family:'DM Mono',monospace;font-weight:600" id="pl-tot-bruto">—</td>
-              <td style="padding:10px 14px;font-family:'DM Mono',monospace;font-weight:600" id="pl-tot-neto">—</td>
-              <td></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      <button class="btn-add-line" onclick="addBultoLine()" style="margin-top:10px">+ Agregar bulto</button>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modal-pl')">Cancelar</button>
-      <button class="btn btn-primary" onclick="savePL()">Guardar</button>
-    </div>
-  </div>
-</div>
+<!-- modal-pl (Nueva/Editar Lista de Empaque manual) se eliminó el
+     09/Sep/2026, a pedido explícito: "Eliminemos todo el tema de listas de
+     empaque y creemos lo que te envie desde nuevo". Generar Despacho
+     (modal-despacho) es ahora el único camino para crear una lista de
+     empaque — ver verDespacho/imprimirDespacho más abajo. -->
 
 <!-- PRECIO MODAL -->
 <div class="modal-overlay" id="modal-precio">
@@ -5737,21 +5686,34 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div class="field"><label>Placa</label><input type="text" id="desp-placa"/></div>
       </div>
       <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">
-        Rollos Disponibles en Bodega de Despacho
+        Rollos Disponibles en Bodega de Despacho — por línea
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr>
-            <th style="width:36px"></th>
-            <th>No. Rollo</th><th>Producto</th><th>Lote</th><th style="text-align:right">Peso</th>
-          </tr></thead>
-          <tbody id="tbl-desp-rollos"></tbody>
-        </table>
-      </div>
+      <div id="desp-lineas"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-despacho')">Cancelar</button>
       <button class="btn btn-primary" id="btn-confirmar-despacho" onclick="confirmarGenerarDespacho()">📦 Generar Despacho</button>
+    </div>
+  </div>
+</div>
+
+<!-- VER DESPACHO — modal (09/Sep/2026, a pedido explícito: reemplaza por
+     completo la vieja "Listas de Empaque" como objeto visible al usuario.
+     Documento inmutable — solo Ver/Imprimir, sin Editar/Eliminar, mismo
+     criterio que facturas/DEV/REA. Agrupa una o más Listas de Empaque
+     (una por producto) del mismo evento de Generar Despacho. -->
+<div class="modal-overlay" id="modal-ver-despacho">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="vdesp-title">Despacho</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-ghost btn-sm" id="vdesp-print-btn">🖨️ Imprimir</button>
+        <button class="modal-close" onclick="closeModal('modal-ver-despacho')">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" id="vdesp-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-ver-despacho')">Cerrar</button>
     </div>
   </div>
 </div>
@@ -5914,7 +5876,8 @@ let state = {
   proveedores: [],
   compras: [],
   enviosTerceros: [], enviosTercerosItems: [],
-  rollos: []
+  rollos: [],
+  shipments: []
 };
 
 // ═══ AUTH ═══
@@ -5983,7 +5946,7 @@ function enterModule(hub) {
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
          sc, scI, oc, ocI, ocR, ocRI, plC, ocF, ocFI, pagosOC, ocA, asi, asiL, dj, bod, tc,
-         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev, ovFI] = await Promise.all([
+         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev, ovFI, ship] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
     sb.from('erp_ov').select('*').order('order_number', {ascending:false}),
@@ -6034,6 +5997,12 @@ async function loadAll() {
     // para poder acumular lo facturado producto por producto entre varias
     // facturas parciales de una misma OV (ver ovFacturadoQty()).
     sb.from('erp_ov_factura_items').select('*'),
+    // DESPACHO (09/Sep/2026) — erp_shipments ya existía en el esquema
+    // (creada antes, 0 filas, sin usar) pero recién ahora se conecta:
+    // es el header del despacho (correlativo DES-YYYY-NNNN), agrupa una o
+    // más Listas de Empaque (una por producto/línea de la OV) generadas
+    // en el mismo evento de "Generar Despacho". Ver GENERAR DESPACHO.
+    sb.from('erp_shipments').select('*').order('shipment_number', {ascending:false}),
   ]);
   // Antes esto fallaba en silencio: si Supabase devolvía un error (RLS, red,
   // columna renombrada, etc.) el resultado quedaba como `[]` sin avisar a
@@ -6055,6 +6024,7 @@ async function loadAll() {
     erp_envios_terceros_items:envTI, erp_rollos:roll,
     erp_reabastecimiento_devoluciones:reabDev,
     erp_ov_factura_items:ovFI,
+    erp_shipments:ship,
   };
   const _loadErrors = Object.entries(_loadResults).filter(([, r]) => r?.error);
   if (_loadErrors.length) {
@@ -6072,6 +6042,7 @@ async function loadAll() {
   state.ovFacturaItems = ovFI.data || [];
   state.packingLists  = pl.data  || [];
   state.packingBultos = pb.data  || [];
+  state.shipments     = ship.data || [];
   state.cuentas       = cta.data || [];
   state.pagos         = pag.data || [];
   state.hilos         = hil.data || [];
@@ -6800,40 +6771,26 @@ function verPedido(id) {
     </tr>`;
   }).join('') || `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:12px">Sin líneas</td></tr>`;
 
-  const plsHtml = orderPLs.length ? orderPLs.map(pl => {
-    const bultos  = state.packingBultos.filter(b => b.packing_list_id === pl.id);
+  // Despachos (09/Sep/2026, a pedido explícito — reemplaza la vieja tabla
+  // "Listas de Empaque"): un Despacho (erp_shipments, DES-YYYY-NNNN) agrupa
+  // una o más Listas de Empaque (una por producto), cada una con sus
+  // bultos/rollos. Documento inmutable — solo Ver/Imprimir (dentro de
+  // verDespacho), sin Editar/Eliminar, mismo criterio que facturas/DEV/REA.
+  const shipmentsOV = (state.shipments||[]).filter(s => s.order_id === id);
+  const despachosHtml = shipmentsOV.length ? shipmentsOV.map(ship => {
+    const pls     = state.packingLists.filter(pl => pl.shipment_id === ship.id);
+    const bultos  = pls.flatMap(pl => state.packingBultos.filter(b => b.packing_list_id === pl.id));
     const totNeto = bultos.reduce((s,b) => s + Number(b.peso_neto||0), 0);
-    const {status, factura} = plStatus(pl.id);
-    const statusMap   = { despachada:'badge-blue', facturada:'badge-yellow', pagada:'badge-green' };
-    const statusLabel = { despachada:'Despachada', facturada:'Facturada', pagada:'Pagada' };
-    const verFactBtn = (status === 'facturada' || status === 'pagada') && factura
-      ? `<button class="btn btn-sm btn-ghost" onclick="verFactura('${factura.id}')">📄 Ver Factura</button>` : '';
-    // Editar/Eliminar (08/Sep/2026, a pedido explícito: "cada PL debe estar
-    // en su OV" — antes vivían en la página consolidada que se eliminó)
-    // solo se ofrecen mientras la lista sigue "despachada" (aún sin
-    // facturar). Una vez facturada, sus bultos ya alimentaron
-    // ovDespachadoQty()/erp_ov_factura_items — editarle el peso o
-    // eliminarla correría el riesgo de descuadrar retroactivamente lo que
-    // ya se facturó contra esta OV. Mismo criterio de inmutabilidad que ya
-    // rige facturas/DEV/REA en el proyecto.
-    const editDelBtns = status === 'despachada'
-      ? `<button class="btn btn-sm btn-ghost" onclick="closeModal('modal-ver-pedido');editPL('${pl.id}')">Editar</button>
-         <button class="btn btn-sm btn-danger" onclick="closeModal('modal-ver-pedido');deletePL('${pl.id}')">Eliminar</button>`
-      : '';
     return `<tr>
-      <td class="td-mono">LE-${String(pl.pl_number).padStart(4,'0')}</td>
-      <td>${fmtDate(pl.date)}</td>
-      <td style="font-size:12px">${fabricName(pl.fabric_id)}</td>
+      <td class="td-mono">${ship.shipment_number}</td>
+      <td>${fmtDate(ship.date)}</td>
       <td>${bultos.length}</td>
       <td class="td-mono">${totNeto.toFixed(2)} kg</td>
-      <td><span class="badge ${statusMap[status]}">${statusLabel[status]}</span></td>
       <td><div class="td-actions">
-        <button class="btn btn-sm btn-ghost" onclick="printPL('${pl.id}')">🖨️</button>
-        ${verFactBtn}
-        ${editDelBtns}
+        <button class="btn btn-sm btn-ghost" onclick="closeModal('modal-ver-pedido');verDespacho('${ship.id}')">👁️ Ver</button>
       </div></td>
     </tr>`;
-  }).join('') : `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:12px">Sin listas de empaque</td></tr>`;
+  }).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:12px">Sin despachos</td></tr>`;
 
   // Facturas de esta OV, con estado de pago — mismo patrón que la pestaña
   // "Facturas" del panel de la OC (showOCPanel/renderOCPanel): visibilidad
@@ -6897,30 +6854,26 @@ function verPedido(id) {
       </div>
     </div>
 
-    <!-- (08/Sep/2026, a pedido explícito) Se eliminó el botón "+ Nueva
-         Lista" que vivía acá — visualmente parecía un atajo más para lo
-         mismo que "Generar Despacho", pero en realidad llamaba a una ruta
-         distinta y más vieja (openNewPL → savePL, modal-pl): esa ruta deja
-         escribir bultos a mano sin elegir rollos, y por eso NO marca
-         ningún erp_rollos como despachado, NO genera movimiento de
-         Kardex/FIFO, y NO postea el asiento de Costo de Venta. Generar
-         Despacho (confirmarGenerarDespacho, arriba en el header) es ahora
-         el único camino soportado para despachar contra esta OV. -->
+    <!-- (09/Sep/2026, a pedido explícito: "Eliminemos todo el tema de
+         listas de empaque y creemos lo que te envie desde nuevo") La tabla
+         "Listas de Empaque" (con Editar/Eliminar por fila, agregada el
+         08/Sep) se reemplazó por "Despachos": un Despacho (erp_shipments,
+         DES-YYYY-NNNN) agrupa la(s) Lista(s) de Empaque generada(s) en el
+         mismo evento de "Generar Despacho" (arriba en el header). Objeto
+         inmutable — solo Ver/Imprimir vía verDespacho(). -->
     <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">
-      Listas de Empaque — ${despachado.toFixed(2)} / ${totalKg.toFixed(2)} kg despachado
+      Despachos — ${despachado.toFixed(2)} / ${totalKg.toFixed(2)} kg despachado
     </div>
     <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
       <table style="width:100%;border-collapse:collapse">
         <thead><tr style="background:var(--surface2)">
           <th style="padding:7px 12px;text-align:left;font-size:11px">No.</th>
           <th style="padding:7px 12px;text-align:left;font-size:11px">Fecha</th>
-          <th style="padding:7px 12px;text-align:left;font-size:11px">Producto</th>
-          <th style="padding:7px 12px;text-align:left;font-size:11px">Bultos</th>
+          <th style="padding:7px 12px;text-align:left;font-size:11px">Rollos</th>
           <th style="padding:7px 12px;text-align:left;font-size:11px">Peso Neto</th>
-          <th style="padding:7px 12px;text-align:left;font-size:11px">Estado</th>
           <th style="padding:7px 12px"></th>
         </tr></thead>
-        <tbody>${plsHtml}</tbody>
+        <tbody>${despachosHtml}</tbody>
       </table>
     </div>
 
@@ -7318,6 +7271,20 @@ async function wizardEjecutarConfirmacion() {
 // vinculada todavía, no habrá rollos que mostrar aquí — es esperado.
 let currentDespachoOVId = null;
 
+// DES-YYYY-NNNN, único en erp_shipments.shipment_number — mismo patrón que
+// nextRecepcionNum()/nextReabastecimientoNum() (consulta directa a
+// Supabase, nunca cacheado en memoria). No confundir con LE-XXXX
+// (erp_packing_lists.pl_number, serial de Postgres) — DES- es el
+// correlativo del despacho como documento, LE- sigue siendo el id interno
+// de cada Lista de Empaque que ese despacho agrupa (una por producto).
+async function nextDespachoNum() {
+  const year = new Date().getFullYear();
+  const { data } = await sb.from('erp_shipments').select('shipment_number').ilike('shipment_number', `DES-${year}-%`);
+  const nums = (data||[]).map(r => parseInt((r.shipment_number||'').slice(-4))||0);
+  const next = (nums.length ? Math.max(...nums) : 0) + 1;
+  return `DES-${year}-${String(next).padStart(4,'0')}`;
+}
+
 function rollosDisponiblesParaOV(ovId) {
   const p = state.pedidos.find(x => x.id === ovId);
   if (!p || !p.bodega_id) return [];
@@ -7346,22 +7313,47 @@ function abrirGenerarDespacho(ovId) {
   openModal('modal-despacho');
 }
 
+// Agrupado por línea de la OV (a pedido explícito, 09/Sep/2026: "Debemos
+// poder seleccionar los rollos que vamos a despachar por linea de la OV.
+// Nota: En cada linea solo muestra rollos del mismo codigo"). Una sección
+// por línea de erp_ov_items, mostrando solo rollos cuyo producto_id
+// coincide con el fabric_id de esa línea — así nunca se mezclan rollos de
+// dos códigos distintos en una misma selección.
 function renderDespachoRollos(ovId) {
-  const rollos = rollosDisponiblesParaOV(ovId);
-  const tbody = document.getElementById('tbl-desp-rollos');
-  tbody.innerHTML = rollos.length ? rollos.map(r => {
-    const prod = state.productos.find(x => x.id === r.producto_id);
-    return `<tr>
-      <td style="text-align:center"><input type="checkbox" class="desp-rollo-check" data-id="${r.id}" style="width:15px;height:15px"/></td>
-      <td class="td-mono">${r.numero_rollo||'—'}</td>
-      <td style="font-size:13px">${prod?.description||'—'}</td>
-      <td class="td-mono" style="font-size:12px">${r.lote||'—'}</td>
-      <td class="td-mono" style="text-align:right">${Number(r.peso_kg||0).toFixed(3)} kg</td>
-    </tr>`;
-  }).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px;font-size:12px">
-    Sin rollos disponibles para despachar de esta OV en su bodega de despacho.<br/>
-    Los rollos aparecen aquí cuando una Orden de Producción vinculada a esta OV (campo "Orden de Venta" en la OP) inicia producción.
-  </td></tr>`;
+  const disponibles = rollosDisponiblesParaOV(ovId);
+  const items = state.pedItems.filter(i => i.order_id === ovId);
+  const cont = document.getElementById('desp-lineas');
+
+  cont.innerHTML = items.length ? items.map(item => {
+    const prod = state.productos.find(x => x.id === item.fabric_id);
+    const rollosLinea = disponibles.filter(r => r.producto_id === item.fabric_id);
+    const rowsHtml = rollosLinea.length ? rollosLinea.map(r => `<tr>
+        <td style="text-align:center"><input type="checkbox" class="desp-rollo-check" data-id="${r.id}" data-producto="${item.fabric_id}" style="width:15px;height:15px"/></td>
+        <td class="td-mono">${r.numero_rollo||'—'}</td>
+        <td class="td-mono" style="font-size:12px">${r.lote||'—'}</td>
+        <td class="td-mono" style="text-align:right">${Number(r.peso_kg||0).toFixed(3)} kg</td>
+      </tr>`).join('')
+      : `<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:14px;font-size:12px">
+          Sin rollos disponibles de este producto en la bodega de despacho.
+        </td></tr>`;
+    return `
+      <div style="margin-bottom:18px">
+        <div style="font-size:12px;font-weight:600;margin-bottom:6px">
+          ${prod?.description||'—'} <span style="color:var(--text3);font-weight:400;font-family:'DM Mono',monospace">${prod?.codigo_interno||prod?.code||''}</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th style="width:36px"></th>
+              <th>No. Rollo</th><th>Lote</th><th style="text-align:right">Peso</th>
+            </tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }).join('') : `<div style="text-align:center;color:var(--text3);padding:20px;font-size:12px">
+    Esta OV no tiene líneas.
+  </div>`;
 }
 
 async function confirmarGenerarDespacho() {
@@ -7383,7 +7375,10 @@ async function confirmarGenerarDespacho() {
 
   // Cada Lista de Empaque (erp_packing_lists) solo admite un producto —
   // agrupamos los rollos seleccionados por producto y generamos una lista
-  // por cada uno.
+  // por cada uno. Todas las listas generadas en esta llamada cuelgan del
+  // mismo Despacho (erp_shipments, correlativo DES-YYYY-NNNN) — es el
+  // documento que ahora ve/imprime el usuario; la Lista de Empaque queda
+  // como detalle interno agrupado dentro de él.
   const porProducto = {};
   rollosSel.forEach(r => {
     if (!porProducto[r.producto_id]) porProducto[r.producto_id] = [];
@@ -7394,19 +7389,32 @@ async function confirmarGenerarDespacho() {
   if (btn) { btn.disabled = true; btn.textContent = 'Generando…'; }
 
   try {
+    const despachoNum = await nextDespachoNum();
+    // status se fija explícito en 'despachado' (en vez del default
+    // 'preparando' de la tabla): este flujo no maneja un estado de
+    // preparación previo — al confirmar, los rollos ya quedan asignados,
+    // el Kardex se mueve y el asiento se postea en la misma transacción de
+    // UI, todo en un solo paso (mismo criterio que Confirmar OC/OV).
+    const { data: shipRow, error: shipErr } = await sb.from('erp_shipments').insert({
+      shipment_number: despachoNum, order_id: ovId, date: fecha,
+      carrier: transportista||null, status: 'despachado',
+    }).select().single();
+    if (shipErr) throw shipErr;
+
     for (const productoId of Object.keys(porProducto)) {
       const rollosProd  = porProducto[productoId];
       const stockLotes  = calcStockPorLote(productoId, p.bodega_id);
 
       const { data: plRow, error: plErr } = await sb.from('erp_packing_lists').insert({
-        order_id: ovId, fabric_id: productoId, date: fecha,
+        order_id: ovId, fabric_id: productoId, date: fecha, shipment_id: shipRow.id,
         destination: destino||null, carrier: transportista||null, plate: placa||null,
-        notes: `Despacho — rollos: ${rollosProd.map(r=>r.numero_rollo).join(', ')}`,
+        notes: `Despacho ${despachoNum} — rollos: ${rollosProd.map(r=>r.numero_rollo).join(', ')}`,
       }).select().single();
       if (plErr) throw plErr;
 
       const bultosRows = rollosProd.map((r, idx) => ({
         packing_list_id: plRow.id,
+        rollo_id: r.id,
         bulto_number: idx+1,
         peso_bruto: Number(r.peso_kg||0),
         peso_neto: Number(r.peso_kg||0),
@@ -7431,8 +7439,8 @@ async function confirmarGenerarDespacho() {
           producto_id: r.producto_id,
           cantidad: Number(r.peso_kg||0),
           costo_unitario: costoUnit,
-          referencia_tipo: 'DESPACHO', referencia_id: ovLabelStr,
-          notas: `Despacho ${ovLabelStr} — rollo ${r.numero_rollo}`,
+          referencia_tipo: 'DESPACHO', referencia_id: despachoNum,
+          notas: `Despacho ${despachoNum} (${ovLabelStr}) — rollo ${r.numero_rollo}`,
           fecha,
           bodega_id: p.bodega_id,
           lote: r.lote||null,
@@ -7442,14 +7450,219 @@ async function confirmarGenerarDespacho() {
       }
     }
 
-    toast(`✓ Despacho generado — ${rollosSel.length} rollo(s)`);
+    toast(`✓ Despacho ${despachoNum} generado — ${rollosSel.length} rollo(s)`);
     closeModal('modal-despacho');
     await loadAll();
+    // FIX (09/Sep/2026): confirmarGenerarDespacho() nunca llamaba a
+    // syncOrderStatus() — a diferencia de saveFactura()/deleteFactura(), que
+    // sí lo hacen. Sin esto, el status de la OV se quedaba en 'en_proceso'
+    // aun con el 100% despachado, y solo pasaba a 'terminada' hasta la
+    // primera factura (saltándose el estado intermedio). Mismo patrón ya
+    // vigente en el resto del flujo — no requiere cuentas ni tablas nuevas.
+    await syncOrderStatus(ovId);
+    await loadAll();
+    verDespacho(shipRow.id);
   } catch (e) {
     toast('Error generando despacho: '+(e.message||e), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📦 Generar Despacho'; }
   }
+}
+
+// ═══ VER / IMPRIMIR DESPACHO ═══
+// Reemplaza por completo la vieja "Listas de Empaque" como objeto visible
+// al usuario (09/Sep/2026, a pedido explícito: "Eliminemos todo el tema de
+// listas de empaque y creemos lo que te envie desde nuevo"). Un Despacho
+// (erp_shipments, correlativo DES-YYYY-NNNN) agrupa una o más Listas de
+// Empaque (erp_packing_lists, vía shipment_id) — una por producto/línea —
+// cada una con sus bultos/rollos (erp_packing_bultos, vía rollo_id). La
+// Lista de Empaque sigue existiendo en la base (ovDespachadoQty/facturación
+// siguen leyéndola tal cual) pero ya no es un objeto que el usuario vea o
+// gestione por separado — es el detalle interno de un Despacho. Documento
+// inmutable: solo Ver/Imprimir, nunca Editar/Eliminar.
+function despachoLineas(shipmentId) {
+  return state.packingLists.filter(pl => pl.shipment_id === shipmentId).map(pl => {
+    const bultos = state.packingBultos.filter(b => b.packing_list_id === pl.id)
+      .sort((a,b) => a.bulto_number - b.bulto_number);
+    const prod    = state.productos.find(x => x.id === pl.fabric_id);
+    const totNeto = bultos.reduce((s,b) => s + Number(b.peso_neto||0), 0);
+    const rowsHtml = bultos.map(b => {
+      const rollo = (state.rollos||[]).find(r => r.id === b.rollo_id);
+      return `<tr>
+        <td class="td-mono">${rollo?.numero_rollo||'—'}</td>
+        <td class="td-mono" style="font-size:12px">${rollo?.lote||'—'}</td>
+        <td class="td-mono" style="text-align:right">${Number(b.peso_neto||0).toFixed(3)} kg</td>
+      </tr>`;
+    }).join('');
+    return { pl, prod, bultos, totNeto, rowsHtml };
+  });
+}
+
+function verDespacho(shipmentId) {
+  const ship = (state.shipments||[]).find(s => s.id === shipmentId);
+  if (!ship) return;
+  const p   = state.pedidos.find(x => x.id === ship.order_id);
+  const clt = p ? state.clientes.find(c => c.id === p.customer_id) : null;
+  const lineas    = despachoLineas(shipmentId);
+  const primeraPL = state.packingLists.find(pl => pl.shipment_id === shipmentId);
+  const totRollos = lineas.reduce((s,l) => s + l.bultos.length, 0);
+  const totPeso   = lineas.reduce((s,l) => s + l.totNeto, 0);
+
+  document.getElementById('vdesp-title').textContent = ship.shipment_number;
+
+  const infoCell = (label, val, mono=false) => `
+    <div style="padding:12px 16px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">${label}</div>
+      <div style="font-size:13px${mono?";font-family:'DM Mono',monospace":''}">${val||'—'}</div>
+    </div>`;
+
+  const seccionesHtml = lineas.length ? lineas.map(l => `
+    <div style="margin-bottom:18px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:8px">
+        ${l.prod?.description||'—'} <span style="color:var(--text3);font-weight:400;font-family:'DM Mono',monospace">${l.prod?.codigo_interno||l.prod?.code||''}</span>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="background:var(--surface2)">
+            <th style="padding:7px 12px;text-align:left;font-size:11px">No. Rollo</th>
+            <th style="padding:7px 12px;text-align:left;font-size:11px">Lote</th>
+            <th style="padding:7px 12px;text-align:right;font-size:11px">Peso</th>
+          </tr></thead>
+          <tbody>${l.rowsHtml || `<tr><td colspan="3" style="text-align:center;color:var(--text3);padding:12px">Sin rollos</td></tr>`}</tbody>
+          <tfoot><tr style="background:var(--surface2);font-weight:600">
+            <td style="padding:7px 12px" colspan="2">${l.bultos.length} rollo(s)</td>
+            <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${l.totNeto.toFixed(3)} kg</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>`).join('') : `<div style="text-align:center;color:var(--text3);padding:20px">Sin listas de empaque</div>`;
+
+  document.getElementById('vdesp-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+      ${infoCell('Orden de Venta', p ? ovLabel(p) : '—', true)}
+      ${infoCell('Cliente', clt?.name)}
+      ${infoCell('Fecha', fmtDate(ship.date))}
+      ${infoCell('Destino', primeraPL?.destination)}
+      ${infoCell('Transportista', ship.carrier || primeraPL?.carrier)}
+      ${infoCell('Placa', primeraPL?.plate)}
+    </div>
+    ${seccionesHtml}
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border:1px solid var(--border);border-radius:8px;font-weight:700;background:var(--surface2)">
+      <span>Total Despacho — ${totRollos} rollo(s)</span>
+      <span style="font-family:'DM Mono',monospace;font-size:16px">${totPeso.toFixed(3)} kg</span>
+    </div>
+  `;
+
+  document.getElementById('vdesp-print-btn').onclick = () => imprimirDespacho(shipmentId);
+  openModal('modal-ver-despacho');
+}
+
+// Mismo patrón de hoja imprimible que tenía la vieja printPL() (header/
+// meta/producto-box/tabla/tfoot/totals-row/sigs, ya eliminada) — extendido
+// a múltiples productos: una
+// sub-sección "Producto" + tabla de rollos por cada línea del despacho, y
+// un total general (rollos + peso) al final, per punto 5-6 de la
+// especificación del 09/Sep/2026.
+function imprimirDespacho(shipmentId) {
+  const ship = (state.shipments||[]).find(s => s.id === shipmentId);
+  if (!ship) return;
+  const p   = state.pedidos.find(x => x.id === ship.order_id);
+  const clt = p ? state.clientes.find(c => c.id === p.customer_id) : null;
+  const lineas    = despachoLineas(shipmentId);
+  const primeraPL = state.packingLists.find(pl => pl.shipment_id === shipmentId);
+  const totRollos = lineas.reduce((s,l) => s + l.bultos.length, 0);
+  const totPeso   = lineas.reduce((s,l) => s + l.totNeto, 0);
+
+  const seccionesHtml = lineas.map(l => `
+    <div class="section-title">Producto</div>
+    <div class="producto-box">
+      <div>
+        <div class="code">${l.prod?.codigo_interno||l.prod?.code||'—'}</div>
+        <div class="desc">${l.prod?.description||'—'}</div>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th style="width:120px">No. Rollo</th><th>Lote</th><th class="right">Peso Neto (kg)</th></tr></thead>
+      <tbody>${l.rowsHtml || `<tr><td colspan="3" class="right">Sin rollos</td></tr>`}</tbody>
+      <tfoot><tr>
+        <td colspan="2">TOTALES (${l.bultos.length} rollos)</td>
+        <td class="right mono">${l.totNeto.toFixed(3)}</td>
+      </tr></tfoot>
+    </table>
+  `).join('');
+
+  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/>
+<title>${ship.shipment_number}</title>
+<style>
+  @page { margin: 18mm 20mm; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family: Arial, sans-serif; font-size: 12px; color: #1a1916; }
+  .header { background: #1a1916; color: #fff; padding: 18px 24px; display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:0; }
+  .header-left .sub { font-size:9px; letter-spacing:0.12em; text-transform:uppercase; color:rgba(255,255,255,0.45); margin-bottom:3px; }
+  .header-left .title { font-size:20px; font-weight:700; }
+  .header-right .num { font-size:16px; font-weight:700; color:#C84B2F; }
+  .header-right .date { font-size:11px; color:rgba(255,255,255,0.5); margin-top:2px; }
+  .meta { display:grid; grid-template-columns:1fr 1fr; border:1px solid #ddd; border-top:none; }
+  .meta-cell { padding:10px 16px; border-right:1px solid #ddd; border-bottom:1px solid #ddd; }
+  .meta-cell:nth-child(even) { border-right:none; }
+  .meta-cell label { display:block; font-size:9px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#9e9c97; margin-bottom:3px; }
+  .meta-cell .val { font-size:13px; font-weight:600; }
+  .section-title { font-size:9px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#6b6860; margin:16px 0 8px; }
+  .producto-box { border:1px solid #ddd; border-radius:6px; padding:10px 16px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; }
+  .producto-box .code { font-size:13px; font-weight:700; }
+  .producto-box .desc { font-size:12px; color:#6b6860; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  thead th { background:#f5f4f0; text-align:left; padding:8px 10px; font-size:9px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#6b6860; border-bottom:1.5px solid #ccc; }
+  tbody tr { border-bottom:1px solid #e2e0da; }
+  tbody td { padding:8px 10px; }
+  tfoot td { padding:8px 10px; font-weight:700; border-top:1.5px solid #ccc; background:#f5f4f0; }
+  .mono { font-family:'Courier New',monospace; }
+  .right { text-align:right; }
+  .totals-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
+  .total-box { border:1px solid #ddd; border-radius:6px; padding:10px 16px; }
+  .total-box label { font-size:9px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#9e9c97; display:block; margin-bottom:4px; }
+  .total-box .val { font-size:18px; font-weight:700; font-family:'Courier New',monospace; }
+  .sigs { display:grid; grid-template-columns:1fr 1fr; gap:32px; margin-top:32px; }
+  .sig-line { border-top:1px solid #ccc; padding-top:6px; margin-top:40px; font-size:10px; color:#9e9c97; }
+  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+</style></head><body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="sub">MTG Textiles</div>
+    <div class="title">Despacho</div>
+  </div>
+  <div class="header-right" style="text-align:right">
+    <div class="num">${ship.shipment_number}</div>
+    <div class="date">${fmtDate(ship.date)}</div>
+  </div>
+</div>
+
+<div class="meta">
+  <div class="meta-cell"><label>Orden de Venta</label><div class="val mono">${p?ovLabel(p):'—'}</div></div>
+  <div class="meta-cell"><label>Cliente</label><div class="val">${clt?.name||'—'}${clt?.code ? '<span style="font-size:11px;color:#9e9c97;margin-left:8px">NIT: '+clt.code+'</span>' : ''}</div></div>
+  <div class="meta-cell"><label>Destino</label><div class="val">${primeraPL?.destination||'—'}</div></div>
+  <div class="meta-cell"><label>Transportista / Placa</label><div class="val">${(ship.carrier||primeraPL?.carrier)||'—'}${primeraPL?.plate?' · '+primeraPL.plate:''}</div></div>
+</div>
+
+${seccionesHtml}
+
+<div class="totals-row">
+  <div class="total-box"><label>Total Rollos</label><div class="val">${totRollos}</div></div>
+  <div class="total-box"><label>Peso Neto Total</label><div class="val">${totPeso.toFixed(3)} kg</div></div>
+</div>
+
+<div class="sigs">
+  <div><div class="sig-line">Preparado por</div></div>
+  <div><div class="sig-line">Recibido por</div></div>
+</div>
+
+<script>window.onload=()=>window.print();<\/script>
+</body></html>`;
+
+  const win = window.open('','_blank','width=800,height=600');
+  win.document.write(html);
+  win.document.close();
 }
 
 // El dropdown de la Orden de Venta debe mostrar el catálogo real de productos
@@ -10099,296 +10312,19 @@ function _pagoSinAplicarCliente(clienteId, facturaId) {
 // bancaria, saldo en libros y el CRUD de cuentas bancarias.
 
 // ═══ PACKING LISTS ═══
+// plStatus/editPL/savePL/deletePL/printPL (más bultoLineCount/addBultoLine/
+// recalcBultos/populatePLFabricSelect y el modal-pl) se eliminaron el
+// 09/Sep/2026, a pedido explícito: "Eliminemos todo el tema de listas de
+// empaque y creemos lo que te envie desde nuevo". La Lista de Empaque
+// (erp_packing_lists) sigue existiendo en la base como detalle interno de
+// un Despacho (erp_shipments) — ver sección "GENERAR DESPACHO" /
+// verDespacho()/imprimirDespacho() — pero ya no es un objeto que el
+// usuario cree, edite o elimine por separado.
 
 function fabricName(id) {
   const f = state.telas.find(x => x.id === id);
   return f ? f.code + ' — ' + f.description : '—';
 }
-
-// Show PL panel inside pedidos page
-// ── PL STATUS HELPER ──
-function plStatus(plId) {
-  const invoicedBy = state.facturas.find(f =>
-    f.status !== 'cancelada' &&
-    (Array.isArray(f.packing_list_ids) ? f.packing_list_ids.includes(plId) : f.packing_list_id === plId)
-  );
-  if (!invoicedBy) return { status: 'despachada', factura: null };
-  if (invoicedBy.status === 'pagada') return { status: 'pagada', factura: invoicedBy };
-  return { status: 'facturada', factura: invoicedBy };
-}
-
-// NOTA: el toggle inline de Packing Lists al hacer click en el número de OV
-// (togglePLInline) se reemplazó por el modal verPedido() — ver más abajo,
-// sección "VER ORDEN DE VENTA (OV)". El modal muestra la misma tabla de
-// Listas de Empaque, más la info completa de la OV, Imprimir y Editar
-// (que antes vivían como botones sueltos en la fila del Libro de Ventas).
-
-// showPLPanel/closePLPanel/renderPLPanel/renderAllPL (más el panel
-// "pl-panel", la página standalone "page-packing" y la variable
-// currentPLOrderId) se eliminaron el 08/Sep/2026, a pedido explícito: "no
-// creo necesario un módulo que consolide los PL, cada PL debe estar en su
-// OV". El panel ya era inalcanzable desde antes (showPLPanel() nunca se
-// llamaba); la página standalone sí se usaba pero se decidió no
-// mantenerla. Ver/Imprimir/Ver Factura/Editar/Eliminar de cada Lista de
-// Empaque viven ahora únicamente dentro del modal de su propia OV
-// (verPedido, tabla "Listas de Empaque", plsHtml).
-
-// Bulto line counter
-let bultoLineCount = 0;
-
-function addBultoLine(bruto='', neto='') {
-  bultoLineCount++;
-  const n = bultoLineCount;
-  const id = 'blt_' + n;
-  const tr = document.createElement('tr');
-  tr.id = id;
-  tr.innerHTML = `
-    <td style="padding:8px 14px;font-family:'DM Mono',monospace;font-weight:600">${String(n).padStart(3,'0')}</td>
-    <td><input type="number" step="0.01" min="0" value="${bruto}" placeholder="0.00" oninput="recalcBultos()" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;outline:none"/></td>
-    <td><input type="number" step="0.01" min="0" value="${neto}"  placeholder="0.00" oninput="recalcBultos()" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:'DM Mono',monospace;font-size:13px;outline:none"/></td>
-    <td style="text-align:center"><button onclick="document.getElementById('${id}').remove();recalcBultos()" class="btn btn-sm btn-danger" style="padding:4px 8px">✕</button></td>`;
-  document.getElementById('pl-bultos').appendChild(tr);
-  recalcBultos();
-}
-
-function recalcBultos() {
-  let totB = 0, totN = 0;
-  document.querySelectorAll('#pl-bultos tr').forEach(tr => {
-    const inp = tr.querySelectorAll('input[type=number]');
-    totB += parseFloat(inp[0]?.value)||0;
-    totN += parseFloat(inp[1]?.value)||0;
-  });
-  document.getElementById('pl-tot-bruto').textContent = totB > 0 ? totB.toFixed(2)+' kg' : '—';
-  document.getElementById('pl-tot-neto').textContent  = totN > 0 ? totN.toFixed(2)+' kg' : '—';
-}
-
-function populatePLFabricSelect(orderId) {
-  const items = state.pedItems.filter(i => i.order_id === orderId);
-  const sel = document.getElementById('pl-fabric');
-  sel.innerHTML = '<option value="">— Seleccionar tela —</option>' +
-    items.map(i => {
-      const f = state.telas.find(t => t.id === i.fabric_id);
-      return f ? `<option value="${f.id}" data-kg="${i.qty_kg}">${f.code} — ${f.description}</option>` : '';
-    }).join('');
-  sel.onchange = () => {
-    const opt = sel.options[sel.selectedIndex];
-    const kg  = opt.getAttribute('data-kg');
-    document.getElementById('pl-fabric-kg').textContent = kg ? Number(kg).toFixed(2)+' kg' : '—';
-  };
-}
-
-// openNewPL/openNewPLStandalone/onPLOrderChange (creación MANUAL de una
-// lista de empaque, sin rollos) se eliminaron el 08/Sep/2026, a pedido
-// explícito: esa ruta no marca rollos como despachados, no genera
-// movimiento de Kardex/FIFO, y no postea el asiento de Costo de Venta —
-// "configuración inicial que ya no estamos utilizando". Generar Despacho
-// (confirmarGenerarDespacho, sección GENERAR DESPACHO) es ahora el único
-// camino para crear una lista de empaque nueva. editPL/savePL (abajo)
-// siguen vigentes para corregir datos de una lista YA creada por esa vía
-// (destino, transportista, notas, bultos) desde la página "Listas de
-// Empaque" — ver nota en savePL() sobre lo que esa edición NO ajusta.
-async function editPL(id) {
-  const pl = state.packingLists.find(x => x.id === id);
-  const order = state.pedidos.find(p => p.id === pl.order_id);
-  document.getElementById('pl-id').value = pl.id;
-  document.getElementById('pl-order-id').value = pl.order_id;
-  // Ensure order display is readonly input
-  const orderField = document.getElementById('pl-order-display');
-  if (orderField.tagName === 'SELECT') {
-    orderField.outerHTML = `<input type="text" id="pl-order-display" readonly style="background:var(--surface2);color:var(--text2);width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-family:inherit;font-size:13.5px"/>`;
-  }
-  document.getElementById('pl-order-display').value = ovLabel(order) + ' — ' + clientName(order.customer_id);
-  // FIX (29/Ago/2026): ver nota en fact-date — <input type="date"> exige ISO.
-  document.getElementById('pl-date').value = (pl.date||'').split('T')[0];
-  document.getElementById('pl-destination').value = pl.destination||'';
-  document.getElementById('pl-carrier').value = pl.carrier||'';
-  document.getElementById('pl-plate').value = pl.plate||'';
-  document.getElementById('pl-notes').value = pl.notes||'';
-  document.getElementById('pl-bultos').innerHTML = '';
-  bultoLineCount = 0;
-  document.getElementById('modal-pl-title').textContent = 'Editar Lista de Empaque';
-  populatePLFabricSelect(pl.order_id);
-  await new Promise(r => setTimeout(r, 50)); // let select populate
-  document.getElementById('pl-fabric').value = pl.fabric_id;
-  const opt = document.getElementById('pl-fabric').options[document.getElementById('pl-fabric').selectedIndex];
-  document.getElementById('pl-fabric-kg').textContent = opt?.getAttribute('data-kg') ? Number(opt.getAttribute('data-kg')).toFixed(2)+' kg' : '—';
-  const bultos = state.packingBultos.filter(b => b.packing_list_id === id).sort((a,b)=>a.bulto_number-b.bulto_number);
-  if (bultos.length) bultos.forEach(b => addBultoLine(b.peso_bruto, b.peso_neto));
-  else addBultoLine();
-  openModal('modal-pl');
-}
-
-async function savePL() {
-  const id        = document.getElementById('pl-id').value;
-  const order_id  = document.getElementById('pl-order-id').value;
-  const date      = document.getElementById('pl-date').value;
-  const fabric_id = document.getElementById('pl-fabric').value;
-  if (!order_id || !date || !fabric_id) { toast('Pedido, fecha y producto son requeridos','error'); return; }
-
-  const bultos = [];
-  let bNum = 0;
-  document.querySelectorAll('#pl-bultos tr').forEach(tr => {
-    const inp = tr.querySelectorAll('input[type=number]');
-    if (inp.length < 2) return;
-    bNum++;
-    bultos.push({ bulto_number: bNum, peso_bruto: parseFloat(inp[0].value)||0, peso_neto: parseFloat(inp[1].value)||0 });
-  });
-  if (!bultos.length) { toast('Agrega al menos un bulto','error'); return; }
-
-  const row = {
-    order_id, fabric_id, date,
-    destination: document.getElementById('pl-destination').value.trim(),
-    carrier:     document.getElementById('pl-carrier').value.trim(),
-    plate:       document.getElementById('pl-plate').value.trim(),
-    notes:       document.getElementById('pl-notes').value.trim(),
-  };
-
-  let plId = id;
-  if (id) {
-    const {error} = await sb.from('erp_packing_lists').update(row).eq('id',id);
-    if (error) { toast('Error: '+error.message,'error'); return; }
-    await sb.from('erp_packing_bultos').delete().eq('packing_list_id',id);
-  } else {
-    const {data,error} = await sb.from('erp_packing_lists').insert(row).select().single();
-    if (error) { toast('Error: '+error.message,'error'); return; }
-    plId = data.id;
-  }
-  const {error:be} = await sb.from('erp_packing_bultos').insert(bultos.map(b=>({...b, packing_list_id: plId})));
-  if (be) { toast('Error guardando bultos: '+be.message,'error'); return; }
-
-  toast('Lista de empaque guardada');
-  closeModal('modal-pl');
-  const od = document.getElementById('pl-order-display');
-  if (od && od.tagName === 'SELECT') od.outerHTML = `<input type="text" id="pl-order-display" readonly style="background:var(--surface2);color:var(--text2);width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-family:inherit;font-size:13.5px"/>`;
-  await loadAll();
-  await syncOrderStatus(document.getElementById('pl-order-id').value);
-  await loadAll();
-}
-
-async function deletePL(id) {
-  if (!confirm('¿Eliminar esta lista de empaque?')) return;
-  const pl = state.packingLists.find(x => x.id === id);
-  await sb.from('erp_packing_bultos').delete().eq('packing_list_id',id);
-  const {error} = await sb.from('erp_packing_lists').delete().eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  toast('Lista eliminada');
-  await loadAll();
-  await syncOrderStatus(pl?.order_id);
-  await loadAll();
-}
-
-// ═══ PRINT PACKING LIST ═══
-function printPL(id) {
-  const pl     = state.packingLists.find(x => x.id === id);
-  const order  = state.pedidos.find(p => p.id === pl.order_id);
-  const bultos = state.packingBultos.filter(b => b.packing_list_id === id).sort((a,b)=>a.bulto_number-b.bulto_number);
-  const fabric = state.telas.find(t => t.id === pl.fabric_id);
-  const client = state.clientes.find(c => c.id === order?.customer_id);
-  const totNeto  = bultos.reduce((s,b) => s+Number(b.peso_neto||0),0);
-  const totBruto = bultos.reduce((s,b) => s+Number(b.peso_bruto||0),0);
-
-  const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/>
-<title>LE-${String(pl.pl_number).padStart(4,'0')}</title>
-<style>
-  @page { margin: 18mm 20mm; }
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family: Arial, sans-serif; font-size: 12px; color: #1a1916; }
-  .header { background: #1a1916; color: #fff; padding: 18px 24px; display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:0; }
-  .header-left .sub { font-size:9px; letter-spacing:0.12em; text-transform:uppercase; color:rgba(255,255,255,0.45); margin-bottom:3px; }
-  .header-left .title { font-size:20px; font-weight:700; }
-  .header-right .num { font-size:16px; font-weight:700; color:#C84B2F; }
-  .header-right .date { font-size:11px; color:rgba(255,255,255,0.5); margin-top:2px; }
-  .meta { display:grid; grid-template-columns:1fr 1fr; border:1px solid #ddd; border-top:none; }
-  .meta-cell { padding:10px 16px; border-right:1px solid #ddd; border-bottom:1px solid #ddd; }
-  .meta-cell:nth-child(even) { border-right:none; }
-  .meta-cell label { display:block; font-size:9px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#9e9c97; margin-bottom:3px; }
-  .meta-cell .val { font-size:13px; font-weight:600; }
-  .section-title { font-size:9px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#6b6860; margin:16px 0 8px; }
-  .producto-box { border:1px solid #ddd; border-radius:6px; padding:10px 16px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; }
-  .producto-box .code { font-size:13px; font-weight:700; }
-  .producto-box .desc { font-size:12px; color:#6b6860; }
-  table { width:100%; border-collapse:collapse; font-size:12px; }
-  thead th { background:#f5f4f0; text-align:left; padding:8px 10px; font-size:9px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#6b6860; border-bottom:1.5px solid #ccc; }
-  tbody tr { border-bottom:1px solid #e2e0da; }
-  tbody td { padding:8px 10px; }
-  tfoot td { padding:8px 10px; font-weight:700; border-top:1.5px solid #ccc; background:#f5f4f0; }
-  .mono { font-family:'Courier New',monospace; }
-  .right { text-align:right; }
-  .totals-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
-  .total-box { border:1px solid #ddd; border-radius:6px; padding:10px 16px; }
-  .total-box label { font-size:9px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#9e9c97; display:block; margin-bottom:4px; }
-  .total-box .val { font-size:18px; font-weight:700; font-family:'Courier New',monospace; }
-  .obs { border:1px solid #ddd; border-radius:6px; padding:10px 16px; margin-top:12px; font-size:12px; color:#6b6860; }
-  .sigs { display:grid; grid-template-columns:1fr 1fr; gap:32px; margin-top:32px; }
-  .sig-line { border-top:1px solid #ccc; padding-top:6px; margin-top:40px; font-size:10px; color:#9e9c97; }
-  @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
-</style></head><body>
-
-<div class="header">
-  <div class="header-left">
-    <div class="sub">MTG Textiles</div>
-    <div class="title">Lista de Empaque</div>
-  </div>
-  <div class="header-right" style="text-align:right">
-    <div class="num">LE-${String(pl.pl_number).padStart(4,'0')}</div>
-    <div class="date">${fmtDate(pl.date)}</div>
-  </div>
-</div>
-
-<div class="meta">
-  <div class="meta-cell"><label>Orden de Venta</label><div class="val mono">${ovLabel(order)}</div></div>
-  <div class="meta-cell"><label>Cliente</label><div class="val">${client?.name||'—'}${client?.code ? '<span style="font-size:11px;color:#9e9c97;margin-left:8px">NIT: '+client.code+'</span>' : ''}</div></div>
-  <div class="meta-cell"><label>Destino</label><div class="val">${pl.destination||'—'}</div></div>
-  <div class="meta-cell"><label>Transportista / Placa</label><div class="val">${pl.carrier||'—'}${pl.plate?' · '+pl.plate:''}</div></div>
-</div>
-
-<div class="section-title">Producto</div>
-<div class="producto-box">
-  <div>
-    <div class="code">${fabric?.code||'—'}</div>
-    <div class="desc">${fabric?.description||'—'}</div>
-  </div>
-</div>
-
-<div class="section-title">Detalle de Bultos</div>
-<table>
-  <thead><tr><th style="width:80px">Bulto #</th><th class="right">Peso Bruto (kg)</th><th class="right">Peso Neto (kg)</th></tr></thead>
-  <tbody>
-    ${bultos.map(b=>`<tr>
-      <td class="mono">${String(b.bulto_number).padStart(3,'0')}</td>
-      <td class="right mono">${Number(b.peso_bruto).toFixed(2)}</td>
-      <td class="right mono">${Number(b.peso_neto).toFixed(2)}</td>
-    </tr>`).join('')}
-  </tbody>
-  <tfoot><tr>
-    <td>TOTALES (${bultos.length} bultos)</td>
-    <td class="right mono">${totBruto.toFixed(2)}</td>
-    <td class="right mono">${totNeto.toFixed(2)}</td>
-  </tr></tfoot>
-</table>
-
-<div class="totals-row">
-  <div class="total-box"><label>Peso Neto Total</label><div class="val">${totNeto.toFixed(2)} kg</div></div>
-  <div class="total-box"><label>Peso Bruto Total</label><div class="val">${totBruto.toFixed(2)} kg</div></div>
-</div>
-
-${pl.notes ? `<div class="obs"><strong>Observaciones:</strong> ${pl.notes}</div>` : ''}
-
-<div class="sigs">
-  <div><div class="sig-line">Preparado por</div></div>
-  <div><div class="sig-line">Recibido por</div></div>
-</div>
-
-<script>window.onload=()=>window.print();<\/script>
-</body></html>`;
-
-  const win = window.open('','_blank','width=800,height=600');
-  win.document.write(html);
-  win.document.close();
-}
-
-// Update renderPedidos to add "Listas" button
-const _origRenderPedidos = renderPedidos;
 
 // ═══ INIT ═══
 checkSession();
