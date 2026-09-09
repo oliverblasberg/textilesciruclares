@@ -6710,7 +6710,7 @@ function renderPedidos() {
         <div style="font-size:10px;color:var(--text3);margin-top:3px;text-align:right">${pctRound}%</div>
       </td>
       <td class="hide-mobile td-mono">${fmtMoney(total, monedaOV)}</td>
-      <td>${statusBadge(p.status)}</td>
+      <td>${statusBadge(p.status)}${p.despacho_cerrado?'<span class="badge badge-yellow" style="font-size:9px;margin-left:4px" title="Cerrado para despacho aceptando un faltante — no se despachó todo lo pedido">con faltante</span>':''}</td>
       <td><div class="td-actions">
         <button class="btn btn-sm btn-danger" onclick="deletePedido('${p.id}')">Eliminar</button>
       </div></td>
@@ -6823,7 +6823,7 @@ function verPedido(id) {
   document.getElementById('vped-body').innerHTML = `
     <!-- Ribbon de estado — entre el título y la primera tabla de información,
          mismo patrón que el modal de Factura -->
-    <div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;letter-spacing:0.03em;margin-bottom:16px;background:${ovStatusColor[p.status]||'#9CA3AF'};color:#fff">${ovStatusLabel[p.status]||p.status}</div>
+    <div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;letter-spacing:0.03em;margin-bottom:16px;background:${ovStatusColor[p.status]||'#9CA3AF'};color:#fff">${ovStatusLabel[p.status]||p.status}${p.despacho_cerrado ? ' <span style="font-weight:600;font-size:11px;opacity:0.9">· cerrado con faltante</span>' : ''}</div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
       ${infoCell('Cliente', clt?.name)}
@@ -6911,11 +6911,18 @@ function verPedido(id) {
   const btnPlanificar = yaPlanificado
     ? `<button class="btn btn-ghost btn-sm" onclick="planificarAbastecimientoOV('${id}')" title="Esta OV ya tiene OP/OC generadas — revisa antes de repetir para no duplicar">🔄 Re-planificar Abastecimiento</button>`
     : `<button class="btn btn-primary btn-sm" onclick="planificarAbastecimientoOV('${id}')">🔄 Planificar Abastecimiento</button>`;
+  // (09/Sep/2026) Si el pedido está cerrado para despacho (con faltante
+  // aceptado), el botón primario se cambia por "Reabrir" — abrirGenerarDespacho()
+  // igual bloquea con toast si se llega por otro camino, esto es solo para
+  // no ofrecer un botón que va a fallar.
+  const btnDespacho = p.despacho_cerrado
+    ? `<button class="btn btn-ghost btn-sm" onclick="reabrirDespacho('${id}')">🔓 Reabrir Despacho</button>`
+    : `<button class="btn btn-primary btn-sm" onclick="abrirGenerarDespacho('${id}')">📦 Generar Despacho</button>`;
 
   document.getElementById('vped-header-actions').innerHTML = `
     <button class="btn btn-ghost btn-sm" onclick="closeModal('modal-ver-pedido');editPedido('${id}')">✎ Editar</button>
     ${btnPlanificar}
-    <button class="btn btn-primary btn-sm" onclick="abrirGenerarDespacho('${id}')">📦 Generar Despacho</button>
+    ${btnDespacho}
   `;
 
   openModal('modal-ver-pedido');
@@ -7271,6 +7278,34 @@ async function wizardEjecutarConfirmacion() {
 // vinculada todavía, no habrá rollos que mostrar aquí — es esperado.
 let currentDespachoOVId = null;
 
+// Tolerancia de sobre-despacho (09/Sep/2026, a pedido explícito — mismo
+// criterio que ya rige la recepción de OC desde el 22/Ago: "hay veces por
+// humedad o mejor eficiencia que se produce/despacha un poco más de lo
+// estipulado". Dentro del 3% exige justificación manual (texto
+// obligatorio, se guarda en las notas de la Lista de Empaque); por encima
+// del 3% bloquea directo — "una vez el pedido fue despachado (hasta +3%)
+// ya no debe permitir despachar más".
+const TOLERANCIA_SOBRE_DESPACHO = 0.03;
+
+// Resumen por línea de la OV para el flujo de despacho: pedido, ya
+// despachado (ovDespachadoQty, ya existente — la misma que usa la
+// facturación por línea), pendiente simple (pedido−despachado, nunca
+// negativo) y el techo real que admite la tolerancia del 3%. Centraliza el
+// cálculo que usan renderDespachoRollos (mostrar pendiente por línea),
+// abrirGenerarDespacho (bloquear si no queda nada por despachar) y
+// confirmarGenerarDespacho (validar/justificar el sobre-despacho).
+function ovLineasDespacho(ovId) {
+  return state.pedItems.filter(i => i.order_id === ovId).map(item => {
+    const pedido = Number(item.qty_kg||0);
+    const despachadoYa = ovDespachadoQty(ovId, item.fabric_id);
+    return {
+      item, pedido, despachadoYa,
+      pendiente: Math.max(0, pedido - despachadoYa),
+      techoConTolerancia: (pedido * (1 + TOLERANCIA_SOBRE_DESPACHO)) - despachadoYa,
+    };
+  });
+}
+
 // DES-YYYY-NNNN, único en erp_shipments.shipment_number — mismo patrón que
 // nextRecepcionNum()/nextReabastecimientoNum() (consulta directa a
 // Supabase, nunca cacheado en memoria). No confundir con LE-XXXX
@@ -7300,6 +7335,16 @@ function abrirGenerarDespacho(ovId) {
   const p = state.pedidos.find(x => x.id === ovId);
   if (!p) return;
   if (!p.bodega_id) { toast('Esta OV no tiene una Bodega de Despacho configurada — edítala primero.', 'error'); return; }
+  // (09/Sep/2026) "Una vez el pedido fue despachado (hasta +3%), ya no debe
+  // permitir despachar más." Dos bloqueos distintos: cierre manual
+  // (despacho_cerrado, ver confirmarGenerarDespacho/reabrirDespacho) y
+  // techo natural — ninguna línea tiene ya margen ni con tolerancia.
+  if (p.despacho_cerrado) { toast('Este pedido está cerrado para despacho — usa "Reabrir Despacho" si necesitas seguir despachando.', 'error'); return; }
+  const lineasDesp = ovLineasDespacho(ovId);
+  if (lineasDesp.length && lineasDesp.every(l => l.techoConTolerancia <= 0.001)) {
+    toast('Este pedido ya fue despachado en su totalidad (dentro de la tolerancia del 3%) — no hay más para despachar.', 'error');
+    return;
+  }
   currentDespachoOVId = ovId;
 
   document.getElementById('desp-ov-display').textContent = `${ovLabel(p)} — ${clientName(p.customer_id)}`;
@@ -7321,10 +7366,11 @@ function abrirGenerarDespacho(ovId) {
 // dos códigos distintos en una misma selección.
 function renderDespachoRollos(ovId) {
   const disponibles = rollosDisponiblesParaOV(ovId);
-  const items = state.pedItems.filter(i => i.order_id === ovId);
+  const lineasDesp = ovLineasDespacho(ovId);
   const cont = document.getElementById('desp-lineas');
 
-  cont.innerHTML = items.length ? items.map(item => {
+  cont.innerHTML = lineasDesp.length ? lineasDesp.map(l => {
+    const item = l.item;
     const prod = state.productos.find(x => x.id === item.fabric_id);
     const rollosLinea = disponibles.filter(r => r.producto_id === item.fabric_id);
     const rowsHtml = rollosLinea.length ? rollosLinea.map(r => `<tr>
@@ -7336,10 +7382,21 @@ function renderDespachoRollos(ovId) {
       : `<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:14px;font-size:12px">
           Sin rollos disponibles de este producto en la bodega de despacho.
         </td></tr>`;
+    // Pendiente por línea (09/Sep/2026, a pedido explícito): pedido −
+    // despachado (ovDespachadoQty, misma función que ya usa facturación).
+    // "Completo" no impide seguir seleccionando rollos de esa línea — la
+    // tolerancia del 3% sigue permitiéndolo, con justificación, al
+    // confirmar (ver confirmarGenerarDespacho).
+    const completo = l.pendiente <= 0.001;
     return `
       <div style="margin-bottom:18px">
-        <div style="font-size:12px;font-weight:600;margin-bottom:6px">
-          ${prod?.description||'—'} <span style="color:var(--text3);font-weight:400;font-family:'DM Mono',monospace">${prod?.codigo_interno||prod?.code||''}</span>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;flex-wrap:wrap;gap:6px">
+          <div style="font-size:12px;font-weight:600">
+            ${prod?.description||'—'} <span style="color:var(--text3);font-weight:400;font-family:'DM Mono',monospace">${prod?.codigo_interno||prod?.code||''}</span>
+          </div>
+          <div style="font-size:11px;font-family:'DM Mono',monospace;color:${completo?'var(--green)':'var(--text2)'}">
+            ${completo ? '✓ Completo' : `Pendiente: ${l.pendiente.toFixed(3)} kg`} <span style="color:var(--text3)">de ${l.pedido.toFixed(3)} kg pedidos (${l.despachadoYa.toFixed(3)} despachado)</span>
+          </div>
         </div>
         <div class="table-wrap">
           <table>
@@ -7385,6 +7442,43 @@ async function confirmarGenerarDespacho() {
     porProducto[r.producto_id].push(r);
   });
 
+  // Tolerancia de sobre-despacho (09/Sep/2026, a pedido explícito) — mismo
+  // patrón que la tolerancia del 3% ya vigente en recepción de OC: se
+  // valida TODO antes de escribir nada a la base. Si alguna línea excede
+  // incluso la tolerancia, se aborta el despacho completo sin insertar un
+  // solo registro. Si excede lo pedido pero cabe dentro del 3%, exige
+  // justificación manual — se guarda en las notas de esa Lista de Empaque.
+  const lineasDesp = ovLineasDespacho(ovId);
+  const notasOverridePorProducto = {};
+  for (const productoId of Object.keys(porProducto)) {
+    const rollosProd = porProducto[productoId];
+    const nuevoKg = rollosProd.reduce((s,r) => s + Number(r.peso_kg||0), 0);
+    const linea = lineasDesp.find(l => l.item.fabric_id === productoId);
+    const prod  = state.productos.find(x => x.id === productoId);
+    if (!linea) continue; // no debería pasar — el rollo viene de una línea real de esta OV
+    if (nuevoKg > linea.techoConTolerancia + 0.001) {
+      toast(`No puedes despachar ${nuevoKg.toFixed(3)} kg de ${prod?.description||'este producto'}: excede incluso la tolerancia del 3% (ya despachado ${linea.despachadoYa.toFixed(3)} de ${linea.pedido.toFixed(3)} pedidos — máximo con tolerancia: ${Math.max(0,linea.techoConTolerancia).toFixed(3)}).`, 'error');
+      return;
+    }
+    if (nuevoKg > linea.pendiente + 0.001) {
+      const exceso = nuevoKg - linea.pendiente;
+      const motivo = prompt(`Vas a despachar ${exceso.toFixed(3)} kg más de lo pedido para ${prod?.description||'este producto'} (dentro del 3% de tolerancia). Escribí el motivo (ej. "redondeo de rollo", "mejor eficiencia") para continuar:`);
+      if (!motivo || !motivo.trim()) { toast('Se requiere un motivo para despachar por encima de lo pedido — despacho cancelado.', 'error'); return; }
+      notasOverridePorProducto[productoId] = `Sobre-despacho ${prod?.description||productoId}: +${exceso.toFixed(3)} kg — motivo: ${motivo.trim()}`;
+    }
+  }
+
+  // ¿Con este despacho queda TODO lo pedido cubierto? Se calcula con la
+  // foto de "antes" (lineasDesp, ya tomada) más lo que se está por
+  // insertar — evita depender de un reload previo. Si NO queda todo
+  // cubierto, se pregunta después de generar si se cierra el pedido así
+  // (ver más abajo) — mismo patrón que el cierre parcial de recepción de
+  // OC (26/Ago/2026).
+  const todoCompleto = lineasDesp.every(l => {
+    const nuevoDespachado = l.despachadoYa + (porProducto[l.item.fabric_id]||[]).reduce((s,r)=>s+Number(r.peso_kg||0),0);
+    return nuevoDespachado >= l.pedido - 0.001;
+  });
+
   const btn = document.getElementById('btn-confirmar-despacho');
   if (btn) { btn.disabled = true; btn.textContent = 'Generando…'; }
 
@@ -7408,7 +7502,10 @@ async function confirmarGenerarDespacho() {
       const { data: plRow, error: plErr } = await sb.from('erp_packing_lists').insert({
         order_id: ovId, fabric_id: productoId, date: fecha, shipment_id: shipRow.id,
         destination: destino||null, carrier: transportista||null, plate: placa||null,
-        notes: `Despacho ${despachoNum} — rollos: ${rollosProd.map(r=>r.numero_rollo).join(', ')}`,
+        notes: [
+          `Despacho ${despachoNum} — rollos: ${rollosProd.map(r=>r.numero_rollo).join(', ')}`,
+          notasOverridePorProducto[productoId],
+        ].filter(Boolean).join(' | '),
       }).select().single();
       if (plErr) throw plErr;
 
@@ -7450,7 +7547,39 @@ async function confirmarGenerarDespacho() {
       }
     }
 
-    toast(`✓ Despacho ${despachoNum} generado — ${rollosSel.length} rollo(s)`);
+    logAuditoria('ventas', 'crear', 'Despacho', shipRow.id, despachoNum, { ov: ovLabelStr, rollos: rollosSel.length, peso: rollosSel.reduce((s,r)=>s+Number(r.peso_kg||0),0) });
+
+    // CIERRE DE DESPACHO PARCIAL (09/Sep/2026, a pedido explícito) — mismo
+    // patrón que el cierre parcial de recepción de OC (26/Ago/2026): si
+    // queda pendiente, se pregunta si el pedido sigue abierto para más
+    // despachos o se da por cerrado así. Solo se pregunta cuando de verdad
+    // queda faltante — si este despacho cubrió el 100%, no se molesta al
+    // usuario (syncOrderStatus más abajo ya lo pasa a "Terminada" solo).
+    let cerradoConFaltante = false;
+    if (!todoCompleto) {
+      const pendientesTxt = lineasDesp
+        .map(l => {
+          const nuevoDespachado = l.despachadoYa + (porProducto[l.item.fabric_id]||[]).reduce((s,r)=>s+Number(r.peso_kg||0),0);
+          const faltan = l.pedido - nuevoDespachado;
+          if (faltan <= 0.001) return null;
+          const prod = state.productos.find(x => x.id === l.item.fabric_id);
+          return `  · ${prod?.description||prod?.code||'—'}: faltan ${faltan.toFixed(3)} kg`;
+        })
+        .filter(Boolean);
+      cerradoConFaltante = confirm(
+        `Despacho ${despachoNum} generado — queda producto pendiente de despachar:\n\n${pendientesTxt.join('\n')}\n\n` +
+        `¿Se dará por CERRADO este pedido?\n\n` +
+        `• Aceptar = cerrar el pedido aceptando lo pendiente — no se podrá despachar más (se puede reabrir después si hace falta).\n` +
+        `• Cancelar = seguir despachando más adelante.\n\n` +
+        `Lo ya despachado queda registrado en ambos casos.`
+      );
+      if (cerradoConFaltante) {
+        await sb.from('erp_ov').update({ despacho_cerrado: true }).eq('id', ovId);
+        logAuditoria('ventas', 'cerrar', 'OV', ovId, ovLabelStr, { motivo: 'cerrado_con_faltante_despacho', despacho: despachoNum });
+      }
+    }
+
+    toast(`✓ Despacho ${despachoNum} generado — ${rollosSel.length} rollo(s)` + (cerradoConFaltante ? ' · pedido cerrado' : ''));
     closeModal('modal-despacho');
     await loadAll();
     // FIX (09/Sep/2026): confirmarGenerarDespacho() nunca llamaba a
@@ -7459,6 +7588,8 @@ async function confirmarGenerarDespacho() {
     // aun con el 100% despachado, y solo pasaba a 'terminada' hasta la
     // primera factura (saltándose el estado intermedio). Mismo patrón ya
     // vigente en el resto del flujo — no requiere cuentas ni tablas nuevas.
+    // (09/Sep) syncOrderStatus() ahora también trata despacho_cerrado como
+    // "completo" para efectos de status — ver esa función.
     await syncOrderStatus(ovId);
     await loadAll();
     verDespacho(shipRow.id);
@@ -7467,6 +7598,26 @@ async function confirmarGenerarDespacho() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📦 Generar Despacho'; }
   }
+}
+
+// Reabre un pedido cerrado con faltante (ver "CIERRE DE DESPACHO PARCIAL"
+// en confirmarGenerarDespacho, 09/Sep/2026). No hay todavía un flujo de
+// devolución de despacho que dispare esto automáticamente (a diferencia de
+// reabrir OC, que sí ocurre solo al registrar una devolución) — mientras
+// tanto esta es la única forma de deshacer un cierre hecho por error o de
+// retomar un pedido que se decidió cerrar antes de tiempo.
+async function reabrirDespacho(ovId) {
+  const p = state.pedidos.find(x => x.id === ovId);
+  if (!p) return;
+  if (!confirm(`¿Reabrir ${ovLabel(p)} para seguir despachando?`)) return;
+  const { error } = await sb.from('erp_ov').update({ despacho_cerrado: false }).eq('id', ovId);
+  if (error) { toast('Error: '+error.message, 'error'); return; }
+  logAuditoria('ventas', 'reabrir', 'OV', ovId, ovLabel(p), { motivo: 'reabrir_despacho' });
+  await loadAll();
+  await syncOrderStatus(ovId);
+  await loadAll();
+  toast('Pedido reabierto para despacho');
+  verPedido(ovId);
 }
 
 // ═══ VER / IMPRIMIR DESPACHO ═══
@@ -9405,7 +9556,11 @@ async function syncOrderStatus(order_id) {
   const allDespachadoFacturado = productosDespachados.length > 0 &&
     productosDespachados.every(pid => ovPendienteFacturarLinea(order_id, pid) <= 0.001);
   const allInvoicesPaid = activeInvoices.length > 0 && activeInvoices.every(f => f.status === 'pagada');
-  const kgsComplete = totalKgOrden > 0 && despachado >= totalKgOrden;
+  // (09/Sep/2026) despacho_cerrado cuenta como "completo" para efectos de
+  // status — un pedido cerrado con faltante (ver confirmarGenerarDespacho)
+  // debe poder seguir avanzando a Terminada/Facturada/Pagada igual que uno
+  // 100% despachado, en vez de quedar atascado en "En Proceso" para siempre.
+  const kgsComplete = (totalKgOrden > 0 && despachado >= totalKgOrden) || !!order.despacho_cerrado;
 
   // Priority: Pagada > Facturada > Terminada > En Proceso
   let newStatus;
