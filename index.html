@@ -2741,19 +2741,31 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <div class="field"><label>Email</label><input type="email" id="clt-prod-email" placeholder="produccion@empresa.com"/></div>
           <div class="field"><label>Teléfono</label><input type="text" id="clt-prod-tel" placeholder="+502 0000-0000"/></div>
           <div class="form-section-title">Logística</div>
-          <!-- BODEGA PREDETERMINADA — DESACTIVADA (30/Ago/2026, a pedido
-               explícito). Mostraba las bodegas de LA EMPRESA, que no es lo
-               que corresponde para un cliente: acá debería ir el destino del
-               cliente, no un almacén propio. Se deja visible pero
-               deshabilitada para no perder el campo ni la columna
-               (erp_customers.bodega_id sigue guardando lo que ya hubiera);
-               se retomará cuando se defina el modelo de destinos. -->
-          <div class="field field-full"><label>Bodega Predeterminada</label>
-            <select id="clt-bodega" disabled
-                    title="Pendiente de definir — se trabajará más adelante"
-                    style="background:var(--surface2);color:var(--text3);cursor:not-allowed">
-              <option value="">— Pendiente de configurar —</option>
-            </select>
+          <!-- BODEGA PREDETERMINADA — REACTIVADA (09/Sep/2026, a pedido
+               explícito). Ya no son las bodegas de LA EMPRESA (erp_bodegas)
+               — son las bodegas DEL CLIENTE (erp_customer_bodegas), con la
+               Bodega Principal (nombre + dirección del propio cliente, tab
+               Datos Generales) como opción por defecto. Ver
+               renderClienteBodegasPanel() / guardarClienteBodega() /
+               eliminarClienteBodega() en CLIENTES. -->
+          <div class="field field-full"><label>Bodega Predeterminada <span style="font-weight:400;color:var(--text3)">(destino por defecto al Generar Despacho)</span></label>
+            <select id="clt-bodega"></select>
+          </div>
+          <div class="field field-full">
+            <div id="clt-bodegas-lista" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-clt-bodega-nueva" onclick="toggleClienteBodegaForm()">+ Agregar Bodega</button>
+            <div id="clt-bodega-form" style="display:none;margin-top:10px;padding:12px;background:var(--surface2);border-radius:8px">
+              <div class="form-grid form-grid-2">
+                <div class="field field-full"><label>Nombre *</label><input type="text" id="cbod-nombre" placeholder="Ej. Bodega Zona 12"/></div>
+                <div class="field field-full"><label>Dirección</label><input type="text" id="cbod-direccion"/></div>
+                <div class="field"><label>Contacto</label><input type="text" id="cbod-contacto"/></div>
+                <div class="field"><label>Teléfono</label><input type="text" id="cbod-telefono" placeholder="+502 0000-0000"/></div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px">
+                <button type="button" class="btn btn-primary btn-sm" onclick="guardarClienteBodega()">Agregar</button>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="toggleClienteBodegaForm(false)">Cancelar</button>
+              </div>
+            </div>
           </div>
           <div class="field field-full"><label>Incoterms Predeterminado</label>
             <select id="clt-incoterms"><option value="">— Seleccionar —</option></select>
@@ -5681,7 +5693,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-weight:600" id="desp-ov-display">—</div>
       <div class="form-grid form-grid-2" style="margin-bottom:16px">
         <div class="field"><label>Fecha *</label><input type="date" id="desp-fecha"/></div>
-        <div class="field"><label>Destino</label><input type="text" id="desp-destino" placeholder="Ciudad / bodega destino"/></div>
+        <div class="field"><label>Destino</label><select id="desp-destino"></select></div>
         <div class="field"><label>Transportista</label><input type="text" id="desp-transportista"/></div>
         <div class="field"><label>Placa</label><input type="text" id="desp-placa"/></div>
       </div>
@@ -5946,7 +5958,7 @@ function enterModule(hub) {
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
          sc, scI, oc, ocI, ocR, ocRI, plC, ocF, ocFI, pagosOC, ocA, asi, asiL, dj, bod, tc,
-         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev, ovFI, ship] = await Promise.all([
+         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev, ovFI, ship, clB] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
     sb.from('erp_ov').select('*').order('order_number', {ascending:false}),
@@ -6003,6 +6015,13 @@ async function loadAll() {
     // más Listas de Empaque (una por producto/línea de la OV) generadas
     // en el mismo evento de "Generar Despacho". Ver GENERAR DESPACHO.
     sb.from('erp_shipments').select('*').order('shipment_number', {ascending:false}),
+    // BODEGAS DE CLIENTE (09/Sep/2026, a pedido explícito) — direcciones de
+    // despacho del cliente (no confundir con erp_bodegas, que son las
+    // bodegas PROPIAS de la empresa). La "Bodega Principal" de un cliente no
+    // vive acá como fila — se deriva de erp_customers.name/address; esta
+    // tabla solo guarda las bodegas ADICIONALES que se agreguen a mano desde
+    // la ficha del cliente. Ver CLIENTES y GENERAR DESPACHO.
+    sb.from('erp_customer_bodegas').select('*').order('nombre'),
   ]);
   // Antes esto fallaba en silencio: si Supabase devolvía un error (RLS, red,
   // columna renombrada, etc.) el resultado quedaba como `[]` sin avisar a
@@ -6025,6 +6044,7 @@ async function loadAll() {
     erp_reabastecimiento_devoluciones:reabDev,
     erp_ov_factura_items:ovFI,
     erp_shipments:ship,
+    erp_customer_bodegas:clB,
   };
   const _loadErrors = Object.entries(_loadResults).filter(([, r]) => r?.error);
   if (_loadErrors.length) {
@@ -6083,6 +6103,9 @@ async function loadAll() {
   state.enviosTerceros      = envT.data  || [];
   state.enviosTercerosItems = envTI.data || [];
   state.rollos              = roll.data  || [];
+  // Bodegas de cliente (09/Sep/2026) — direcciones de despacho adicionales
+  // por cliente, ver CLIENTES y GENERAR DESPACHO.
+  state.clienteBodegas      = clB.data   || [];
   updateTCTopbar();
   renderDashboard();
   renderClientes();
@@ -6331,6 +6354,125 @@ function monedaBadge(moneda, moneda2) {
   return badge + badge2;
 }
 
+// ── BODEGAS DE CLIENTE (09/Sep/2026, a pedido explícito) ──
+// "Bodega Principal" del cliente NO es una fila de erp_customer_bodegas —
+// es siempre el nombre/dirección del cliente en Datos Generales. Solo las
+// bodegas ADICIONALES que se agregan a mano viven en la tabla. Por eso
+// bodega_id === null/'' se lee siempre como "usar la Bodega Principal".
+function clienteBodegasDeCliente(clienteId) {
+  return (state.clienteBodegas||[]).filter(b => b.customer_id === clienteId);
+}
+
+function clienteBodegaPrincipal(clienteId) {
+  const c = state.clientes.find(x => x.id === clienteId);
+  if (!c) return null;
+  return {
+    id: '', nombre: c.name, direccion: c.address || '',
+    contacto: c.fact_nombre || c.prod_nombre || '',
+    telefono: c.phone || c.fact_tel || c.prod_tel || '',
+  };
+}
+
+// Resuelve una bodega de despacho concreta — la Principal si bodegaId está
+// vacío, o la fila de erp_customer_bodegas correspondiente (con fallback a
+// la Principal si el id ya no existe, ej. fue eliminada).
+function clienteBodegaResuelta(clienteId, bodegaId) {
+  if (!bodegaId) return clienteBodegaPrincipal(clienteId);
+  const b = clienteBodegasDeCliente(clienteId).find(x => x.id === bodegaId);
+  if (!b) return clienteBodegaPrincipal(clienteId);
+  return { id: b.id, nombre: b.nombre, direccion: b.direccion||'', contacto: b.contacto||'', telefono: b.telefono||'' };
+}
+
+// Formato de una sola línea (nombre · dirección · contacto · teléfono) —
+// es lo que queda guardado como snapshot en erp_packing_lists.destination
+// al generar un Despacho, así que verDespacho()/imprimirDespacho()/la tabla
+// de Despachos de la OV lo muestran completo sin ningún cambio de su lado.
+function fmtDestinoBodega(b) {
+  if (!b) return '';
+  return [
+    b.nombre,
+    b.direccion,
+    b.contacto ? `Contacto: ${b.contacto}` : '',
+    b.telefono ? `Tel: ${b.telefono}` : '',
+  ].filter(Boolean).join(' · ');
+}
+
+// Puebla el <select> de Bodega Predeterminada de la ficha de cliente y la
+// lista de bodegas adicionales debajo. clienteId==='' (cliente nuevo, sin
+// guardar) deja la lista vacía y desactiva "+ Agregar Bodega" — todavía no
+// hay customer_id al cual asociarlas.
+function renderClienteBodegasPanel(clienteId, selectedId) {
+  const sel = document.getElementById('clt-bodega');
+  const btnNueva = document.getElementById('btn-clt-bodega-nueva');
+  const listEl = document.getElementById('clt-bodegas-lista');
+  const c = clienteId ? state.clientes.find(x => x.id === clienteId) : null;
+
+  const principalLabel = c
+    ? `Bodega Principal — ${c.name}${c.address ? ' — ' + c.address : ''}`
+    : 'Bodega Principal (se define al guardar el cliente)';
+  const bodegas = clienteId ? clienteBodegasDeCliente(clienteId) : [];
+
+  sel.innerHTML = `<option value="">${principalLabel}</option>` +
+    bodegas.map(b => `<option value="${b.id}">${b.nombre}${b.direccion ? ' — ' + b.direccion : ''}</option>`).join('');
+  sel.value = selectedId || '';
+
+  listEl.innerHTML = bodegas.length ? bodegas.map(b => `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 10px;background:var(--surface2);border-radius:6px;font-size:12px">
+      <div><strong>${b.nombre}</strong>${b.direccion ? ' — ' + b.direccion : ''}${b.contacto ? ' · ' + b.contacto : ''}${b.telefono ? ' · ' + b.telefono : ''}</div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="eliminarClienteBodega('${b.id}')" title="Eliminar bodega">🗑</button>
+    </div>`).join('') : '<div style="font-size:12px;color:var(--text3)">Sin bodegas adicionales — el destino por defecto es la Bodega Principal.</div>';
+
+  const puedeAgregar = !!clienteId;
+  btnNueva.disabled = !puedeAgregar;
+  btnNueva.title = puedeAgregar ? '' : 'Guardá el cliente primero para poder agregar bodegas';
+  if (!puedeAgregar) toggleClienteBodegaForm(false);
+}
+
+function toggleClienteBodegaForm(show) {
+  const form = document.getElementById('clt-bodega-form');
+  const willShow = show !== undefined ? show : form.style.display === 'none';
+  form.style.display = willShow ? 'block' : 'none';
+  if (willShow) {
+    ['cbod-nombre','cbod-direccion','cbod-contacto','cbod-telefono'].forEach(id => { document.getElementById(id).value = ''; });
+  }
+}
+
+async function guardarClienteBodega() {
+  const clienteId = document.getElementById('clt-id').value;
+  if (!clienteId) { toast('Guardá el cliente primero para poder agregar bodegas', 'error'); return; }
+  const nombre = document.getElementById('cbod-nombre').value.trim();
+  if (!nombre) { toast('El nombre de la bodega es requerido', 'error'); return; }
+  const row = {
+    customer_id: clienteId,
+    nombre,
+    direccion: document.getElementById('cbod-direccion').value.trim() || null,
+    contacto:  document.getElementById('cbod-contacto').value.trim() || null,
+    telefono:  document.getElementById('cbod-telefono').value.trim() || null,
+  };
+  const { error } = await sb.from('erp_customer_bodegas').insert(row);
+  if (error) { alert('Error al agregar bodega:\n\n' + error.message + '\nCode: ' + (error.code||'') + '\nDetails: ' + (error.details||'')); return; }
+  const prevSelected = document.getElementById('clt-bodega').value;
+  toggleClienteBodegaForm(false);
+  await loadAll();
+  renderClienteBodegasPanel(clienteId, prevSelected);
+  toast(`✓ Bodega "${nombre}" agregada`);
+}
+
+async function eliminarClienteBodega(bodegaId) {
+  const b = (state.clienteBodegas||[]).find(x => x.id === bodegaId);
+  if (!b) return;
+  if (!confirm(`¿Eliminar la bodega "${b.nombre}"? Los despachos ya generados con este destino conservan la dirección tal como quedó guardada — esto no los afecta.`)) return;
+  const clienteId = document.getElementById('clt-id').value;
+  // Si la que se elimina era la seleccionada, cae a Bodega Principal — la
+  // FK (ON DELETE SET NULL) hace lo mismo en erp_customers.bodega_id.
+  const eraSeleccionada = document.getElementById('clt-bodega').value === bodegaId;
+  const { error } = await sb.from('erp_customer_bodegas').delete().eq('id', bodegaId);
+  if (error) { alert('Error al eliminar bodega:\n\n' + error.message); return; }
+  await loadAll();
+  renderClienteBodegasPanel(clienteId, eraSeleccionada ? '' : document.getElementById('clt-bodega').value);
+  toast('Bodega eliminada');
+}
+
 function renderClientes() {
   const q = (document.getElementById('search-clientes').value||'').toLowerCase();
   const data = state.clientes.filter(c =>
@@ -6378,9 +6520,11 @@ function editCliente(id) {
   document.getElementById('clt-notes').value   = c.notes||'';
   document.getElementById('clt-terminos').innerHTML = terminosPagoOpts(c.terminos_pago||'');
   document.getElementById('clt-incoterms').innerHTML = incotermsOpts(c.incoterms||'');
-  // Bodega Predeterminada desactivada (30/Ago/2026) — ver nota en el HTML.
-  // Ya no se puebla con las bodegas de la empresa; el valor existente en
-  // erp_customers.bodega_id se conserva pero no se muestra ni se edita.
+  // Bodega Predeterminada — reactivada (09/Sep/2026, a pedido explícito).
+  // Ya no son las bodegas de la empresa: ahora son las bodegas DEL CLIENTE
+  // (erp_customer_bodegas), con la Bodega Principal (nombre/dirección del
+  // cliente) como opción por defecto. Ver renderClienteBodegasPanel().
+  renderClienteBodegasPanel(c.id, c.bodega_id || '');
   document.getElementById('clt-moneda').value   = c.moneda||'GTQ';
   document.getElementById('clt-moneda2').value  = c.moneda2||'';
   onCltMonedaChange();
@@ -6395,7 +6539,8 @@ function resetClienteForm() {
   document.getElementById('clt-pais').value = 'GT';
   document.getElementById('clt-terminos').innerHTML = terminosPagoOpts();
   document.getElementById('clt-incoterms').innerHTML = incotermsOpts();
-  // Bodega Predeterminada desactivada (30/Ago/2026) — ver nota en el HTML.
+  // Cliente nuevo — sin customer_id todavía, no hay a qué asociar bodegas.
+  renderClienteBodegasPanel('', '');
   document.getElementById('clt-moneda').value  = 'GTQ';
   document.getElementById('clt-moneda2').value = '';
   onCltMonedaChange();
@@ -6460,10 +6605,10 @@ async function saveCliente() {
       notes:         document.getElementById('clt-notes').value.trim(),
       terminos_pago: document.getElementById('clt-terminos')?.value||null,
       incoterms:     document.getElementById('clt-incoterms')?.value||null,
-      // El selector está deshabilitado y vacío, así que leerlo devolvería ''
-      // y BORRARÍA el bodega_id que el cliente ya tuviera. Se conserva el
-      // valor existente hasta que se retome el campo.
-      bodega_id:     (id ? (state.clientes||[]).find(c=>c.id===id)?.bodega_id : null) || null,
+      // Reactivado (09/Sep/2026) — ahora apunta a erp_customer_bodegas
+      // (bodegas del cliente), no a erp_bodegas. '' (Bodega Principal) se
+      // guarda como null.
+      bodega_id:     document.getElementById('clt-bodega').value || null,
     };
 
     // El guard se activa recién acá — después de las validaciones locales
@@ -7331,6 +7476,20 @@ function rollosDisponiblesParaOV(ovId) {
   );
 }
 
+// Destino de despacho (09/Sep/2026) — reusa clienteBodegasDeCliente() de
+// CLIENTES. Selecciona por defecto la Bodega Predeterminada del cliente
+// (erp_customers.bodega_id); el operador puede cambiarla a cualquier otra
+// bodega ya registrada para ese cliente antes de confirmar.
+function renderDespachoDestinoSelect(customerId) {
+  const c = state.clientes.find(x => x.id === customerId);
+  const sel = document.getElementById('desp-destino');
+  const principalLabel = c ? `Bodega Principal — ${c.name}${c.address ? ' — ' + c.address : ''}` : 'Bodega Principal';
+  const bodegas = clienteBodegasDeCliente(customerId);
+  sel.innerHTML = `<option value="">${principalLabel}</option>` +
+    bodegas.map(b => `<option value="${b.id}">${b.nombre}${b.direccion ? ' — ' + b.direccion : ''}</option>`).join('');
+  sel.value = c?.bodega_id || '';
+}
+
 function abrirGenerarDespacho(ovId) {
   const p = state.pedidos.find(x => x.id === ovId);
   if (!p) return;
@@ -7349,7 +7508,10 @@ function abrirGenerarDespacho(ovId) {
 
   document.getElementById('desp-ov-display').textContent = `${ovLabel(p)} — ${clientName(p.customer_id)}`;
   document.getElementById('desp-fecha').value = today();
-  document.getElementById('desp-destino').value = '';
+  // Destino (09/Sep/2026, a pedido explícito) — ya no es texto libre: es un
+  // dropdown con las bodegas DEL CLIENTE de esta OV, precargado con la
+  // Bodega Predeterminada que tenga configurada en su ficha.
+  renderDespachoDestinoSelect(p.customer_id);
   document.getElementById('desp-transportista').value = '';
   document.getElementById('desp-placa').value = '';
 
@@ -7423,7 +7585,14 @@ async function confirmarGenerarDespacho() {
 
   const fecha = document.getElementById('desp-fecha').value;
   if (!fecha) { toast('La fecha es requerida', 'error'); return; }
-  const destino        = document.getElementById('desp-destino').value.trim();
+  // Destino (09/Sep/2026) — el <select> guarda el id de la bodega del
+  // cliente ('' === Bodega Principal); acá se resuelve a los datos
+  // completos y se compone en una sola línea para guardar como snapshot en
+  // erp_packing_lists.destination — mismo campo de siempre, así que
+  // verDespacho()/imprimirDespacho()/la tabla de Despachos de la OV lo
+  // muestran completo sin que haga falta tocar nada de ese lado.
+  const destinoBodegaId = document.getElementById('desp-destino').value || null;
+  const destino         = fmtDestinoBodega(clienteBodegaResuelta(p.customer_id, destinoBodegaId));
   const transportista   = document.getElementById('desp-transportista').value.trim();
   const placa           = document.getElementById('desp-placa').value.trim();
 
