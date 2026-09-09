@@ -344,6 +344,14 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 }
 .modal-overlay.open .modal { transform: translateY(0); }
 .modal-lg { max-width: 860px; }
+/* Generar Despacho: modal grande a pedido explícito (09/Sep/2026) — ocupa
+   90% de la pantalla en vez del tope fijo de .modal-lg. Solo en desktop
+   (>680px); en mobile sigue el bottom-sheet de ancho completo de siempre
+   (ver @media max-width:680px más abajo). Alto ya usa max-height:90vh por
+   defecto en .modal — no hace falta tocarlo. */
+@media (min-width: 681px) {
+  #modal-despacho .modal { width: 90vw; max-width: 90vw; }
+}
 .modal-header {
   padding: 16px 20px 14px;
   border-bottom: 1px solid var(--border);
