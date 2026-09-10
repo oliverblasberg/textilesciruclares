@@ -7056,15 +7056,19 @@ function verPedido(id) {
     </div>
     ${p.notes ? `<div style="margin-top:16px;font-size:12px;color:var(--text2)"><strong>Notas:</strong> ${p.notes}</div>` : ''}
 
-    <!-- Devoluciones (22/Ago/2026, a pedido explícito). Hoy siempre vacía
-         — no existe todavía un flujo de devolución de venta/despacho, solo
-         de Recepción (OC) y Reabastecimiento. Se deja lista para cuando se
-         construya esa funcionalidad. -->
+    <!-- Devoluciones (22/Ago/2026, a pedido explícito; conectada a
+         DESPACHO el 10/Sep/2026). Usa la sección unificada de DEV- del
+         proyecto (devolucionesDespachoDeOV) — mismo criterio que la de
+         OC/OP más abajo en este archivo (sección DEVOLUCIONES). -->
     <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin:20px 0 8px">Devoluciones</div>
     <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
       <table style="width:100%;border-collapse:collapse">
         <thead><tr style="background:var(--surface2)"><th style="padding:7px 12px;text-align:left;font-size:11px">No.</th><th style="padding:7px 12px;text-align:left;font-size:11px">Origen</th><th style="padding:7px 12px;text-align:left;font-size:11px">Fecha</th></tr></thead>
-        <tbody><tr><td colspan="3" style="text-align:center;color:var(--text3);padding:12px;font-size:12px">Sin devoluciones — no hay flujo de devolución de venta todavía</td></tr></tbody>
+        <tbody>${devolucionesDespachoDeOV(id).map(d => `<tr>
+          <td class="td-mono" style="color:var(--accent);cursor:pointer;text-decoration:underline" onclick="closeModal('modal-ver-pedido');verDevolucion('${d.numero}')">${d.numero}</td>
+          <td>${d.origen}</td>
+          <td>${fmtDate(d.fecha)}</td>
+        </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--text3);padding:12px;font-size:12px">Sin devoluciones</td></tr>'}</tbody>
       </table>
     </div>
   `;
@@ -16642,11 +16646,20 @@ function renderKardex() {
   if (!tbody) return;
 
   let totalEntradas = 0, totalSalidas = 0, totalCostoMov = 0;
-  let rows = '';
+  // Movimientos del período — se acumulan en un array en vez de un string
+  // concatenado porque el cálculo FIFO (capas/saldo/valorTotal) tiene que
+  // recorrerse en orden cronológico ASC, pero la tabla se muestra de más
+  // nuevo a más viejo (10/Sep/2026, a pedido explícito) — se arma el HTML
+  // de cada fila en el mismo orden del cálculo y se invierte solo al
+  // renderizar, sin tocar la lógica de saldo corrido.
+  let movRows = [];
 
-  // Opening balance row if filtering by period
+  // Saldo inicial (si se filtra por período): queda al FINAL de la tabla al
+  // mostrar de más nuevo a más viejo — cronológicamente es el punto más
+  // antiguo, anterior a todos los movimientos listados.
+  let openingRowHtml = '';
   if (desde && saldoAntes !== 0) {
-    rows += `<tr style="background:#F8F9FA;font-style:italic">
+    openingRowHtml = `<tr style="background:#F8F9FA;font-style:italic">
       <td colspan="7" style="padding:8px 14px;font-size:12px;color:var(--text2);font-weight:600">
         Saldo inicial al ${fmtDate(desde)}
       </td>
@@ -16703,7 +16716,7 @@ function renderKardex() {
     const ref = [m.referencia_tipo, m.referencia_id].filter(Boolean).join(' — ') || '—';
     const saldoColor = saldo > 0 ? 'var(--text)' : saldo < 0 ? 'var(--red)' : 'var(--text3)';
 
-    rows += `<tr>
+    movRows.push(`<tr>
       <td style="white-space:nowrap;font-size:12px">${fechaFmt}</td>
       <td class="td-mono" style="font-size:11px;color:var(--accent)">${m.mov_id||'—'}</td>
       <td><span class="badge ${KX_TIPO_COLOR[m.tipo]||'badge-gray'}" style="font-size:10px">${KX_TIPO_LABEL[m.tipo]||m.tipo}</span></td>
@@ -16728,9 +16741,14 @@ function renderKardex() {
         ${valInv>0 ? fmtMoney(valInv) : saldo===0?'$0.00':'—'}
       </td>
       <td style="font-size:11px;color:var(--text3);max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${m.notas||''}">${m.notas||'—'}</td>
-    </tr>`;
+    </tr>`);
   });
 
+  // De más nuevo a más viejo (10/Sep/2026, a pedido explícito): se invierte
+  // solo el orden de despliegue — el cálculo de arriba corrió en ASC porque
+  // el FIFO/saldo corrido lo exige. El saldo inicial queda al final (es el
+  // punto más antiguo del período).
+  const rows = movRows.slice().reverse().join('') + openingRowHtml;
   tbody.innerHTML = rows || `<tr><td colspan="12" style="text-align:center;padding:32px;color:var(--text3)">Sin movimientos en el período seleccionado</td></tr>`;
 
   // ── Footer totals ──
@@ -16924,9 +16942,11 @@ function calcStockPorLote(productoId, bodegaId = null) {
 
 function openMovsLote(productoId, lote) {
   const prod = state.productos.find(p => p.id === productoId);
+  // De más nuevo a más viejo (10/Sep/2026, a pedido explícito) — esta lista
+  // no calcula saldo corrido, así que se puede ordenar DESC directamente.
   const movs = state.movimientos
     .filter(m => m.producto_id === productoId && m.lote === lote)
-    .sort((a,b) => (a.fecha||'').localeCompare(b.fecha||'') || (a.created_at||'').localeCompare(b.created_at||''));
+    .sort((a,b) => (b.fecha||'').localeCompare(a.fecha||'') || (b.created_at||'').localeCompare(a.created_at||''));
 
   document.getElementById('movs-lote-title').textContent = 'Lote: ' + lote;
   document.getElementById('movs-lote-sub').textContent   = (prod?.codigo_interno||prod?.code||'') + ' — ' + (prod?.description||'');
@@ -17180,6 +17200,9 @@ function openStockDetalle(productoId) {
     ajuste_positivo:'badge-green', ajuste_negativo:'badge-red'
   };
 
+  // El cálculo de saldoCorrido sigue en ASC (obligatorio para que el saldo
+  // corrido sea correcto), pero se invierte el array resultante antes de
+  // unirlo — de más nuevo a más viejo (10/Sep/2026, a pedido explícito).
   let saldoCorrido = 0;
   document.getElementById('tbl-stock-movs').innerHTML = movs.length ? movs.map(m => {
     const cant = Number(m.cantidad||0);
@@ -17196,7 +17219,7 @@ function openStockDetalle(productoId) {
       <td class="td-mono" style="text-align:right">${Number(m.costo_unitario||0)>0?fmtMoney(m.costo_unitario):'—'}</td>
       <td class="td-mono" style="text-align:right">${Number(m.costo_total||0)>0?fmtMoney(m.costo_total):'—'}</td>
     </tr>`;
-  }).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">Sin movimientos registrados</td></tr>';
+  }).reverse().join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text3)">Sin movimientos registrados</td></tr>';
 
   openModal('modal-stock-detalle');
 }
@@ -18856,16 +18879,16 @@ function imprimirFacturaOC(facturaId) {
 
 // ═══════════════════════════════════════════════════════════════════
 // DEVOLUCIONES — sección unificada (22/Ago/2026, a pedido explícito):
-// hay dos orígenes posibles de un DEV — devolución de Recepción de OC
-// (erp_oc_recepcion_items estado='devuelto') y devolución de
-// Reabastecimiento (erp_reabastecimiento_devoluciones). Ambas comparten
-// el mismo prefijo DEV-YYYY-NNNN pero son secuencias independientes (ya
-// confirmado con Oliver que no hace falta unificarlas). Esta sección los
-// junta para mostrarlos donde corresponda: OC ve ambos tipos; OP solo ve
-// los de Reabastecimiento (no existe todavía devolución de "Recepción de
-// Tela" propia); OV no tiene devoluciones todavía (no se ha construido
-// flujo de devolución de venta) — la sección se deja lista mostrando
-// "Sin devoluciones", a la espera de esa funcionalidad futura.
+// hay TRES orígenes posibles de un DEV — devolución de Recepción de OC
+// (erp_oc_recepcion_items estado='devuelto'), devolución de
+// Reabastecimiento (erp_reabastecimiento_devoluciones), y (10/Sep/2026)
+// devolución/cancelación de Despacho (erp_despacho_devoluciones). Las tres
+// comparten el mismo prefijo DEV-YYYY-NNNN pero son secuencias
+// independientes (ya confirmado con Oliver que no hace falta unificarlas).
+// Esta sección los junta para mostrarlos donde corresponda: OC ve REC+REA;
+// OP solo ve REA (no existe todavía devolución de "Recepción de Tela"
+// propia); OV ve DESPACHO (agregado 10/Sep — antes la sección quedaba
+// siempre vacía en OV, "a la espera de esa funcionalidad futura").
 // ═══════════════════════════════════════════════════════════════════
 
 // Devoluciones tipo REC (de Recepción de OC) ligadas a una OC específica.
@@ -18891,6 +18914,18 @@ function devolucionesREADe(tipoDoc, docId) {
   return numeros.map(num => {
     const rows = devs.filter(d => d.numero === num);
     return { numero: num, origen: 'REA', fecha: rows[0]?.fecha || null, rows };
+  });
+}
+
+// Devoluciones tipo DESPACHO (devolución de rollos o cancelación completa,
+// 10/Sep/2026) ligadas a una OV — vía sus erp_shipments.
+function devolucionesDespachoDeOV(ovId) {
+  const shipIds = (state.shipments||[]).filter(s => s.order_id === ovId).map(s => s.id);
+  const devs = (state.despachoDevoluciones||[]).filter(d => shipIds.includes(d.shipment_id));
+  const numeros = [...new Set(devs.map(d => d.numero))];
+  return numeros.map(num => {
+    const rows = devs.filter(d => d.numero === num);
+    return { numero: num, origen: 'DESPACHO', fecha: rows[0]?.fecha || null, rows };
   });
 }
 
@@ -18998,6 +19033,60 @@ function verDevolucion(numero) {
     return;
   }
 
+  // Si no se encontró en REA ni en REC, buscar en DESPACHO (devolución de
+  // rollos o cancelación completa de despacho, 10/Sep/2026).
+  const devDESP = (state.despachoDevoluciones||[]).filter(d => d.numero === numero);
+  if (devDESP.length) {
+    const primero = devDESP[0];
+    const ship = (state.shipments||[]).find(s => s.id === primero.shipment_id);
+    const filaInfo = devDESP.map(d => {
+      const bulto = (state.packingBultos||[]).find(b => b.id === d.bulto_id);
+      const rollo = bulto ? (state.rollos||[]).find(r => r.id === bulto.rollo_id) : null;
+      const prod  = rollo ? state.productos.find(p => p.id === rollo.producto_id) : null;
+      return { bulto, rollo, prod };
+    });
+    const totalCant = filaInfo.reduce((s,f) => s + Number(f.bulto?.peso_neto||0), 0);
+    const filas = filaInfo.map(f => `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 12px;font-size:13px">${f.prod?.description||'—'}</td>
+        <td style="padding:8px 12px;font-size:13px;font-family:'DM Mono',monospace;color:var(--accent)">${f.rollo?.numero_rollo||'—'}</td>
+        <td style="padding:8px 12px;font-size:13px;font-family:'DM Mono',monospace">${f.rollo?.lote||'—'}</td>
+        <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:13px;font-weight:600">${Number(f.bulto?.peso_neto||0).toFixed(3)} kg</td>
+      </tr>`).join('');
+
+    document.getElementById('vdev-body').innerHTML = `
+      <div style="padding:20px 24px">
+        <div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;margin-bottom:16px;background:${primero.es_cancelacion?'var(--red-bg)':'var(--surface2)'};color:${primero.es_cancelacion?'var(--red)':'var(--text2)'}">${primero.es_cancelacion?'🚫 Cancelación de Despacho':'↩️ Devolución de Rollos'} — revierte ${ship?.shipment_number||''}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+          <div style="padding:12px 16px;border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
+            <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Fecha</div>
+            <div style="font-size:14px;font-weight:500">${fmtDate(primero.fecha)}</div>
+          </div>
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+            <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Despacho</div>
+            <div style="font-size:14px;font-weight:500;font-family:'DM Mono',monospace">${ship?.shipment_number||'—'}</div>
+          </div>
+          <div style="padding:12px 16px;grid-column:1 / -1">
+            <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Motivo</div>
+            <div style="font-size:14px;font-weight:500">${primero.motivo||'—'}</div>
+          </div>
+        </div>
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Rollos Devueltos — Total: ${totalCant.toFixed(3)} kg</div>
+        <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="background:var(--surface2)">
+              <th style="padding:7px 12px;text-align:left;font-size:11px">Producto</th>
+              <th style="padding:7px 12px;text-align:left;font-size:11px">Rollo</th>
+              <th style="padding:7px 12px;text-align:left;font-size:11px">Lote</th>
+              <th style="padding:7px 12px;text-align:right;font-size:11px">Peso</th>
+            </tr></thead>
+            <tbody>${filas}</tbody>
+          </table>
+        </div>
+      </div>`;
+    openModal('modal-ver-devolucion');
+    return;
+  }
+
   toast('Devolución no encontrada','error');
 }
 
@@ -19007,7 +19096,8 @@ function verDevolucion(numero) {
 function imprimirDevolucion(numero) {
   const devREA = (state.reabastecimientoDevoluciones||[]).filter(d => d.numero === numero);
   const itemsREC = devREA.length ? [] : (state.ocRecepcionItems||[]).filter(x => x.numero_devolucion === numero && x.estado==='devuelto');
-  if (!devREA.length && !itemsREC.length) { toast('Devolución no encontrada','error'); return; }
+  const devDESP = (devREA.length || itemsREC.length) ? [] : (state.despachoDevoluciones||[]).filter(d => d.numero === numero);
+  if (!devREA.length && !itemsREC.length && !devDESP.length) { toast('Devolución no encontrada','error'); return; }
 
   let tituloOrigen, fechaDoc, refDoc, filasHtml, headerCols;
   if (devREA.length) {
@@ -19025,7 +19115,7 @@ function imprimirDevolucion(numero) {
       const r = (state.reabastecimiento||[]).find(x=>x.id===d.reabastecimiento_id);
       return `<tr><td>${r?.lote||'—'}</td><td class="num">${Number(d.cantidad||0).toFixed(3)} ${insumo?.unidad||''}</td></tr>`;
     }).join('');
-  } else {
+  } else if (itemsREC.length) {
     const primero = itemsREC[0];
     const rec = (state.ocRecepciones||[]).find(r => r.id === primero.recepcion_id);
     const oc  = state.oc.find(o => o.id === rec?.oc_id);
@@ -19038,6 +19128,21 @@ function imprimirDevolucion(numero) {
       const prod = state.productos.find(p=>p.id===x.producto_id);
       return `<tr><td>${prod?.description||''}</td><td>${x.lote||'—'}</td><td class="num">${Math.abs(Number(x.cantidad||0)).toFixed(3)} ${x.unidad||''}</td><td>${x.motivo_devolucion||'—'}</td></tr>`;
     }).join('');
+  } else {
+    // DESPACHO (devolución de rollos o cancelación completa, 10/Sep/2026)
+    const primero = devDESP[0];
+    const ship = (state.shipments||[]).find(s => s.id === primero.shipment_id);
+    tituloOrigen = `${primero.es_cancelacion?'Cancelación':'Reversa'} de Despacho ${ship?.shipment_number||''}`;
+    fechaDoc = primero.fecha;
+    refDoc = ship?.shipment_number || '—';
+    headerCols = '<th>Producto</th><th>Rollo</th><th>Lote</th><th style="text-align:right">Peso</th>';
+    filasHtml = devDESP.map(d => {
+      const bulto = (state.packingBultos||[]).find(b => b.id === d.bulto_id);
+      const rollo = bulto ? (state.rollos||[]).find(r => r.id === bulto.rollo_id) : null;
+      const prod  = rollo ? state.productos.find(p => p.id === rollo.producto_id) : null;
+      return `<tr><td>${prod?.description||''}</td><td>${rollo?.numero_rollo||'—'}</td><td>${rollo?.lote||'—'}</td><td class="num">${Number(bulto?.peso_neto||0).toFixed(3)} kg</td></tr>`;
+    }).join('');
+    if (primero.motivo) tituloOrigen += ` — Motivo: ${primero.motivo}`;
   }
 
   const win = window.open('','_blank','width=900,height=700');
@@ -23695,7 +23800,15 @@ function renderMovimientos() {
   const mes     = document.getElementById('filter-mov-mes')?.value||'';
   const bodegaId = document.getElementById('filter-mov-bodega')?.value||'';
 
-  let data = [...state.movimientos].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  // De más nuevo a más viejo (10/Sep/2026, a pedido explícito). Antes solo
+  // ordenaba por `fecha` (columna date, sin hora) — varios movimientos del
+  // mismo día (caso típico: varias líneas de un mismo despacho/recepción, o
+  // una devolución generada horas después de su despacho original) quedaban
+  // en el orden en que Supabase los devolviera, no necesariamente el más
+  // reciente primero. Se desempata por `created_at` (con hora real).
+  let data = [...state.movimientos].sort((a,b) =>
+    (b.fecha||'').localeCompare(a.fecha||'') || (b.created_at||'').localeCompare(a.created_at||'')
+  );
   data = data.filter(m =>
     (!tp       || m.tipo === tp) &&
     (!mes      || (m.fecha||'').startsWith(mes)) &&
