@@ -95,6 +95,21 @@ function getCtaIngresosProducto(productoId) {
   return cat ? state.nomenclatura.find(n => n.id === cat.cta_ingresos) : null;
 }
 
+// Cuenta de SALIDA/Costo de Venta real de un producto, según su categoría —
+// mismo criterio que las dos de arriba (10/Sep/2026, devolución de
+// Despacho). Es la cuenta que asientoMovInventario() debita al despachar
+// (mov.tipo='salida' → debe=ctaSalida); una devolución de despacho revierte
+// exactamente esa misma cuenta (Debe Inventario / Haber esta), así que la
+// reversa nunca puede usar la rama genérica de crearMovimientoConAsiento()
+// para 'entrada' (esa rama asume una RECEPCIÓN de compra — Debe Valoración
+// / Haber Entrada — no una reversa de Costo de Venta). Ver
+// procesarDevolucionDespacho() en la sección GENERAR DESPACHO.
+function getCtaSalidaProducto(productoId) {
+  const prod = state.productos.find(p => p.id === productoId);
+  const cat  = prod ? (state.categorias||[]).find(c => c.id === prod.categoria) : null;
+  return cat ? state.nomenclatura.find(n => n.id === cat.cta_salida) : null;
+}
+
 /**
  * Obtiene la cuenta de ganancia o pérdida cambiaria de la nomenclatura
  */
