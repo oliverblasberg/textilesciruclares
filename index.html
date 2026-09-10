@@ -5733,6 +5733,8 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     </div>
     <div class="modal-body" id="vdesp-body"></div>
     <div class="modal-footer">
+      <button class="btn btn-ghost" id="vdesp-devolver-btn">↩️ Devolver Rollos</button>
+      <button class="btn btn-ghost" style="color:var(--red)" id="vdesp-cancelar-btn">🚫 Cancelar Despacho</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-ver-despacho')">Cerrar</button>
     </div>
   </div>
@@ -5966,7 +5968,7 @@ function enterModule(hub) {
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
          sc, scI, oc, ocI, ocR, ocRI, plC, ocF, ocFI, pagosOC, ocA, asi, asiL, dj, bod, tc,
-         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev, ovFI, ship, clB] = await Promise.all([
+         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev, ovFI, ship, clB, despDev] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
     sb.from('erp_ov').select('*').order('order_number', {ascending:false}),
@@ -6030,6 +6032,14 @@ async function loadAll() {
     // tabla solo guarda las bodegas ADICIONALES que se agreguen a mano desde
     // la ficha del cliente. Ver CLIENTES y GENERAR DESPACHO.
     sb.from('erp_customer_bodegas').select('*').order('nombre'),
+    // DEVOLUCIONES DE DESPACHO (10/Sep/2026, a pedido explícito) — mismo
+    // patrón que erp_reabastecimiento_devoluciones: nunca se toca el bulto
+    // ni el rollo originales, solo se registra qué se devolvió y cuándo. El
+    // rollo vuelve a 'disponible' (ver procesarDevolucionDespacho) — eso es
+    // lo que determina si un bulto sigue "vigente" en el despacho, no esta
+    // tabla; esta tabla es solo para trazabilidad (número DEV, motivo, mov
+    // de reversa). Ver VER / IMPRIMIR DESPACHO.
+    sb.from('erp_despacho_devoluciones').select('*').order('created_at', {ascending:false}),
   ]);
   // Antes esto fallaba en silencio: si Supabase devolvía un error (RLS, red,
   // columna renombrada, etc.) el resultado quedaba como `[]` sin avisar a
@@ -6053,6 +6063,7 @@ async function loadAll() {
     erp_ov_factura_items:ovFI,
     erp_shipments:ship,
     erp_customer_bodegas:clB,
+    erp_despacho_devoluciones:despDev,
   };
   const _loadErrors = Object.entries(_loadResults).filter(([, r]) => r?.error);
   if (_loadErrors.length) {
@@ -6114,6 +6125,8 @@ async function loadAll() {
   // Bodegas de cliente (09/Sep/2026) — direcciones de despacho adicionales
   // por cliente, ver CLIENTES y GENERAR DESPACHO.
   state.clienteBodegas      = clB.data   || [];
+  // Devoluciones de Despacho (10/Sep/2026) — ver VER / IMPRIMIR DESPACHO.
+  state.despachoDevoluciones = despDev.data || [];
   updateTCTopbar();
   renderDashboard();
   renderClientes();
@@ -6827,12 +6840,10 @@ function renderPedidos() {
     const total      = items.reduce((s,i) => s + (Number(i.qty_kg||0) * Number(i.unit_price||0)), 0);
     const monedaOV   = getMonedaOV(p.customer_id);
 
-    // Dispatched = sum of peso_neto from all packing list bultos for this order
+    // Dispatched = sum of peso_neto from all packing list bultos for this
+    // order, neto de devoluciones (10/Sep/2026 — ver despachadoKgDeListas()).
     const orderPLs      = state.packingLists.filter(pl => pl.order_id === p.id);
-    const despachado    = orderPLs.reduce((s, pl) => {
-      const bultos = state.packingBultos.filter(b => b.packing_list_id === pl.id);
-      return s + bultos.reduce((bs, b) => bs + Number(b.peso_neto||0), 0);
-    }, 0);
+    const despachado    = despachadoKgDeListas(orderPLs);
     const pct        = totalKg > 0 ? Math.min(100, (despachado / totalKg) * 100) : 0;
     const pctRound   = Math.round(pct);
     const barColor   = pct >= 100 ? 'var(--green)' : pct >= 50 ? 'var(--accent3)' : 'var(--accent)';
@@ -6892,11 +6903,9 @@ function verPedido(id) {
   const totalKg  = items.reduce((s,i) => s + Number(i.qty_kg||0), 0);
   const total    = items.reduce((s,i) => s + (Number(i.total||0) || Number(i.qty_kg||0)*Number(i.unit_price||0)), 0);
 
+  // Neto de devoluciones (10/Sep/2026 — ver despachadoKgDeListas()).
   const orderPLs   = state.packingLists.filter(pl => pl.order_id === id);
-  const despachado = orderPLs.reduce((s, pl) => {
-    const bultos = state.packingBultos.filter(b => b.packing_list_id === pl.id);
-    return s + bultos.reduce((bs, b) => bs + Number(b.peso_neto||0), 0);
-  }, 0);
+  const despachado = despachadoKgDeListas(orderPLs);
 
   const terminosLabel = { inmediato:'Pago Inmediato', '15':'15 días', '30':'30 días', '45':'45 días', '60':'60 días' };
   const terminosText  = terminosLabel[p.terminos_pago] || p.terminos_pago || '—';
@@ -6931,17 +6940,17 @@ function verPedido(id) {
   // verDespacho), sin Editar/Eliminar, mismo criterio que facturas/DEV/REA.
   const shipmentsOV = (state.shipments||[]).filter(s => s.order_id === id);
   const despachosHtml = shipmentsOV.length ? shipmentsOV.map(ship => {
-    const pls     = state.packingLists.filter(pl => pl.shipment_id === ship.id);
-    const bultos  = pls.flatMap(pl => state.packingBultos.filter(b => b.packing_list_id === pl.id));
-    const totNeto = bultos.reduce((s,b) => s + Number(b.peso_neto||0), 0);
-    return `<tr>
-      <td class="td-mono">${ship.shipment_number}</td>
+    const pls        = state.packingLists.filter(pl => pl.shipment_id === ship.id);
+    const bultos      = pls.flatMap(pl => state.packingBultos.filter(b => b.packing_list_id === pl.id));
+    const vigentes    = bultos.filter(bultoVigente);
+    const totNeto     = despachadoKgDeListas(pls);
+    const esCancelado = ship.status === 'cancelado';
+    return `<tr${esCancelado?' style="opacity:0.6"':''}>
+      <td class="td-mono" style="color:var(--accent);cursor:pointer;text-decoration:underline" onclick="closeModal('modal-ver-pedido');verDespacho('${ship.id}')">${ship.shipment_number}</td>
       <td>${fmtDate(ship.date)}</td>
-      <td>${bultos.length}</td>
+      <td>${vigentes.length}${vigentes.length!==bultos.length?` <span style="color:var(--text3);font-size:11px">de ${bultos.length}</span>`:''}</td>
       <td class="td-mono">${totNeto.toFixed(2)} kg</td>
-      <td><div class="td-actions">
-        <button class="btn btn-sm btn-ghost" onclick="closeModal('modal-ver-pedido');verDespacho('${ship.id}')">👁️ Ver</button>
-      </div></td>
+      <td>${esCancelado ? `<span class="badge badge-red">Cancelado</span>` : (vigentes.length!==bultos.length ? `<span class="badge badge-yellow">Con devoluciones</span>` : '')}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:12px">Sin despachos</td></tr>`;
 
@@ -7473,6 +7482,21 @@ async function nextDespachoNum() {
   return `DES-${year}-${String(next).padStart(4,'0')}`;
 }
 
+// DEV-YYYY-NNNN para devoluciones de Despacho (10/Sep/2026) — secuencia
+// PROPIA, independiente de las DEV- de Recepción de OC y de Reabastecimiento
+// (mismo criterio ya confirmado con Oliver el 22/Ago para esas dos: "no hace
+// falta unificarlas", ver el comentario de la sección DEVOLUCIONES más abajo
+// en este archivo). Se escanea erp_despacho_devoluciones.numero directo —
+// esta tabla es nueva y solo la escribe este flujo, así que no hay ninguna
+// columna "legacy" de la que depender como sí ocurre con REA.
+async function nextDevolucionDespachoNum() {
+  const year = new Date().getFullYear();
+  const { data } = await sb.from('erp_despacho_devoluciones').select('numero').ilike('numero', `DEV-${year}-%`);
+  const nums = (data||[]).map(r => parseInt((r.numero||'').slice(-4))||0);
+  const next = (nums.length ? Math.max(...nums) : 0) + 1;
+  return `DEV-${year}-${String(next).padStart(4,'0')}`;
+}
+
 function rollosDisponiblesParaOV(ovId) {
   const p = state.pedidos.find(x => x.id === ovId);
   if (!p || !p.bodega_id) return [];
@@ -7808,6 +7832,33 @@ async function reabrirDespacho(ovId) {
 // siguen leyéndola tal cual) pero ya no es un objeto que el usuario vea o
 // gestione por separado — es el detalle interno de un Despacho. Documento
 // inmutable: solo Ver/Imprimir, nunca Editar/Eliminar.
+// Un bulto deja de contar como "despachado" una vez que su rollo fue
+// devuelto (ver DEVOLUCIÓN DE DESPACHO más abajo, 10/Sep/2026) — el bulto en
+// sí NUNCA se borra ni se edita (documento inmutable, mismo criterio que
+// facturas/DEV/REA), así que la única forma de saber si sigue "afuera" es
+// mirar el estado ACTUAL de su rollo, no una bandera propia del bulto. Sin
+// rollo_id (despachos de antes del 09/Sep, cuando se conectó esa FK) se
+// asume vigente, para no alterar el comportamiento de datos viejos que
+// nunca podrán devolverse por este flujo.
+function bultoVigente(b) {
+  if (!b.rollo_id) return true;
+  const rollo = (state.rollos||[]).find(r => r.id === b.rollo_id);
+  return !rollo || rollo.estado === 'despachado';
+}
+
+// Suma de peso_neto de una lista de Listas de Empaque, EXCLUYENDO los
+// bultos cuyo rollo ya fue devuelto — única fuente de verdad para "cuánto
+// sigue despachado" (10/Sep/2026). Antes este mismo cálculo estaba
+// duplicado sin el filtro en renderPedidos(), verPedido(), syncOrderStatus()
+// y ovDespachadoQty() — cualquiera de los cuatro habría seguido contando un
+// rollo devuelto como despachado para siempre, dejando el pendiente de la
+// línea y el estado de la OV descuadrados frente a la devolución.
+function despachadoKgDeListas(pls) {
+  return pls.reduce((s, pl) => s + state.packingBultos
+    .filter(b => b.packing_list_id === pl.id && bultoVigente(b))
+    .reduce((bs, b) => bs + Number(b.peso_neto||0), 0), 0);
+}
+
 function despachoLineas(shipmentId) {
   return state.packingLists.filter(pl => pl.shipment_id === shipmentId).map(pl => {
     const bultos = state.packingBultos.filter(b => b.packing_list_id === pl.id)
@@ -7833,8 +7884,7 @@ function verDespacho(shipmentId) {
   const clt = p ? state.clientes.find(c => c.id === p.customer_id) : null;
   const lineas    = despachoLineas(shipmentId);
   const primeraPL = state.packingLists.find(pl => pl.shipment_id === shipmentId);
-  const totRollos = lineas.reduce((s,l) => s + l.bultos.length, 0);
-  const totPeso   = lineas.reduce((s,l) => s + l.totNeto, 0);
+  const cancelado = ship.status === 'cancelado';
 
   document.getElementById('vdesp-title').textContent = ship.shipment_number;
 
@@ -7844,8 +7894,36 @@ function verDespacho(shipmentId) {
       <div style="font-size:13px${mono?";font-family:'DM Mono',monospace":''}">${val||'—'}</div>
     </div>`;
 
-  const seccionesHtml = lineas.length ? lineas.map(l => `
-    <div style="margin-bottom:18px">
+  // Filas INTERACTIVAS (10/Sep/2026) — deliberadamente separadas de
+  // despachoLineas().rowsHtml, que sigue intacta y es la que usa
+  // imprimirDespacho() ("imprimir el reporte como ya está", a pedido
+  // explícito — cero cambios en esa función). Acá cada rollo vigente
+  // (bultoVigente()) lleva un checkbox de devolución; uno ya devuelto
+  // muestra el número DEV que lo devolvió, en vez del checkbox.
+  let totRollosVigentes = 0, totPesoVigente = 0, totRollosDevueltos = 0;
+  const seccionesHtml = lineas.length ? lineas.map(l => {
+    const filas = l.bultos.map(b => {
+      const rollo   = (state.rollos||[]).find(r => r.id === b.rollo_id);
+      const vigente = bultoVigente(b);
+      const peso    = Number(b.peso_neto||0);
+      if (vigente) { totRollosVigentes++; totPesoVigente += peso; } else { totRollosDevueltos++; }
+      const accionCell = vigente
+        ? `<input type="checkbox" class="desp-dev-check" data-bulto-id="${b.id}" data-peso="${peso}" style="width:15px;height:15px;accent-color:var(--red)"/>`
+        : (() => {
+            const dev = (state.despachoDevoluciones||[]).find(d => d.bulto_id === b.id);
+            return `<span style="font-size:10px;color:var(--red);font-weight:600" title="${(dev?.motivo||'').replace(/"/g,'&quot;')}">↩️ ${dev?.numero||'Devuelto'}</span>`;
+          })();
+      return `<tr${!vigente?' style="opacity:0.55"':''}>
+        <td class="td-mono">${rollo?.numero_rollo||'—'}</td>
+        <td class="td-mono" style="font-size:12px">${rollo?.lote||'—'}</td>
+        <td class="td-mono" style="text-align:right">${peso.toFixed(3)} kg</td>
+        ${cancelado ? '' : `<td style="text-align:center">${accionCell}</td>`}
+      </tr>`;
+    }).join('');
+    const vigentesLinea  = l.bultos.filter(bultoVigente);
+    const totLineaVig    = vigentesLinea.reduce((s,b)=>s+Number(b.peso_neto||0),0);
+    const devueltosLinea = l.bultos.length - vigentesLinea.length;
+    return `<div style="margin-bottom:18px">
       <div style="font-size:12px;font-weight:700;margin-bottom:8px">
         ${l.prod?.description||'—'} <span style="color:var(--text3);font-weight:400;font-family:'DM Mono',monospace">${l.prod?.codigo_interno||l.prod?.code||''}</span>
       </div>
@@ -7855,17 +7933,25 @@ function verDespacho(shipmentId) {
             <th style="padding:7px 12px;text-align:left;font-size:11px">No. Rollo</th>
             <th style="padding:7px 12px;text-align:left;font-size:11px">Lote</th>
             <th style="padding:7px 12px;text-align:right;font-size:11px">Peso</th>
+            ${cancelado ? '' : `<th style="padding:7px 12px;text-align:center;font-size:11px">Devolver</th>`}
           </tr></thead>
-          <tbody>${l.rowsHtml || `<tr><td colspan="3" style="text-align:center;color:var(--text3);padding:12px">Sin rollos</td></tr>`}</tbody>
+          <tbody>${filas || `<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:12px">Sin rollos</td></tr>`}</tbody>
           <tfoot><tr style="background:var(--surface2);font-weight:600">
-            <td style="padding:7px 12px" colspan="2">${l.bultos.length} rollo(s)</td>
-            <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${l.totNeto.toFixed(3)} kg</td>
+            <td style="padding:7px 12px" colspan="2">${vigentesLinea.length} rollo(s) vigente(s)${devueltosLinea?` · ${devueltosLinea} devuelto(s)`:''}</td>
+            <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace">${totLineaVig.toFixed(3)} kg</td>
+            ${cancelado ? '' : '<td></td>'}
           </tr></tfoot>
         </table>
       </div>
-    </div>`).join('') : `<div style="text-align:center;color:var(--text3);padding:20px">Sin listas de empaque</div>`;
+    </div>`;
+  }).join('') : `<div style="text-align:center;color:var(--text3);padding:20px">Sin listas de empaque</div>`;
+
+  const bannerCancelado = cancelado
+    ? `<div style="padding:10px 16px;border-radius:8px;text-align:center;font-weight:700;font-size:13px;letter-spacing:0.03em;margin-bottom:16px;background:#DC2626;color:#fff">🚫 Despacho Cancelado</div>`
+    : '';
 
   document.getElementById('vdesp-body').innerHTML = `
+    ${bannerCancelado}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
       ${infoCell('Orden de Venta', p ? ovLabel(p) : '—', true)}
       ${infoCell('Cliente', clt?.name)}
@@ -7876,12 +7962,21 @@ function verDespacho(shipmentId) {
     </div>
     ${seccionesHtml}
     <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border:1px solid var(--border);border-radius:8px;font-weight:700;background:var(--surface2)">
-      <span>Total Despacho — ${totRollos} rollo(s)</span>
-      <span style="font-family:'DM Mono',monospace;font-size:16px">${totPeso.toFixed(3)} kg</span>
+      <span>Total Despacho — ${totRollosVigentes} rollo(s)${totRollosDevueltos?` (${totRollosDevueltos} devuelto(s), no incluido(s))`:''}</span>
+      <span style="font-family:'DM Mono',monospace;font-size:16px">${totPesoVigente.toFixed(3)} kg</span>
     </div>
   `;
 
   document.getElementById('vdesp-print-btn').onclick = () => imprimirDespacho(shipmentId);
+
+  // Botones de Devolver/Cancelar (10/Sep/2026) — ocultos si el despacho ya
+  // está cancelado (nada que revertir), y "Devolver" además oculto si ya no
+  // queda ningún rollo vigente (todos se devolvieron uno por uno).
+  const btnDev = document.getElementById('vdesp-devolver-btn');
+  const btnCan = document.getElementById('vdesp-cancelar-btn');
+  if (btnDev) { btnDev.style.display = (cancelado || !totRollosVigentes) ? 'none' : ''; btnDev.onclick = () => devolverDespachoSeleccionados(shipmentId); }
+  if (btnCan) { btnCan.style.display = cancelado ? 'none' : ''; btnCan.onclick = () => cancelarDespachoCompleto(shipmentId); }
+
   openModal('modal-ver-despacho');
 }
 
@@ -7991,6 +8086,234 @@ ${seccionesHtml}
   const win = window.open('','_blank','width=800,height=600');
   win.document.write(html);
   win.document.close();
+}
+
+// ═══ DEVOLUCIÓN Y CANCELACIÓN DE DESPACHO ═══
+// (10/Sep/2026, a pedido explícito: "Dentro de este modal debemos poder...
+// hacer devoluciones de los rollos como los tenemos en el REA... cancelar el
+// despacho completo. esto revierte toda la operacion.") Mismo espíritu que
+// devolverReabastecimiento() (21/Ago) y saveDevolucion() de Recepción de OC
+// (22/Ago): el Despacho original NUNCA se toca — ni el header (erp_shipments,
+// salvo el campo status), ni sus Listas de Empaque ni sus bultos. Una
+// devolución es un documento de REVERSO nuevo (DEV-YYYY-NNNN) que:
+//   1. Genera el movimiento de Kardex inverso (entrada) por cada rollo.
+//   2. Libera el rollo (estado → 'disponible') — vuelve a aparecer como
+//      stock normal, elegible para un despacho nuevo, sin marca especial.
+//   3. Revierte el asiento de Costo de Venta de ESE rollo específico, con la
+//      cuenta y el costo unitario EXACTOS con los que se posteó (nunca se
+//      recalcula al FIFO de hoy — el Costo de Venta ya contabilizado fue el
+//      de ese momento).
+//   4. Registra la devolución en erp_despacho_devoluciones para trazabilidad
+//      (nunca se edita erp_packing_bultos para marcarlo "devuelto").
+// bultoVigente()/despachadoKgDeListas() (junto a despachoLineas(), arriba)
+// son lo que hace que el resto del sistema (pendiente por línea, tolerancia
+// del 3%, status de la OV) reaccione solo ante esto — no hace falta tocar
+// nada de eso acá.
+//
+// "Cancelar Despacho completo" reutiliza EXACTAMENTE este mismo mecanismo
+// para TODOS los rollos que sigan vigentes en el despacho (si ya se habían
+// devuelto algunos a mano, esos se saltan — no hay nada que revertir dos
+// veces) y además marca erp_shipments.status='cancelado', para que el
+// despacho quede claramente identificado como sin efecto — sigue existiendo
+// y pudiéndose Ver/Imprimir (nunca se borra, mismo criterio de todo el
+// sistema), pero ya no admite más devoluciones ni se puede "cancelar" de
+// nuevo.
+
+// Resuelve, para un bulto ya despachado, el movimiento de Kardex ORIGINAL de
+// salida de su rollo dentro de ESTE despacho — es de ahí de donde sale el
+// costo_unitario exacto a revertir. Se matchea por notas (formato fijo desde
+// confirmarGenerarDespacho(): "...— rollo <numero_rollo>"), no solo por
+// referencia_id, porque un despacho con varios rollos del mismo producto/
+// lote tiene varios movimientos con el mismo referencia_id.
+function movimientoOrigenDespacho(shipmentNumber, rollo) {
+  return (state.movimientos||[]).find(m =>
+    m.referencia_tipo === 'DESPACHO' && m.referencia_id === shipmentNumber &&
+    m.notas && m.notas.includes(rollo.numero_rollo));
+}
+
+// Motor común de reversa — usado tanto por "↩️ Devolver Seleccionados" como
+// por "🚫 Cancelar Despacho". Valida TODO antes de escribir nada (mismo
+// principio que confirmarGenerarDespacho con la tolerancia): si el
+// movimiento original de cualquier rollo seleccionado no se encuentra, se
+// aborta sin tocar la base — nunca se procesa "lo que sí se pudo" a medias.
+// Devuelve {numeroDev, totalKg, totalCosto} o null si no se procesó nada.
+async function procesarDevolucionDespacho(shipmentId, bultoIds, motivo, esCancelacion = false) {
+  const ship = (state.shipments||[]).find(s => s.id === shipmentId);
+  if (!ship || !bultoIds.length) return null;
+
+  const bultos = state.packingBultos.filter(b => bultoIds.includes(b.id));
+  const resueltos = [];
+  for (const b of bultos) {
+    const rollo = (state.rollos||[]).find(r => r.id === b.rollo_id);
+    if (!rollo) {
+      alert(`No se encontró el rollo del bulto #${b.bulto_number} — no se procesó ninguna devolución.`);
+      return null;
+    }
+    const movOrig = movimientoOrigenDespacho(ship.shipment_number, rollo);
+    if (!movOrig) {
+      alert(
+        `No se encontró el movimiento de Kardex original del rollo ${rollo.numero_rollo} en el despacho ${ship.shipment_number} — no se puede determinar el costo a revertir, así que no se procesó ninguna devolución de esta acción.\n\n` +
+        `Esto puede pasar si el despacho es de antes del 08/Sep/2026 (cuando se corrigió el bug que no posteaba Costo de Venta al despachar — ver checklist). En ese caso, revertí el stock a mano con un Ajuste de Inventario.`
+      );
+      return null;
+    }
+    resueltos.push({ bulto: b, rollo, movOrig });
+  }
+
+  const numeroDev = await nextDevolucionDespachoNum();
+  const fechaDev  = today();
+  let totalCosto  = 0;
+  let totalKg     = 0;
+
+  for (const { bulto, rollo, movOrig } of resueltos) {
+    const cantidad  = Number(rollo.peso_kg||0);
+    const costoUnit = Number(movOrig.costo_unitario||0);
+
+    // Kardex — entrada simple, SIN el asiento automático de
+    // crearMovimientoConAsiento(): su rama genérica para tipo:'entrada'
+    // asume una recepción de compra (Debe Valoración / Haber Entrada), no
+    // una reversa de Costo de Venta. El asiento correcto se postea a mano
+    // justo abajo, cuenta por cuenta, con getCtaValoracionProducto() /
+    // getCtaSalidaProducto() — mismo criterio del proyecto de nunca
+    // hardcodear cuentas.
+    const movId = await crearMovimiento({
+      tipo: 'entrada', producto_id: rollo.producto_id, cantidad, costo_unitario: costoUnit,
+      referencia_tipo: 'DEVOLUCION_DESPACHO', referencia_id: numeroDev,
+      notas: `Devolución ${numeroDev} — despacho ${ship.shipment_number} — rollo ${rollo.numero_rollo} — motivo: ${motivo}`,
+      fecha: fechaDev, bodega_id: rollo.bodega_id, lote: rollo.lote,
+    });
+    if (!movId) {
+      toast(`Error generando el movimiento de devolución del rollo ${rollo.numero_rollo} — se detiene la operación. Revisá qué ya se alcanzó a procesar antes de reintentar.`, 'error');
+      return null;
+    }
+    totalCosto += cantidad * costoUnit;
+    totalKg    += cantidad;
+
+    const { error: rErr } = await sb.from('erp_rollos').update({ estado: 'disponible' }).eq('id', rollo.id);
+    if (rErr) console.error('procesarDevolucionDespacho: error liberando rollo:', rErr.message);
+
+    const { error: dErr } = await sb.from('erp_despacho_devoluciones').insert({
+      bulto_id: bulto.id, shipment_id: shipmentId, numero: numeroDev, fecha: fechaDev,
+      motivo, mov_id: movId, es_cancelacion: esCancelacion,
+    });
+    if (dErr) console.error('procesarDevolucionDespacho: error insertando devolución:', dErr.message);
+
+    // Reversa exacta del Costo de Venta de ESTE rollo: Debe Inventario
+    // (getCtaValoracionProducto) / Haber Costo de Venta (getCtaSalidaProducto)
+    // — el espejo inverso de lo que posteó asientoMovInventario() al
+    // despachar. Un asiento por rollo, igual que el despacho original (que
+    // también postea uno por rollo dentro de su propio bucle) — así cada
+    // rollo queda con las cuentas correctas de SU producto, sin asumir que
+    // todos los rollos seleccionados comparten producto/categoría.
+    if (cantidad * costoUnit > 0) {
+      const ctaInv    = getCtaValoracionProducto(rollo.producto_id);
+      const ctaVenta  = getCtaSalidaProducto(rollo.producto_id);
+      const ctaNom    = id => state.nomenclatura.find(n => n.id === id);
+      await crearAsiento({
+        diario: 'INVENTARIO', fecha: fechaDev,
+        descripcion: `Devolución ${numeroDev} — ${esCancelacion?'cancelación de':'reversa de'} despacho ${ship.shipment_number} — rollo ${rollo.numero_rollo}`,
+        referencia: numeroDev, referencia_id: shipmentId,
+        moneda: 'GTQ', tipo_cambio: 1,
+        lineas: [
+          { cuenta_id: ctaInv?.id||null,   cuenta_codigo: ctaNom(ctaInv?.id)?.codigo||'',   cuenta_nombre: ctaInv?.nombre||'Inventario',       debe: cantidad*costoUnit, haber: 0, descripcion: `Entrada — devolución ${numeroDev} — ${rollo.numero_rollo}` },
+          { cuenta_id: ctaVenta?.id||null, cuenta_codigo: ctaNom(ctaVenta?.id)?.codigo||'', cuenta_nombre: ctaVenta?.nombre||'Costo de Venta', debe: 0, haber: cantidad*costoUnit, descripcion: `Reversa Costo de Venta — devolución ${numeroDev} — ${rollo.numero_rollo}` },
+        ],
+      });
+    }
+  }
+
+  return { numeroDev, totalKg, totalCosto, rollos: resueltos.length };
+}
+
+// Botón "↩️ Devolver Seleccionados" del visor (dentro de modal-ver-despacho).
+async function devolverDespachoSeleccionados(shipmentId) {
+  const checks = [...document.querySelectorAll('.desp-dev-check:checked')];
+  if (!checks.length) { toast('Selecciona al menos un rollo para devolver', 'error'); return; }
+
+  const totKg = checks.reduce((s,c) => s + Number(c.dataset.peso||0), 0);
+  if (!confirm(`¿Devolver ${checks.length} rollo(s) (${totKg.toFixed(3)} kg) a inventario? Esto revertirá el Costo de Venta correspondiente. Esta acción no se puede deshacer.`)) return;
+  const motivo = prompt('Motivo de la devolución (obligatorio):');
+  if (!motivo || !motivo.trim()) { toast('Se requiere un motivo para devolver rollos — devolución cancelada.', 'error'); return; }
+
+  const bultoIds = checks.map(c => c.dataset.bultoId);
+  const res = await procesarDevolucionDespacho(shipmentId, bultoIds, motivo.trim(), false);
+  if (!res) return;
+
+  logAuditoria('ventas', 'devolver', 'Despacho', shipmentId, (state.shipments||[]).find(s=>s.id===shipmentId)?.shipment_number, { numero: res.numeroDev, rollos: res.rollos, kg: res.totalKg, motivo: motivo.trim() });
+
+  // loadAll() ANTES de reabrir/recalcular status: bultoVigente() decide
+  // mirando state.rollos, que hasta este punto sigue con el estado viejo
+  // ('despachado') porque procesarDevolucionDespacho() solo escribió en la
+  // base, nunca en el state local. Sin este refresh, syncOrderStatus()
+  // (dentro de reabrirDespachoSiHaciaFalta) recalcularía con datos
+  // desactualizados y no bajaría el status aunque correspondiera.
+  await loadAll();
+  await reabrirDespachoSiHaciaFalta(shipmentId, 'reabierto_por_devolucion_despacho');
+  await loadAll();
+
+  toast(`✓ Devolución ${res.numeroDev} registrada — ${res.rollos} rollo(s), ${res.totalKg.toFixed(3)} kg`);
+  verDespacho(shipmentId);
+}
+
+// Botón "🚫 Cancelar Despacho" del visor — revierte TODO lo que siga
+// vigente en el despacho (si ya se habían devuelto algunos rollos a mano,
+// se saltan) y marca el despacho como 'cancelado'.
+async function cancelarDespachoCompleto(shipmentId) {
+  const ship = (state.shipments||[]).find(s => s.id === shipmentId);
+  if (!ship) return;
+  if (ship.status === 'cancelado') { toast('Este despacho ya está cancelado', 'error'); return; }
+
+  const bultosVigentes = state.packingBultos.filter(b => {
+    const pl = state.packingLists.find(x => x.id === b.packing_list_id);
+    return pl?.shipment_id === shipmentId && bultoVigente(b);
+  });
+
+  if (bultosVigentes.length) {
+    const totKg = bultosVigentes.reduce((s,b) => s + Number(b.peso_neto||0), 0);
+    if (!confirm(`¿Cancelar el despacho ${ship.shipment_number} por completo? Esto devolverá ${bultosVigentes.length} rollo(s) (${totKg.toFixed(3)} kg) a inventario y revertirá el Costo de Venta correspondiente. Esta acción no se puede deshacer.`)) return;
+  } else {
+    if (!confirm(`Este despacho ya no tiene rollos pendientes de devolver (se devolvieron todos individualmente). ¿Marcarlo como CANCELADO de todas formas?`)) return;
+  }
+  const motivo = prompt('Motivo de la cancelación del despacho (obligatorio):');
+  if (!motivo || !motivo.trim()) { toast('Se requiere un motivo para cancelar el despacho — cancelación abortada.', 'error'); return; }
+
+  let res = { numeroDev: null, totalKg: 0, rollos: 0 };
+  if (bultosVigentes.length) {
+    res = await procesarDevolucionDespacho(shipmentId, bultosVigentes.map(b=>b.id), motivo.trim(), true);
+    if (!res) return; // procesarDevolucionDespacho ya avisó por qué — no se tocó nada
+  }
+
+  const { error: sErr } = await sb.from('erp_shipments').update({ status: 'cancelado' }).eq('id', shipmentId);
+  if (sErr) { toast('Error marcando el despacho como cancelado: '+sErr.message, 'error'); return; }
+
+  logAuditoria('ventas', 'cancelar', 'Despacho', shipmentId, ship.shipment_number, { motivo: motivo.trim(), rollos_revertidos: res.rollos, kg: res.totalKg, numero_devolucion: res.numeroDev });
+
+  // Mismo motivo que en devolverDespachoSeleccionados: refrescar state antes
+  // de recalcular el status de la OV, para que vea los rollos ya liberados.
+  await loadAll();
+  await reabrirDespachoSiHaciaFalta(shipmentId, 'reabierto_por_cancelacion_despacho');
+  await loadAll();
+
+  toast(`Despacho ${ship.shipment_number} cancelado` + (res.rollos ? ` — ${res.rollos} rollo(s) regresados a inventario` : ''));
+  closeModal('modal-ver-despacho');
+  verPedido(ship.order_id);
+}
+
+// Una devolución o cancelación de Despacho siempre deja MENOS despachado
+// que antes — si la OV estaba cerrada aceptando un faltante
+// (erp_ov.despacho_cerrado), ese faltante ya no es válido: ahora hay más
+// pendiente todavía, así que se reabre sola. Mismo criterio que
+// saveDevolucion() aplica siempre al reabrir la OC de compras (22/Ago) —
+// "una devolución significa que salió producto: la orden queda
+// desabastecida y hay que poder seguir operando sobre ella".
+async function reabrirDespachoSiHaciaFalta(shipmentId, motivo) {
+  const ship = (state.shipments||[]).find(s => s.id === shipmentId);
+  const p    = ship ? state.pedidos.find(x => x.id === ship.order_id) : null;
+  if (!p?.despacho_cerrado) { if (p) await syncOrderStatus(p.id); return; }
+  await sb.from('erp_ov').update({ despacho_cerrado: false }).eq('id', p.id);
+  logAuditoria('ventas', 'reabrir', 'OV', p.id, ovLabel(p), { motivo });
+  await loadAll();
+  await syncOrderStatus(p.id);
 }
 
 // El dropdown de la Orden de Venta debe mostrar el catálogo real de productos
@@ -8524,11 +8847,12 @@ function totalPagado(facturaId) {
 // cálculo que ya usa syncOrderStatus() para el total de la orden, aquí
 // desglosado por producto para poder validar línea por línea.
 function ovDespachadoQty(ovId, productoId) {
-  return state.packingLists
-    .filter(pl => pl.order_id === ovId && pl.fabric_id === productoId)
-    .reduce((s, pl) => s + state.packingBultos
-      .filter(b => b.packing_list_id === pl.id)
-      .reduce((bs, b) => bs + Number(b.peso_neto||0), 0), 0);
+  // (10/Sep/2026) despachadoKgDeListas() ya excluye los bultos cuyo rollo
+  // fue devuelto — ver esa función, junto a despachoLineas(), para el
+  // porqué. Antes este reduce estaba escrito acá mismo sin ese filtro.
+  return despachadoKgDeListas(
+    state.packingLists.filter(pl => pl.order_id === ovId && pl.fabric_id === productoId)
+  );
 }
 
 // Cantidad ya facturada de un producto en una OV, sumando TODAS sus facturas
@@ -9716,12 +10040,12 @@ async function syncOrderStatus(order_id) {
     .filter(i => i.order_id === order_id)
     .reduce((s,i) => s + Number(i.qty_kg||0), 0);
 
-  // Total kg dispatched (sum of peso_neto across all packing list bultos)
-  const despachado = allPLs.reduce((s, pl) => {
-    return s + state.packingBultos
-      .filter(b => b.packing_list_id === pl.id)
-      .reduce((bs, b) => bs + Number(b.peso_neto||0), 0);
-  }, 0);
+  // Total kg dispatched (sum of peso_neto across all packing list bultos),
+  // neto de devoluciones (10/Sep/2026 — ver despachadoKgDeListas()): sin
+  // esto, cancelar o devolver un despacho nunca hacía retroceder el status
+  // de la OV (una OV "Terminada" por un despacho luego cancelado se hubiera
+  // quedado "Terminada" para siempre).
+  const despachado = despachadoKgDeListas(allPLs);
 
   // ¿Ya se facturó todo lo despachado? (08/Sep/2026)
   // Antes esto comparaba packing_list_ids contra las facturas — cada factura
