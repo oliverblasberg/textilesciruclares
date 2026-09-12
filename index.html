@@ -808,6 +808,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div class="sidebar-section-label">4. Contabilidad</div>
       <div class="nav-item" onclick="showPage('diario-general',this)">Diario Mayor General</div>
       <div class="nav-item" onclick="showPage('compras',this)">Libro de Compras</div>
+      <div class="nav-item" onclick="showPage('notas-credito',this)">Notas de Crédito</div>
       <div class="nav-item" onclick="showPage('facturas',this)">Libro de Ventas</div>
       <div class="nav-item" onclick="showPage('pagos',this)">Pagos</div>
       <div class="nav-item" onclick="showPage('estado-resultados',this)">Estado de Resultados</div>
@@ -1204,6 +1205,11 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <div class="sub-module-icon">🗂️</div>
             <div class="sub-module-name">Libro de Compras</div>
             <div class="sub-module-desc">Registro de facturas de proveedores</div>
+          </div>
+          <div class="sub-module-card" onclick="showPage('notas-credito',null)">
+            <div class="sub-module-icon">📄</div>
+            <div class="sub-module-name">Notas de Crédito</div>
+            <div class="sub-module-desc">Devoluciones post-facturación pendientes/aplicadas</div>
           </div>
           <div class="sub-module-card" onclick="showPage('facturas',null)">
             <div class="sub-module-icon">🧾</div>
@@ -1648,6 +1654,36 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
               </thead>
               <tbody id="tbl-compras"></tbody>
               <tfoot id="tfoot-compras"></tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- NOTAS DE CRÉDITO DE PROVEEDOR (12/Sep/2026) — devoluciones
+           post-facturación pendientes/confirmadas/aplicadas. Ver
+           renderNotasCredito(), openConfirmarNC(), aplicarNotaCredito() en
+           compras.js — sección COMPRAS — NOTAS DE CRÉDITO. -->
+      <div class="page" id="page-notas-credito">
+        <div class="filters-row">
+          <div class="search-box">
+            <span class="search-icon">⌕</span>
+            <input type="text" id="search-notas-credito" placeholder="Buscar por número, proveedor o devolución..." oninput="renderNotasCredito()"/>
+          </div>
+        </div>
+        <div class="card">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>No. NC</th>
+                  <th>Proveedor</th>
+                  <th>Devolución</th>
+                  <th style="text-align:right">Monto GTQ</th>
+                  <th>Estado</th>
+                  <th style="text-align:right">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="tbl-notas-credito"></tbody>
             </table>
           </div>
         </div>
@@ -3314,6 +3350,13 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
         <div id="pago-sinaplicar-list"></div>
       </div>
 
+      <!-- Notas de Crédito confirmadas y sin aplicar de este proveedor
+           (12/Sep/2026) — mismo lugar y espíritu que los anticipos de arriba. -->
+      <div id="nc-sinaplicar-wrap" style="margin-bottom:16px;display:none">
+        <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">📄 Notas de Crédito disponibles de este proveedor</div>
+        <div id="nc-sinaplicar-list"></div>
+      </div>
+
       <!-- Historial de pagos anteriores -->
       <div id="pago-historial-wrap" style="margin-bottom:16px;display:none">
         <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Pagos anteriores</div>
@@ -4372,6 +4415,45 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   </div>
 </div>
 
+<!-- CONFIRMAR NOTA DE CRÉDITO (12/Sep/2026) — llega el documento físico del
+     proveedor; se ingresa el monto real y (si USD) su TC. Ver
+     openConfirmarNC()/saveConfirmarNC() en compras.js. -->
+<div class="modal-overlay" id="modal-confirmar-nc">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <div class="modal-title">Confirmar Nota de Crédito</div>
+      <button class="modal-close" onclick="closeModal('modal-confirmar-nc')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="cnc-id"/>
+      <div class="field field-full" style="margin-bottom:14px">
+        <div id="cnc-info" style="padding:8px 10px;background:var(--surface2);border-radius:6px;font-size:12px"></div>
+      </div>
+      <div class="form-grid form-grid-2">
+        <div class="field field-full">
+          <label>No. de NC del Proveedor (documento formal) *</label>
+          <input type="text" id="cnc-documento" placeholder="Ej. NC-4521"/>
+        </div>
+        <div class="field">
+          <label>Monto Real (<span id="cnc-moneda">GTQ</span>) *</label>
+          <input type="number" id="cnc-monto" step="0.01" min="0.01" style="font-family:'DM Mono',monospace;font-weight:600;color:var(--accent)"/>
+        </div>
+        <div class="field">
+          <label>Fecha *</label>
+          <input type="date" id="cnc-fecha"/>
+        </div>
+        <div class="field" id="cnc-tc-wrap" style="display:none">
+          <label>Tipo de Cambio</label>
+          <input type="number" id="cnc-tc" step="0.0001"/>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="saveConfirmarNC()">Confirmar NC</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-confirmar-nc')">Cancelar</button>
+    </div>
+  </div>
+</div>
 
 <div class="modal-overlay" id="modal-factura-oc">
   <div class="modal modal-lg" style="max-width:860px;width:95vw">
@@ -5621,6 +5703,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     </div>
     <div class="modal-body" id="vrec-body"></div>
     <div class="modal-footer">
+      <button class="btn btn-primary" onclick="editarRecepcionDesdeVista()">✏️ Editar</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-ver-recepcion')">Cerrar</button>
     </div>
   </div>
@@ -5969,7 +6052,7 @@ function enterModule(hub) {
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
          sc, scI, oc, ocI, ocR, ocRI, plC, ocF, ocFI, pagosOC, ocA, asi, asiL, dj, bod, tc,
-         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev, ovFI, ship, clB, despDev] = await Promise.all([
+         rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev, ovFI, ship, clB, despDev, ncOC] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
     sb.from('erp_ov').select('*').order('order_number', {ascending:false}),
@@ -6041,6 +6124,11 @@ async function loadAll() {
     // tabla; esta tabla es solo para trazabilidad (número DEV, motivo, mov
     // de reversa). Ver VER / IMPRIMIR DESPACHO.
     sb.from('erp_despacho_devoluciones').select('*').order('created_at', {ascending:false}),
+    // NOTAS DE CRÉDITO DE PROVEEDOR (12/Sep/2026, a pedido explícito) —
+    // devoluciones post-facturación que requieren NC formal del proveedor
+    // para presentar a la SAT. Ver COMPRAS — DEVOLUCIONES en compras.js
+    // (saveDevolucion, confirmarNotaCredito, aplicarNotaCredito).
+    sb.from('erp_oc_notas_credito').select('*').order('created_at', {ascending:false}),
   ]);
   // Antes esto fallaba en silencio: si Supabase devolvía un error (RLS, red,
   // columna renombrada, etc.) el resultado quedaba como `[]` sin avisar a
@@ -6065,6 +6153,7 @@ async function loadAll() {
     erp_shipments:ship,
     erp_customer_bodegas:clB,
     erp_despacho_devoluciones:despDev,
+    erp_oc_notas_credito:ncOC,
   };
   const _loadErrors = Object.entries(_loadResults).filter(([, r]) => r?.error);
   if (_loadErrors.length) {
@@ -6128,6 +6217,8 @@ async function loadAll() {
   state.clienteBodegas      = clB.data   || [];
   // Devoluciones de Despacho (10/Sep/2026) — ver VER / IMPRIMIR DESPACHO.
   state.despachoDevoluciones = despDev.data || [];
+  // Notas de Crédito de proveedor (12/Sep/2026) — ver COMPRAS — DEVOLUCIONES.
+  state.notasCreditoOC      = ncOC.data  || [];
   updateTCTopbar();
   renderDashboard();
   renderClientes();
@@ -6139,6 +6230,7 @@ async function loadAll() {
   renderPrecios();
   renderProveedores();
   renderCompras();
+  renderNotasCredito();
   renderProductos();
   renderCategorias();
   renderMovimientos();
@@ -6206,6 +6298,7 @@ function showPage(name, bnav) {
     sc:'Solicitudes de Cotización',
     oc:'Órdenes de Compra',
     compras:'Libro de Compras',
+    'notas-credito':'Notas de Crédito',
     'inv-movimientos':'Movimientos de Inventario',
     'inv-ajustes':'Ajustes de Inventario',
     'inv-stock':'Stock Actual',
@@ -15275,6 +15368,7 @@ const MODULE_META = {
   sc:               { label: 'Solicitudes de Cotización', parent: 'hub-compras' },
   oc:               { label: 'Órdenes de Compra',   parent: 'hub-compras' },
   compras:          { label: 'Libro de Compras',    parent: 'hub-compras' },
+  'notas-credito':  { label: 'Notas de Crédito',    parent: 'hub-compras' },
   'inv-movimientos':  { label: 'Movimientos',         parent: 'hub-inventario' },
   'inv-ajustes':      { label: 'Ajustes',             parent: 'hub-inventario' },
   'inv-stock':        { label: 'Stock Actual',        parent: 'hub-inventario' },
