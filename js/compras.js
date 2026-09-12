@@ -310,6 +310,7 @@ async function openPagoOC(facturaId) {
   _pagoToggleInfoProveedor(true);
   document.getElementById('pago-distribucion-wrap').style.display = 'none';
   _pagoSinAplicarProveedor(prov?.id, facturaId);
+  _ncSinAplicarProveedor(prov?.id, facturaId);
   _pagoHistorial(facturaId);
   pagoTab('info');
   openModal('modal-pago');
@@ -4164,7 +4165,7 @@ async function saveDevolucion() {
     const numDev   = nextCorrelativo('DEV', devLines, 'numero_devolucion');
 
     // 1. Nueva línea en erp_oc_recepcion_items (cantidad negativa = devolución)
-    const { error:e1 } = await sb.from('erp_oc_recepcion_items').insert({
+    const { data:recItemDev, error:e1 } = await sb.from('erp_oc_recepcion_items').insert({
       recepcion_id:       recepcionId,
       producto_id:        productoId,
       unidad:             item.unidad||'',
@@ -4178,12 +4179,13 @@ async function saveDevolucion() {
       lote:               document.getElementById('dev-lote').value || item.lote || null,
       poliza:             document.getElementById('dev-poliza').value || item.poliza || null,
       packing_num:        document.getElementById('dev-packing').value.trim() || null,
-    });
+    }).select().single();
     if (e1) { alert('Error registrando devolución:\n' + e1.message); return; }
 
     // 3. Movimiento de inventario: salida al proveedor
+    let movIdDev = null;
     try {
-      await crearMovimientoConAsiento({
+      movIdDev = await crearMovimientoConAsiento({
         tipo:           'salida',
         producto_id:    productoId,
         cantidad,
@@ -4193,12 +4195,45 @@ async function saveDevolucion() {
         notas:          `Devolución ${numDev} — ${rec?.numero||''} | ${motivo}`,
         fecha,
         moneda,
-        lote:   document.getElementById('dev-lote').value || item.lote || null,
-        poliza: document.getElementById('dev-poliza').value || item.poliza || null,
+        lote:      document.getElementById('dev-lote').value || item.lote || null,
+        poliza:    document.getElementById('dev-poliza').value || item.poliza || null,
+        bodega_id: rec?.bodega_id || null,
       });
     } catch(movErr) {
       alert('Error en movimiento:\n' + movErr.message);
       return;
+    }
+
+    // 3b. Borrador de Nota de Crédito (12/Sep/2026, a pedido explícito) —
+    // la devolución post-facturación requiere una NC formal del proveedor
+    // para presentar a la SAT. Se deja el borrador acá mismo, con el monto
+    // GTQ que realmente quedó parqueado en 51101099 (leído del movimiento
+    // recién creado, ya con su TC congelado), para que quede constancia y
+    // no se pierda el pendiente aunque el usuario no confirme la NC de
+    // inmediato. No revierte la devolución si esto falla — se avisa fuerte
+    // (fallos silenciosos son inaceptables) para que se cree a mano.
+    try {
+      const movDev  = (state.movimientos||[]).find(m => m.mov_id === movIdDev);
+      const ocDev   = (state.oc||[]).find(o => o.id === (rec?.oc_id || ocId));
+      const ncLines = (state.notasCreditoOC||[]);
+      const numNC   = nextCorrelativo('NC', ncLines, 'numero');
+      const { error:eNC } = await sb.from('erp_oc_notas_credito').insert({
+        numero:            numNC,
+        estado:            'borrador',
+        proveedor_id:      ocDev?.proveedor_id || null,
+        oc_id:             ocDev?.id || ocId || null,
+        recepcion_id:      recepcionId,
+        recepcion_item_id: recItemDev?.id || null,
+        numero_devolucion: numDev,
+        moneda,
+        monto:             Number((cantidad * precioUnit).toFixed(2)),
+        monto_gtq:         Number(movDev?.costo_total_gtq || (cantidad * precioUnit)),
+        tc_devolucion:     movDev?.tipo_cambio || null,
+        notas:             `Generada automáticamente de la devolución ${numDev} — ${motivo}`,
+      });
+      if (eNC) { alert('La devolución y el movimiento se guardaron bien, pero falló el borrador de Nota de Crédito:\n' + eNC.message + '\nCreala a mano en Compras → Notas de Crédito.'); }
+    } catch(ncErr) {
+      alert('La devolución y el movimiento se guardaron bien, pero falló el borrador de Nota de Crédito:\n' + ncErr.message + '\nCreala a mano en Compras → Notas de Crédito.');
     }
 
     // 4. Si la devolución hace que el pedido ya no esté completo, revertir estado
@@ -4228,6 +4263,226 @@ async function saveDevolucion() {
   } catch(e) {
     alert('Error inesperado en saveDevolucion:\n\n' + e.message + '\n\n' + e.stack);
   }
+}
+
+// ═══ NOTAS DE CRÉDITO DE PROVEEDOR (NC) ═══
+// 12/Sep/2026, a pedido explícito de Oliver — devoluciones post-facturación
+// requieren NC formal del proveedor para presentar a la SAT. saveDevolucion()
+// ya deja el borrador (ver arriba); acá vive el ciclo de vida completo:
+// listar, confirmar (llega el documento físico) y aplicar contra una
+// factura no pagada. Única cuenta contable involucrada: 51101099
+// "Devoluciones y rebajas sobre compras" — es el puente de punta a punta,
+// no se usa ninguna cuenta "sin aplicar" adicional (a diferencia de los
+// anticipos en efectivo, que sí la usan). Ver conversación con Claude
+// 11-12/Sep/2026 para el diseño completo.
+
+function _cta51101099() {
+  return (state.nomenclatura||[]).find(n => n.codigo === '51101099');
+}
+
+function renderNotasCredito() {
+  const tbody = document.getElementById('tbl-notas-credito');
+  if (!tbody) return;
+  const q = (document.getElementById('search-notas-credito')?.value||'').toLowerCase();
+  const data = [...(state.notasCreditoOC||[])].sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+  const filtered = data.filter(nc => {
+    const prov = state.proveedores.find(p => p.id === nc.proveedor_id);
+    return !q || (nc.numero||'').toLowerCase().includes(q) ||
+                 (prov?.name||'').toLowerCase().includes(q) ||
+                 (nc.numero_devolucion||'').toLowerCase().includes(q);
+  });
+  tbody.innerHTML = filtered.length ? filtered.map(nc => {
+    const prov = state.proveedores.find(p => p.id === nc.proveedor_id);
+    const factura = nc.factura_id ? state.ocFacturas.find(f=>f.id===nc.factura_id) : null;
+    let estadoLabel, estadoClass, accion;
+    if (nc.estado === 'borrador') {
+      estadoLabel = 'Borrador — pendiente de confirmar';
+      estadoClass = 'badge-yellow';
+      accion = `<button class="btn btn-sm btn-primary" onclick="openConfirmarNC('${nc.id}')">Confirmar NC</button>`;
+    } else if (factura) {
+      estadoLabel = `Aplicada a ${factura.serie||''}${factura.numero||''}`;
+      estadoClass = 'badge-green';
+      accion = '—';
+    } else {
+      estadoLabel = 'Confirmada — disponible';
+      estadoClass = 'badge-blue';
+      accion = `<span style="font-size:11px;color:var(--text3)">Se aplica desde el modal de Pago a Proveedor</span>`;
+    }
+    return `<tr>
+      <td style="padding:8px 10px;font-family:'DM Mono',monospace;font-weight:700;color:var(--accent)">${nc.numero}</td>
+      <td style="padding:8px 10px">${prov?.name||'—'}</td>
+      <td style="padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${nc.numero_devolucion||'—'}</td>
+      <td style="padding:8px 10px;text-align:right;font-family:'DM Mono',monospace">${fmtMoney(nc.monto_gtq, 'GTQ')}</td>
+      <td style="padding:8px 10px"><span class="badge ${estadoClass}">${estadoLabel}</span></td>
+      <td style="padding:8px 10px;text-align:right">${accion}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:16px">Sin Notas de Crédito registradas</td></tr>`;
+}
+
+// Confirmación de NC — llega el documento físico del proveedor. El usuario
+// ingresa el monto real (y su propio TC si es USD); la diferencia contra lo
+// que ya estaba parqueado en 51101099 (valorizado al TC del día de la
+// devolución) se manda a Ganancia/Pérdida Cambiaria — nunca se reabre la
+// devolución ni se toca Cuentas por Pagar en este paso (eso ocurre recién
+// al aplicar la NC contra una factura).
+function openConfirmarNC(ncId) {
+  const nc = (state.notasCreditoOC||[]).find(x => x.id === ncId);
+  if (!nc) { toast('Nota de Crédito no encontrada','error'); return; }
+  const prov = state.proveedores.find(p => p.id === nc.proveedor_id);
+  document.getElementById('cnc-id').value = nc.id;
+  document.getElementById('cnc-info').textContent =
+    `${nc.numero} — ${prov?.name||''} | Devolución ${nc.numero_devolucion||''} | Estimado: ${fmtMoney(nc.monto_gtq,'GTQ')}`;
+  document.getElementById('cnc-documento').value = '';
+  document.getElementById('cnc-monto').value = Number(nc.monto||0).toFixed(2);
+  document.getElementById('cnc-moneda').textContent = nc.moneda||'GTQ';
+  document.getElementById('cnc-fecha').value = today();
+  const tcWrap = document.getElementById('cnc-tc-wrap');
+  if (tcWrap) tcWrap.style.display = (nc.moneda==='USD') ? '' : 'none';
+  document.getElementById('cnc-tc').value = getTCFecha(today());
+  openModal('modal-confirmar-nc');
+}
+
+async function saveConfirmarNC() {
+  try {
+    const ncId   = document.getElementById('cnc-id').value;
+    const nc     = (state.notasCreditoOC||[]).find(x => x.id === ncId);
+    if (!nc) { toast('Nota de Crédito no encontrada','error'); return; }
+    const documento = document.getElementById('cnc-documento').value.trim();
+    const montoReal  = parseFloat(document.getElementById('cnc-monto').value)||0;
+    const fecha      = document.getElementById('cnc-fecha').value;
+    if (!documento) { toast('El número de la NC del proveedor es requerido','error'); return; }
+    if (!montoReal || montoReal <= 0) { toast('Ingresa el monto real de la NC','error'); return; }
+    if (!fecha) { toast('La fecha es requerida','error'); return; }
+
+    const esUSD = (nc.moneda||'GTQ') === 'USD';
+    const tc    = esUSD ? (parseFloat(document.getElementById('cnc-tc').value)||getTCFecha(fecha)) : 1;
+    const montoConfirmadoGTQ = esUSD ? Number((montoReal*tc).toFixed(2)) : montoReal;
+
+    // Diferencial cambiario contra 51101099 — solo aplica en USD, tal como
+    // acordado explícitamente (en GTQ no hay ningún problema de TC). Nunca
+    // toca Cuentas por Pagar acá.
+    if (esUSD) {
+      const diff = Number((montoConfirmadoGTQ - Number(nc.monto_gtq||0)).toFixed(2));
+      if (Math.abs(diff) >= 0.01) {
+        const esGanancia = diff < 0; // mismo criterio que asientoDiferencialCambiario para 'pago'
+        const montoDiff  = Math.abs(diff);
+        const ctaGanPer  = ctaCambiaria(esGanancia);
+        const cta51101099 = _cta51101099();
+        const desc = `Ajuste TC al confirmar NC ${nc.numero} (doc. proveedor ${documento})`;
+        const lineasFinal = esGanancia ? [
+          { cuenta_id: cta51101099?.id||null, cuenta_codigo: cta51101099?.codigo||'51101099', cuenta_nombre: cta51101099?.nombre||'Devoluciones y rebajas sobre compras', debe: montoDiff, haber: 0, descripcion: desc },
+          { cuenta_id: ctaGanPer?.id||null, cuenta_codigo: CTA_GANANCIA_CAMBIARIA, cuenta_nombre: ctaGanPer?.nombre||'Ganancia Cambiaria', debe: 0, haber: montoDiff, descripcion: desc },
+        ] : [
+          { cuenta_id: ctaGanPer?.id||null, cuenta_codigo: CTA_PERDIDA_CAMBIARIA, cuenta_nombre: ctaGanPer?.nombre||'Pérdida Cambiaria', debe: montoDiff, haber: 0, descripcion: desc },
+          { cuenta_id: cta51101099?.id||null, cuenta_codigo: cta51101099?.codigo||'51101099', cuenta_nombre: cta51101099?.nombre||'Devoluciones y rebajas sobre compras', debe: 0, haber: montoDiff, descripcion: desc },
+        ];
+        await crearAsiento({
+          diario: DIARIO_CAMBIARIO, fecha,
+          descripcion: `${esGanancia?'Ganancia':'Pérdida'} cambiaria — confirmación NC ${nc.numero}`,
+          referencia: `NC-${nc.numero}`, referencia_id: nc.id,
+          moneda: 'GTQ', tipo_cambio: 1,
+          lineas: lineasFinal,
+        });
+      }
+    }
+
+    const { error } = await sb.from('erp_oc_notas_credito').update({
+      estado: 'confirmada',
+      documento_proveedor: documento,
+      monto: montoReal,
+      monto_gtq: montoConfirmadoGTQ,
+      fecha_confirmacion: fecha,
+      tc_confirmacion: esUSD ? tc : null,
+    }).eq('id', ncId);
+    if (error) { alert('Error confirmando la NC:\n' + error.message); return; }
+
+    await loadAll();
+    closeModal('modal-confirmar-nc');
+    toast(`✓ NC ${nc.numero} confirmada — ${fmtMoney(montoConfirmadoGTQ,'GTQ')} disponibles para aplicar`);
+  } catch(e) {
+    alert('Error inesperado en saveConfirmarNC:\n\n' + e.message + '\n\n' + e.stack);
+  }
+}
+
+// Aplica una NC ya confirmada contra una factura de OC no pagada — mismo
+// concepto que asignarPagoOC() con anticipos, pero la contrapartida es
+// 51101099 (no una cuenta "sin aplicar" separada) y nunca cobra diferencial
+// cambiario acá (ya se resolvió, si aplicaba, en saveConfirmarNC).
+async function aplicarNotaCredito(ncId, facturaId, montoAplicar) {
+  const nc = (state.notasCreditoOC||[]).find(x => x.id === ncId);
+  const f  = (state.ocFacturas||[]).find(x => x.id === facturaId);
+  if (!nc || !f) { toast('NC o factura no encontrada','error'); return; }
+  if (nc.estado !== 'confirmada') { toast('Esa NC todavía no está confirmada','error'); return; }
+  if (nc.factura_id) { toast('Esa NC ya está aplicada a una factura','error'); return; }
+  if (f.status === 'cancelada') { toast('Esa factura está cancelada','error'); return; }
+  const oc = state.oc.find(o => o.id === f.oc_id);
+  if (oc?.proveedor_id && nc.proveedor_id && oc.proveedor_id !== nc.proveedor_id) {
+    toast('La NC y la factura son de proveedores distintos','error'); return;
+  }
+  const pagadoFactura = (state.pagosOC||[]).filter(x=>x.factura_id===facturaId).reduce((s,x)=>s+Number(x.monto||0),0);
+  const ncsAplicadas  = (state.notasCreditoOC||[]).filter(x=>x.factura_id===facturaId).reduce((s,x)=>s+Number(x.monto_gtq||0),0);
+  const saldoFactura  = Math.max(0, Number(f.total||0) - pagadoFactura - ncsAplicadas);
+  const monto = Math.min(Number(montoAplicar)||Number(nc.monto_gtq||0), Number(nc.monto_gtq||0), saldoFactura);
+  if (monto <= 0) { toast('No hay saldo pendiente que aplicar','error'); return; }
+
+  const prov = (state.proveedores||[]).find(x => x.id === nc.proveedor_id);
+  const ctaPorPagar  = ctaPorPagarOC(f.oc_id);
+  const cta51101099  = _cta51101099();
+  await crearAsiento({
+    diario: 'BANCOS', fecha: today(),
+    descripcion: `Aplicación NC ${nc.numero} — ${f.serie||''}${f.numero} — ${prov?.name||''}`,
+    referencia: `APLICA-NC-${nc.numero}`, referencia_id: nc.id,
+    moneda: 'GTQ', tipo_cambio: 1,
+    lineas: [
+      { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: monto, haber: 0, descripcion: `NC ${nc.numero} aplicada a ${f.serie||''}${f.numero}` },
+      { cuenta_id: cta51101099?.id||null, cuenta_codigo: cta51101099?.codigo||'51101099', cuenta_nombre: cta51101099?.nombre||'Devoluciones y rebajas sobre compras', debe: 0, haber: monto, descripcion: `NC ${nc.numero} aplicada` },
+    ],
+  });
+
+  if (monto < Number(nc.monto_gtq||0)) {
+    const remanente = Number(nc.monto_gtq||0) - monto;
+    await sb.from('erp_oc_notas_credito').update({ factura_id: facturaId, monto_gtq: monto }).eq('id', ncId);
+    await sb.from('erp_oc_notas_credito').insert({
+      numero: nc.numero, estado: 'confirmada', proveedor_id: nc.proveedor_id,
+      oc_id: nc.oc_id, recepcion_id: nc.recepcion_id, recepcion_item_id: nc.recepcion_item_id,
+      numero_devolucion: nc.numero_devolucion, moneda: nc.moneda, monto: nc.monto,
+      monto_gtq: remanente, documento_proveedor: nc.documento_proveedor,
+      fecha_confirmacion: nc.fecha_confirmacion, tc_confirmacion: nc.tc_confirmacion,
+      notas: `Remanente sin aplicar de ${nc.numero}`,
+    });
+  } else {
+    await sb.from('erp_oc_notas_credito').update({ factura_id: facturaId }).eq('id', ncId);
+  }
+
+  const nuevoPagado = pagadoFactura + ncsAplicadas + monto;
+  await sb.from('erp_oc_facturas').update({
+    monto_pagado: nuevoPagado,
+    estado_pago: nuevoPagado >= Number(f.total||0) ? 'pagado' : 'parcial',
+  }).eq('id', facturaId);
+
+  toast(`✓ NC aplicada a ${f.serie||''}${f.numero}`);
+  await loadAll();
+}
+
+// Bloque de "NC disponibles" dentro del modal de Pago a Proveedor — mismo
+// lugar y mismo espíritu que _pagoSinAplicarProveedor() (anticipos), para
+// que el usuario vea ambos de un vistazo al pagar una factura.
+function _ncSinAplicarProveedor(proveedorId, facturaId) {
+  const wrap = document.getElementById('nc-sinaplicar-wrap');
+  const list = document.getElementById('nc-sinaplicar-list');
+  if (!wrap || !list) return;
+  const disponibles = (state.notasCreditoOC||[]).filter(nc => nc.estado==='confirmada' && !nc.factura_id && nc.proveedor_id===proveedorId);
+  if (!disponibles.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  list.innerHTML = disponibles.map(nc => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:7px;background:#EFF6FF;border:1px solid #BFDBFE;margin-bottom:6px;font-size:12px">
+      <div>
+        <span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);margin-right:8px">${nc.numero}</span>
+        <span style="color:var(--text2)">Devolución ${nc.numero_devolucion||''}</span>
+        <strong style="font-family:'DM Mono',monospace;color:var(--green);margin-left:10px">${fmtMoney(nc.monto_gtq,'GTQ')}</strong>
+      </div>
+      <button class="btn btn-sm btn-primary" onclick="closeModal('modal-pago');aplicarNotaCredito('${nc.id}','${facturaId}')">Usar esta NC</button>
+    </div>`).join('');
 }
 
 async function saveOC() {
@@ -4509,11 +4764,10 @@ function verRecepcion(recepcionId) {
   const originales = ri.filter(x => x.estado === 'recibido');
   const loteRows = originales.map(item => {
     const devuelta = cantidadDevueltaRecepcionItem(item.id);
-    // El botón ya no abre la devolución de este lote — abre la edición de
-    // la recepción completa (misma función que antes tenía el botón
-    // "✏️ Editar" del pie, ahora eliminado). Se deja por línea a pedido
-    // explícito de Oliver (11/Sep/2026), aunque la acción no sea por lote.
-    const btnDev = `<button class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:11px" onclick="editarRecepcionDesdeVista()">↩️ Devolver</button>`;
+    const disponible = Math.max(0, Number(item.cantidad||0) - devuelta);
+    const btnDev = disponible > 0.0001
+      ? `<button class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:11px" onclick="openDevolucion('${item.id}','${recepcionId}','${oc?.id}')">↩️ Devolver</button>`
+      : `<span style="font-size:11px;color:var(--red);font-weight:600">Devuelto completo</span>`;
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 12px;font-size:13px;font-family:'DM Mono',monospace;color:var(--accent)">${item.lote||'—'}</td>
       <td style="padding:8px 12px;font-size:13px">${prodName(item.producto_id)}</td>
