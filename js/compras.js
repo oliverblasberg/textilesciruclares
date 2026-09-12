@@ -4008,6 +4008,9 @@ function onOCProveedorChange() {
     if (prov?.terminos_pago) {
       document.getElementById('oc-terminos').value = prov.terminos_pago;
     }
+    if (prov?.bodega_id) {
+      document.getElementById('oc-bodega').value = prov.bodega_id;
+    }
   }
 
   // Las líneas ya agregadas deben refiltrarse al nuevo proveedor — si el
@@ -4506,10 +4509,11 @@ function verRecepcion(recepcionId) {
   const originales = ri.filter(x => x.estado === 'recibido');
   const loteRows = originales.map(item => {
     const devuelta = cantidadDevueltaRecepcionItem(item.id);
-    const disponible = Math.max(0, Number(item.cantidad||0) - devuelta);
-    const btnDev = disponible > 0.0001
-      ? `<button class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:11px" onclick="openDevolucion('${item.id}','${recepcionId}','${oc?.id}')">↩️ Devolver</button>`
-      : `<span style="font-size:11px;color:var(--red);font-weight:600">Devuelto completo</span>`;
+    // El botón ya no abre la devolución de este lote — abre la edición de
+    // la recepción completa (misma función que antes tenía el botón
+    // "✏️ Editar" del pie, ahora eliminado). Se deja por línea a pedido
+    // explícito de Oliver (11/Sep/2026), aunque la acción no sea por lote.
+    const btnDev = `<button class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:11px" onclick="editarRecepcionDesdeVista()">↩️ Devolver</button>`;
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 12px;font-size:13px;font-family:'DM Mono',monospace;color:var(--accent)">${item.lote||'—'}</td>
       <td style="padding:8px 12px;font-size:13px">${prodName(item.producto_id)}</td>
