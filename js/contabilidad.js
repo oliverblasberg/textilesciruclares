@@ -887,8 +887,16 @@ async function asientoMovInventario(movId, monedaParam = null) {
 
   let debe, haber;
   if (isDevolucion) {
-    // Devolución = reversa de entrada: Entrada Stock (Debe) / Valoración Stock (Haber)
-    debe  = ctaEntrada;
+    // Devolución = reversa de entrada, pero NO contra "Entrada Stock"
+    // (cuenta de tránsito para OCs realmente en camino — no aplica acá,
+    // la mercadería ya estaba recibida y capitalizada). Va contra
+    // 51101099 "Devoluciones y rebajas sobre compras", que funciona como
+    // puente: su saldo es exactamente lo pendiente de Nota de Crédito
+    // formal del proveedor (12/Sep/2026, a pedido explícito — ver
+    // saveDevolucion() y confirmarNotaCredito()/aplicarNotaCredito() en
+    // compras.js, que son quienes liquidan esta cuenta después).
+    const ctaDevRebajas = (state.nomenclatura||[]).find(n => n.codigo === '51101099')?.id || null;
+    debe  = ctaDevRebajas || ctaEntrada; // fallback si la cuenta no existe en nomenclatura
     haber = ctaValoracion;
   } else if (isEntrada) {
     debe  = ctaValoracion;
