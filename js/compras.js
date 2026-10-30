@@ -420,7 +420,15 @@ function openPagoProveedor(ocId) {
 // ── PAGOS OC — savePago (index.html original: líneas 10761-10981) ──
 // (COMPRAS — guarda pago a proveedor/OC. Su equivalente en Ventas es
 // openPago/saveCobro más abajo, en la sección PAGOS.)
+// Guarda contra doble ejecución (30/Oct/2026, confirmado en pruebas: un
+// doble clic en "Registrar Pago" grabó NP-2026-10-001 dos veces, y el segundo
+// asiento chocó por correlativo y se perdió). Mismo patrón que _savingRecepcion.
+let _savingPago = false;
 async function savePago() {
+  if (_savingPago) return;   // evita doble ejecución (doble clic) — ver nota en _savingPago
+  _savingPago = true;
+  const _btnG = document.querySelector('#modal-pago button[onclick="savePago()"]');
+  if (_btnG) _btnG.disabled = true;
   try {
   const modo       = document.getElementById('pago-modo').value;
   const facturaId  = document.getElementById('pago-factura-id').value;
@@ -635,6 +643,9 @@ async function savePago() {
   }
   } catch(e) {
     alert('Error en savePago:\n' + e.message + '\n\n' + e.stack?.substring(0,300));
+  } finally {
+    _savingPago = false;
+    if (_btnG) _btnG.disabled = false;
   }
 }
 
@@ -4146,7 +4157,13 @@ function openDevolucion(itemId, recepcionId, ocId) {
   openModal('modal-devolucion');
 }
 
+// Guarda contra doble ejecución (30/Oct/2026, confirmado en pruebas: un
+// doble clic en "Registrar Pago" grabó NP-2026-10-001 dos veces, y el segundo
+// asiento chocó por correlativo y se perdió). Mismo patrón que _savingRecepcion.
+let _savingDevolucion = false;
 async function saveDevolucion() {
+  if (_savingDevolucion) return;   // evita doble ejecución (doble clic) — ver nota en _savingDevolucion
+  _savingDevolucion = true;
   try {
     const itemId      = document.getElementById('dev-item-id').value;
     const recepcionId = document.getElementById('dev-recepcion-id').value;
@@ -4293,6 +4310,8 @@ async function saveDevolucion() {
 
   } catch(e) {
     alert('Error inesperado en saveDevolucion:\n\n' + e.message + '\n\n' + e.stack);
+  } finally {
+    _savingDevolucion = false;
   }
 }
 
@@ -4373,7 +4392,13 @@ function openConfirmarNC(ncId) {
   openModal('modal-confirmar-nc');
 }
 
+// Guarda contra doble ejecución (30/Oct/2026, confirmado en pruebas: un
+// doble clic en "Registrar Pago" grabó NP-2026-10-001 dos veces, y el segundo
+// asiento chocó por correlativo y se perdió). Mismo patrón que _savingRecepcion.
+let _savingConfirmarNC = false;
 async function saveConfirmarNC() {
+  if (_savingConfirmarNC) return;   // evita doble ejecución (doble clic) — ver nota en _savingConfirmarNC
+  _savingConfirmarNC = true;
   try {
     const ncId   = document.getElementById('cnc-id').value;
     const nc     = (state.notasCreditoOC||[]).find(x => x.id === ncId);
@@ -4439,6 +4464,8 @@ async function saveConfirmarNC() {
     toast(`✓ NC ${nc.numero} confirmada — ${fmtMoney(montoConfirmadoGTQ,'GTQ')} disponibles para aplicar`);
   } catch(e) {
     alert('Error inesperado en saveConfirmarNC:\n\n' + e.message + '\n\n' + e.stack);
+  } finally {
+    _savingConfirmarNC = false;
   }
 }
 
@@ -4488,7 +4515,13 @@ function pagadoFacturaOC(facturaId) {
 //     la diferencia va a Ganancia/Pérdida Cambiaria — misma regla que ya
 //     rige para pagos: "diferencias a la fecha de pago van a diferencial
 //     cambiario". En el mismo asiento, para que siempre cuadre.
+// Guarda contra doble ejecución (30/Oct/2026, confirmado en pruebas: un
+// doble clic en "Registrar Pago" grabó NP-2026-10-001 dos veces, y el segundo
+// asiento chocó por correlativo y se perdió). Mismo patrón que _savingRecepcion.
+let _savingAplicarNC = false;
 async function aplicarNotaCredito(ncId, facturaId, montoAplicar) {
+  if (_savingAplicarNC) return;   // evita doble ejecución (doble clic) — ver nota en _savingAplicarNC
+  _savingAplicarNC = true;
   try {
     const nc = (state.notasCreditoOC||[]).find(x => x.id === ncId);
     const f  = (state.ocFacturas||[]).find(x => x.id === facturaId);
@@ -4597,6 +4630,8 @@ async function aplicarNotaCredito(ncId, facturaId, montoAplicar) {
     toast(`✓ NC ${nc.numero} aplicada a ${refFact} — ${fmtMoney(montoNativo, monedaFact)}`);
   } catch(e) {
     alert('Error inesperado en aplicarNotaCredito:\n\n' + e.message + '\n\n' + e.stack);
+  } finally {
+    _savingAplicarNC = false;
   }
 }
 
