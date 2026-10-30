@@ -215,6 +215,30 @@ async function asientoDiferencialCambiario({
   });
 }
 
+// Ajuste de redondeo de un asiento (29/Oct/2026). Recibe las líneas ya
+// redondeadas a 2 decimales (debe/haber/debe_gtq/haber_gtq) y, si Debe y
+// Haber difieren SOLO por redondeo (≤ 1 centavo por línea), mueve esa
+// diferencia a la línea de mayor monto. Modifica el arreglo en sitio.
+// Usada por crearAsiento() y aplicarTCPendientes().
+function _cuadrarRedondeoAsiento(lineas) {
+  if (!lineas?.length) return;
+  const sumD = round2(lineas.reduce((s,l) => s + Number(l.debe_gtq||0), 0));
+  const sumH = round2(lineas.reduce((s,l) => s + Number(l.haber_gtq||0), 0));
+  const diff = round2(sumD - sumH);
+  if (diff === 0 || Math.abs(diff) > 0.01 * lineas.length) return;
+  let mayor = lineas[0];
+  lineas.forEach(l => {
+    const m  = Math.max(Number(l.debe_gtq||0), Number(l.haber_gtq||0));
+    const mm = Math.max(Number(mayor.debe_gtq||0), Number(mayor.haber_gtq||0));
+    if (m > mm) mayor = l;
+  });
+  if (Number(mayor.debe_gtq||0) > 0) {
+    mayor.debe = mayor.debe_gtq = round2(Number(mayor.debe_gtq) - diff);
+  } else {
+    mayor.haber = mayor.haber_gtq = round2(Number(mayor.haber_gtq) + diff);
+  }
+}
+
 // ── ACTUALIZAR asientoFacturaVenta para convertir USD→GTQ ──────
 // Reemplaza la versión anterior que no convertía monedas
 async function crearAsiento({ diario, fecha, descripcion, referencia, referencia_id,
@@ -248,13 +272,19 @@ async function crearAsiento({ diario, fecha, descripcion, referencia, referencia
   // Por cada línea:
   // monto_orig = valor en moneda original (USD o GTQ)
   // debe/haber = monto_orig * TC (siempre en GTQ)
+  //
+  // REDONDEO A 2 DECIMALES (29/Oct/2026, política confirmada por Oliver —
+  // ver round2 en utils.js). Antes cada línea se guardaba a 4 decimales
+  // (ej. 1,982.474) y los residuos de milésimas quedaban para siempre en
+  // cuentas puente como 51101099. Todo asiento pasa por aquí, así que es el
+  // punto único que garantiza un mayor en centavos.
   const lineasFinal = lineas.map(l => {
-    const montoOrig = Number(l.debe||0) || Number(l.haber||0);
-    const montoGTQ  = esUSD ? parseFloat((montoOrig * tcUsar).toFixed(4)) : montoOrig;
+    const montoOrig = round2(Number(l.debe||0) || Number(l.haber||0));
+    const montoGTQ  = esUSD ? round2(montoOrig * tcUsar) : montoOrig;
     return {
       ...l,
       moneda_orig: moneda,
-      monto_orig:  parseFloat(montoOrig.toFixed(4)),
+      monto_orig:  montoOrig,
       // FIX (26/Ago/2026): la columna tipo_cambio de erp_asiento_lineas existe
       // desde siempre, pero nunca se escribía — quedaba en el default 1.0000
       // incluso en líneas USD. Una línea de USD 1,300 a Q9,910.81 guardaba
@@ -268,8 +298,15 @@ async function crearAsiento({ diario, fecha, descripcion, referencia, referencia
     };
   });
 
-  const debe_total  = lineasFinal.reduce((s,l) => s + Number(l.debe_gtq||0),  0);
-  const haber_total = lineasFinal.reduce((s,l) => s + Number(l.haber_gtq||0), 0);
+  // Al redondear línea por línea (sobre todo al convertir USD→GTQ) el
+  // asiento puede quedar descuadrado por centavos. Si la diferencia es solo
+  // de redondeo (≤ 1 centavo por línea), se absorbe en la línea de mayor
+  // monto — mismo criterio que Odoo. Una diferencia mayor es un error del
+  // llamador y NO se oculta: se deja tal cual para que se vea el descuadre.
+  _cuadrarRedondeoAsiento(lineasFinal);
+
+  const debe_total  = round2(lineasFinal.reduce((s,l) => s + Number(l.debe_gtq||0),  0));
+  const haber_total = round2(lineasFinal.reduce((s,l) => s + Number(l.haber_gtq||0), 0));
   // FIX (26/Ago/2026, auditoría): antes esto sumaba TODAS las líneas, las de
   // debe y las de haber, así que el resultado era siempre el DOBLE del valor
   // real del asiento — una factura de USD 1,300 se guardaba como 2,600.
@@ -277,15 +314,15 @@ async function crearAsiento({ diario, fecha, descripcion, referencia, referencia
   // suman solo las líneas de debe, que es ese valor.
   // No afecta al mayor: debe_total y haber_total siempre estuvieron bien;
   // el dato incorrecto era solo esta columna de la cabecera.
-  const monto_orig_total = lineas.reduce((s,l) => s + Number(l.debe||0), 0);
+  const monto_orig_total = round2(lineasFinal.filter(l => Number(l.debe||0) > 0).reduce((s,l) => s + Number(l.monto_orig||0), 0));
 
   const { data: asiento, error } = await sb.from('erp_asientos').insert({
     numero, diario, fecha: fechaStr, descripcion, referencia, referencia_id,
     moneda,
-    monto_orig:  parseFloat(monto_orig_total.toFixed(4)),
+    monto_orig:  monto_orig_total,
     tipo_cambio: tcUsar,
-    debe_total:  parseFloat(debe_total.toFixed(4)),
-    haber_total: parseFloat(haber_total.toFixed(4)),
+    debe_total,
+    haber_total,
     estado: 'publicado', auto,
     estado_tc:   estadoTC,
     fecha_tc:    tcDisponible ? fechaStr : null,
@@ -2530,17 +2567,26 @@ async function aplicarTCPendientes(fecha, tc) {
     // sigue pendiente y se puede reintentar sin doble conversión, porque el
     // cálculo parte de tc_aplicado, que no se modificó.
     let errorEnLineas = null;
-    for (const l of lineas) {
-      const esUSD = asiento.moneda === 'USD';
-      const monto = Number(l.monto_orig||0) || (Number(l.debe_gtq||0) + Number(l.haber_gtq||0));
-      const debeOrig  = Number(l.debe_gtq||0) / (esUSD ? (asiento.tc_aplicado||1) : 1);
-      const haberOrig = Number(l.haber_gtq||0) / (esUSD ? (asiento.tc_aplicado||1) : 1);
-      const debeGTQ   = esUSD ? parseFloat((debeOrig  * tcUsar).toFixed(4)) : debeOrig;
-      const haberGTQ  = esUSD ? parseFloat((haberOrig * tcUsar).toFixed(4)) : haberOrig;
+    // Se calculan TODAS las líneas primero (a 2 decimales, 29/Oct/2026) y se
+    // cuadra el redondeo antes de escribir — mismo criterio que crearAsiento().
+    // Base preferida: monto_orig (moneda original, ya a 2 decimales); si no
+    // existe, se reconstruye desde el GTQ guardado y el TC anterior.
+    const esUSDAsi = asiento.moneda === 'USD';
+    const nuevas = lineas.map(l => {
+      const tcAnt     = esUSDAsi ? (asiento.tc_aplicado||1) : 1;
+      const origBase  = Number(l.monto_orig||0);
+      const debeOrig  = Number(l.debe_gtq||0)  > 0 ? (origBase || Number(l.debe_gtq||0)  / tcAnt) : 0;
+      const haberOrig = Number(l.haber_gtq||0) > 0 ? (origBase || Number(l.haber_gtq||0) / tcAnt) : 0;
+      const debeGTQ   = round2(esUSDAsi ? debeOrig  * tcUsar : debeOrig);
+      const haberGTQ  = round2(esUSDAsi ? haberOrig * tcUsar : haberOrig);
+      return { id: l.id, debe: debeGTQ, haber: haberGTQ, debe_gtq: debeGTQ, haber_gtq: haberGTQ };
+    });
+    _cuadrarRedondeoAsiento(nuevas);
+    for (const n of nuevas) {
       const { error: errL } = await sb.from('erp_asiento_lineas').update({
-        debe: debeGTQ, haber: haberGTQ,
-        debe_gtq: debeGTQ, haber_gtq: haberGTQ,
-      }).eq('id', l.id);
+        debe: n.debe, haber: n.haber,
+        debe_gtq: n.debe_gtq, haber_gtq: n.haber_gtq,
+      }).eq('id', n.id);
       if (errL) { errorEnLineas = errL; break; }
     }
     if (errorEnLineas) {
