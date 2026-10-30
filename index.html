@@ -6349,8 +6349,17 @@ function showPage(name, bnav) {
 }
 
 // ═══ MODAL ═══
+// Apilado (30/Oct/2026, reportado en vivo: el modal de Devolución quedaba
+// DETRÁS del de Ver Recepción). Todos los .modal-overlay comparten z-index
+// 1000, así que el que gana es el que está más abajo en el HTML, no el que se
+// abrió último. Ahora el modal que se abre queda siempre encima de los que ya
+// están abiertos. Con un solo modal abierto se usa el z-index del CSS.
 function openModal(id) {
-  document.getElementById(id).classList.add('open');
+  const el = document.getElementById(id);
+  const abiertos = [...document.querySelectorAll('.modal-overlay.open')].filter(m => m !== el);
+  const zMax = abiertos.reduce((z, m) => Math.max(z, Number(m.style.zIndex) || 1000), 1000);
+  el.style.zIndex = abiertos.length ? String(zMax + 1) : '';
+  el.classList.add('open');
 }
 function closeModal(id) {
   document.getElementById(id).classList.remove('open');
