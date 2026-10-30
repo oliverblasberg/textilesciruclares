@@ -1637,20 +1637,23 @@ function renderBalanceGeneral() {
   const grupoActivo   = ['Activos Circulantes','Activos no-circulantes','Banco y efectivo','Por cobrar'];
   const grupoPasivo   = ['Pasivos Circulantes','Pasivos no-circulantes','Por pagar'];
   const grupoCapital  = ['Capital','Ganancias del año actual'];
-  const grupoIngresos = ['Ingresos','Ventas'];
-  const grupoGastos   = ['Gastos','Costo de Ventas','Costos'];
 
-  // Calculate Resultado del Ejercicio = Ingresos - Gastos
-  let totalIngresos = 0, totalGastos = 0;
+  // RESULTADO DEL EJERCICIO = saldo acreedor de TODA cuenta que no es de
+  // balance (activo/pasivo/capital).
+  // FIX (29/Oct/2026, reportado en vivo: "Diferencia de balance Q58.58"):
+  // antes se sumaba por coincidencia de texto en el tipo — grupoIngresos
+  // ['Ingresos','Ventas'] con includes(). Tipo 'Ingreso' (singular, ej.
+  // 51101099) y 'Otro Ingreso' (71101002 Ganancia cambiaria) no contienen
+  // 'ingresos', así que quedaban FUERA del resultado; y 'Costo de ingresos'
+  // sí lo contiene, así que entraba por casualidad en el lado de ingresos.
+  // Con la regla por exclusión, cualquier cuenta de resultados entra, tenga el
+  // tipo que tenga, y el balance cuadra siempre que el mayor cuadre.
+  const esBalance = tipo => grupoActivo.includes(tipo) || grupoPasivo.includes(tipo) || grupoCapital.includes(tipo);
+  let resultadoEjercicio = 0;
   Object.values(saldos).forEach(({cta,debe,haber}) => {
-    if (grupoIngresos.some(g => (cta.tipo||'').toLowerCase().includes(g.toLowerCase()))) {
-      totalIngresos += haber - debe; // ingresos: saldo crédito
-    }
-    if (grupoGastos.some(g => (cta.tipo||'').toLowerCase().includes(g.toLowerCase()))) {
-      totalGastos += debe - haber; // gastos: saldo débito
-    }
+    if (!esBalance(cta.tipo)) resultadoEjercicio += haber - debe;
   });
-  const resultadoEjercicio = totalIngresos - totalGastos;
+  resultadoEjercicio = round2(resultadoEjercicio);
 
   const seccionBG = (grupos, titulo) => {
     let total = 0, rows = '';
