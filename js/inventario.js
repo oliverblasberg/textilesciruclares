@@ -827,15 +827,22 @@ async function crearMovimiento({ tipo, producto_id, cantidad, costo_unitario,
   const prod       = state.productos.find(x => x.id === producto_id);
   const catId      = prod?.categoria || null;
   const snap       = snapshotCategoriaAccounts(catId);
-  const costo_total = (parseFloat(cantidad)||0) * (parseFloat(costo_unitario)||0);
+  // REDONDEO (29/Oct/2026, política confirmada — ver round2/3/4 en utils.js):
+  // cantidad a 3 decimales, costo unitario a 4, costo total a 2. El costo
+  // total en GTQ se calcula EXACTAMENTE igual que crearAsiento() calcula la
+  // línea del asiento (round2(round2(total orig) × TC)), para que el Kardex
+  // y el mayor queden idénticos al centavo — antes el movimiento guardaba
+  // 1,982.474 y ese 0.004 quedaba colgado en las cuentas contrapartida.
+  const cantRed     = round3(parseFloat(cantidad)||0);
+  const cu          = round4(parseFloat(costo_unitario)||0);
+  const costo_total = round2(cantRed * cu);
   const mov_id     = await nextMovId();
 
   // GTQ conversion — use best available TC for the transaction date
   const tc = getTCFecha(fecha || today()) || tcHoy() || 1;
   const esUSD = moneda === 'USD';
-  const cu = parseFloat(costo_unitario||0);
-  const costo_unitario_gtq = esUSD && tc > 1 ? parseFloat((cu * tc).toFixed(4)) : cu;
-  const costo_total_gtq    = esUSD && tc > 1 ? parseFloat((costo_total * tc).toFixed(4)) : costo_total;
+  const costo_unitario_gtq = esUSD && tc > 1 ? round4(cu * tc) : cu;
+  const costo_total_gtq    = esUSD && tc > 1 ? round2(costo_total * tc) : costo_total;
   // TC guardado explícitamente (26/Ago/2026). Antes se reconstruía dividiendo
   // costo_total_gtq/costo_total, lo que es imposible cuando el costo es cero —
   // caso real del hilo en consignación. Con la columna, el TC sobrevive
@@ -880,9 +887,9 @@ async function crearMovimiento({ tipo, producto_id, cantidad, costo_unitario,
   const row = {
     mov_id, tipo, producto_id,
     categoria_id:      catId,
-    cantidad:          parseFloat(cantidad)||0,
+    cantidad:          cantRed,
     unidad:            prod?.unidad || '',
-    costo_unitario:    parseFloat(costo_unitario)||0,
+    costo_unitario:    cu,
     costo_total,
     moneda:            moneda||'GTQ',
     tipo_cambio,
