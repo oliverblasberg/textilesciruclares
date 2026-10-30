@@ -270,8 +270,7 @@ async function openPagoOC(facturaId) {
   }
   const oc     = state.oc.find(o=>o.id===f.oc_id);
   const prov   = state.proveedores.find(p=>p.id===oc?.proveedor_id);
-  const pagos  = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
-  const pagado = pagos.reduce((s,p)=>s+Number(p.monto||0),0);
+  const pagado = pagadoFacturaOC(facturaId);
   const total  = Number(f.total||0);
   const pend   = Math.max(0, total - pagado);
   const monedaOC = getMonedaOC(oc?.id);
@@ -338,7 +337,7 @@ function openPagoProveedor(ocId) {
     // Las canceladas no son pagables (30/Ago/2026). Sin este filtro aparecían
     // en el selector de facturas a pagar como si siguieran vigentes.
     if (f.status === 'cancelada') return false;
-    const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===f.id).reduce((s,p)=>s+Number(p.monto||0),0);
+    const pagado = pagadoFacturaOC(f.id);
     return Number(f.total||0) - pagado > 0;
   });
 
@@ -364,7 +363,7 @@ function openPagoProveedor(ocId) {
   // (single-mode) — en multi-factura se oculta para no confundir.
   document.getElementById('pago-sinaplicar-wrap').style.display = 'none';
   const totalPend = facturasPendientes.reduce((s,f) => {
-    const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===f.id).reduce((ss,p)=>ss+Number(p.monto||0),0);
+    const pagado = pagadoFacturaOC(f.id);
     return s + Math.max(0, Number(f.total||0)-pagado);
   },0);
   document.getElementById('pago-fact-total').textContent    = `${facturasPendientes.length} facturas`;
@@ -384,7 +383,7 @@ function openPagoProveedor(ocId) {
   // Render distribution table
   document.getElementById('pago-distribucion-wrap').style.display = 'block';
   document.getElementById('pago-dist-tbody').innerHTML = facturasPendientes.map(f => {
-    const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===f.id).reduce((s,p)=>s+Number(p.monto||0),0);
+    const pagado = pagadoFacturaOC(f.id);
     const saldo  = Math.max(0, Number(f.total||0) - pagado);
     const fOC    = provOCs.find(o=>o.id===f.oc_id);
     return `<tr style="border-bottom:1px solid var(--border)">
@@ -444,8 +443,7 @@ async function savePago() {
   if (modo === 'single') {
     // Validate factura is not fully paid
     const fCheck  = state.ocFacturas.find(x=>x.id===facturaId);
-    const pagosCheck = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
-    const pagadoCheck = pagosCheck.reduce((s,p)=>s+Number(p.monto||0),0);
+    const pagadoCheck = pagadoFacturaOC(facturaId);
     if (fCheck && pagadoCheck >= Number(fCheck.total||0)) {
       toast('Esta factura ya está completamente pagada','error'); return;
     }
@@ -480,7 +478,7 @@ async function savePago() {
 
       // Update factura estado
       await loadAll();
-      const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId).reduce((s,p)=>s+Number(p.monto||0),0);
+      const pagado = pagadoFacturaOC(facturaId);
       const estadoPago = pagado >= Number(f?.total||0) ? 'pagado' : 'parcial';
       await sb.from('erp_oc_facturas').update({ monto_pagado: pagado, estado_pago: estadoPago }).eq('id', facturaId);
 
@@ -565,8 +563,7 @@ async function savePago() {
           return;
         }
         // Update factura estado
-        const pagosAnt = (state.pagosOC||[]).filter(p=>p.factura_id===d.factura_id);
-        const totalPag = pagosAnt.reduce((s,p)=>s+Number(p.monto||0),0) + d.monto;
+        const totalPag = pagadoFacturaOC(d.factura_id) + d.monto;
         const totalFac = Number(f?.total||0);
         const estadoPago = totalPag >= totalFac ? 'pagado' : 'parcial';
         await sb.from('erp_oc_facturas').update({ monto_pagado: totalPag, estado_pago: estadoPago }).eq('id', d.factura_id);
@@ -1170,7 +1167,7 @@ function renderCompras() {
   data = data.filter(c => {
     const prov    = state.proveedores.find(p => p.id === c.proveedor_id);
     const factura = c.factura_id ? state.ocFacturas.find(f=>f.id===c.factura_id) : null;
-    const pagado  = factura ? (state.pagosOC||[]).filter(p=>p.factura_id===factura.id).reduce((s,p)=>s+Number(p.monto||0),0) : 0;
+    const pagado  = factura ? pagadoFacturaOC(factura.id) : 0;
     const saldo   = factura ? Math.max(0, Number(factura.total||c.valor_total||0) - pagado) : Number(c.valor_total||0);
     const estadoC = factura?.status === 'cancelada' ? 'cancelada' : (saldo<=0?'pagado':pagado>0?'parcial':'pendiente');
     return (!tp  || c.tipo === tp) &&
@@ -1189,7 +1186,7 @@ function renderCompras() {
     const prov    = state.proveedores.find(p => p.id === c.proveedor_id);
     const oc      = c.oc_id ? (state.oc||[]).find(o=>o.id===c.oc_id) : null;
     const factura = c.factura_id ? state.ocFacturas.find(f=>f.id===c.factura_id) : null;
-    const pagado  = factura ? (state.pagosOC||[]).filter(p=>p.factura_id===factura.id).reduce((s,p)=>s+Number(p.monto||0),0) : 0;
+    const pagado  = factura ? pagadoFacturaOC(factura.id) : 0;
     const total   = Number(c.valor_total||0);
     const saldo   = factura ? Math.max(0, Number(factura.total||total) - pagado) : total;
     const esPagado = saldo <= 0.01;
@@ -1477,7 +1474,7 @@ function renderOC() {
     if (facturasOC.length) {
       const totalFact = facturasOC.reduce((s,f)=>s+Number(f.total||0),0);
       const totalPag  = facturasOC.reduce((s,f)=>{
-        const pagado = (state.pagosOC||[]).filter(p=>p.factura_id===f.id).reduce((ss,p)=>ss+Number(p.monto||0),0);
+        const pagado = pagadoFacturaOC(f.id);
         return s + pagado;
       },0);
       const esPagada  = totalPag >= totalFact - 0.01;
@@ -1680,6 +1677,7 @@ async function cancelarFacturaOC(facturaId) {
   if (f.status === 'cancelada') { toast('Esta factura ya está cancelada','error'); return; }
   const pagosF = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
   if (pagosF.length) { toast('No se puede cancelar — tiene pagos aplicados. Desasígnalos primero desde Pagos.','error'); return; }
+  if (ncAplicadoFacturaOC(facturaId) > 0) { toast('No se puede cancelar — tiene una Nota de Crédito aplicada.','error'); return; }
   const motivo = prompt(`¿Motivo de cancelación de la factura ${f.num_interno||f.numero}? (opcional)`);
   if (motivo === null) return; // usuario canceló el prompt
   const { error } = await sb.from('erp_oc_facturas').update({
@@ -1800,7 +1798,9 @@ async function desasignarPagoOC(pagoId) {
 
   // Recalcular estado de la factura que quedó liberada.
   if (f) {
-    const pagadoRestante = (state.pagosOC||[]).filter(x=>x.factura_id===f.id && x.id!==pagoId).reduce((s,x)=>s+Number(x.monto||0),0);
+    // Incluye las NC aplicadas (moneda nativa) — sin esto, desasignar un
+    // pago borraba de monto_pagado lo que ya cubría una Nota de Crédito.
+    const pagadoRestante = Number(((state.pagosOC||[]).filter(x=>x.factura_id===f.id && x.id!==pagoId).reduce((s,x)=>s+Number(x.monto||0),0) + ncAplicadoFacturaOC(f.id)).toFixed(2));
     await sb.from('erp_oc_facturas').update({
       monto_pagado: pagadoRestante,
       estado_pago: pagadoRestante<=0 ? 'pendiente' : (pagadoRestante >= Number(f.total||0) ? 'pagado' : 'parcial'),
@@ -1828,7 +1828,7 @@ async function asignarPagoOC(pagoId, facturaId, montoAplicar) {
   if (p.proveedor_id && oc?.proveedor_id && oc.proveedor_id !== p.proveedor_id) {
     toast('El pago y la factura son de proveedores distintos','error'); return;
   }
-  const pagadoFactura = (state.pagosOC||[]).filter(x=>x.factura_id===facturaId).reduce((s,x)=>s+Number(x.monto||0),0);
+  const pagadoFactura = pagadoFacturaOC(facturaId);
   const saldoFactura = Math.max(0, Number(f.total||0) - pagadoFactura);
   const monto = Math.min(Number(montoAplicar)||Number(p.monto||0), Number(p.monto||0), saldoFactura);
   if (monto <= 0) { toast('No hay saldo pendiente que aplicar','error'); return; }
@@ -2378,7 +2378,7 @@ function verFacturaOC(facturaId) {
   const oc     = state.oc.find(o => o.id === f.oc_id);
   const prov   = state.proveedores.find(p => p.id === oc?.proveedor_id);
   const pagos  = (state.pagosOC||[]).filter(p => p.factura_id === facturaId);
-  const pagado = pagos.reduce((s,p)=>s+Number(p.monto||0),0);
+  const pagado = pagadoFacturaOC(facturaId);
   const total  = Number(f.total||0);
   const saldo  = Math.max(0, total - pagado);
   const esCancelada = f.status === 'cancelada';
@@ -2567,7 +2567,7 @@ function imprimirFacturaOC(facturaId) {
   const oc     = state.oc.find(o => o.id === f.oc_id);
   const prov   = state.proveedores.find(p => p.id === oc?.proveedor_id);
   const pagos  = (state.pagosOC||[]).filter(p => p.factura_id === facturaId);
-  const pagado = pagos.reduce((s,p)=>s+Number(p.monto||0),0);
+  const pagado = pagadoFacturaOC(facturaId);
   const total  = Number(f.total||0);
   const saldo  = Math.max(0, total - pagado);
   const monedaOC = getMonedaOC(f.oc_id);
@@ -2785,7 +2785,7 @@ function renderOCPanel(ocId) {
   const monedaOCFacturas = getMonedaOC(ocId);
   document.getElementById('oc-panel-facturas').innerHTML = facts.map(f=>{
     const pagosF  = (state.pagosOC||[]).filter(p=>p.factura_id===f.id);
-    const pagado   = pagosF.reduce((s,p)=>s+Number(p.monto||0),0);
+    const pagado   = pagadoFacturaOC(f.id);
     const saldo    = Math.max(0, Number(f.total||0) - pagado);
     const esPagada = saldo <= 0.01;
     const esParcial = pagado > 0 && !esPagada;
@@ -4364,7 +4364,14 @@ async function saveConfirmarNC() {
     if (esUSD) {
       const diff = Number((montoConfirmadoGTQ - Number(nc.monto_gtq||0)).toFixed(2));
       if (Math.abs(diff) >= 0.01) {
-        const esGanancia = diff < 0; // mismo criterio que asientoDiferencialCambiario para 'pago'
+        // FIX (29/Oct/2026, confirmado en pruebas — AS-2026-00038): antes era
+        // `diff < 0`, copiado de la lógica de PAGOS (pagar más quetzales =
+        // pérdida). En una NC es al revés: si el monto confirmado vale MÁS
+        // quetzales que lo parqueado en 51101099, la empresa recibe más →
+        // GANANCIA, y el ajuste sube 51101099 (Debe) hasta el monto
+        // confirmado, que es exactamente lo que aplicarNotaCredito() libera
+        // después (Haber). Con el signo invertido 51101099 quedaba en ±2×diff.
+        const esGanancia = diff > 0;
         const montoDiff  = Math.abs(diff);
         const ctaGanPer  = ctaCambiaria(esGanancia);
         const cta51101099 = _cta51101099();
@@ -4404,64 +4411,149 @@ async function saveConfirmarNC() {
   }
 }
 
+// Monto ya cancelado de una factura de compra, en la MONEDA NATIVA de la
+// factura (la de f.total): pagos (erp_pagos_oc.monto) + Notas de Crédito
+// aplicadas (erp_oc_notas_credito.monto, también nativo). 29/Oct/2026 —
+// antes cada pantalla sumaba solo los pagos, así que una NC aplicada no
+// reducía el saldo en ningún lado (factura, Libro de Compras, panel de OC,
+// modal de pago), y savePago() sobrescribía monto_pagado sin contarla.
+// Fuente única: cualquier cálculo de "pagado/saldo" de una factura de OC
+// debe pasar por aquí.
+function ncAplicadoFacturaOC(facturaId) {
+  return (state.notasCreditoOC||[])
+    .filter(nc => nc.factura_id === facturaId)
+    .reduce((s,nc) => s + Number(nc.monto||0), 0);
+}
+function pagadoFacturaOC(facturaId) {
+  const pagos = (state.pagosOC||[])
+    .filter(p => p.factura_id === facturaId)
+    .reduce((s,p) => s + Number(p.monto||0), 0);
+  return Number((pagos + ncAplicadoFacturaOC(facturaId)).toFixed(2));
+}
+
 // Aplica una NC ya confirmada contra una factura de OC no pagada — mismo
 // concepto que asignarPagoOC() con anticipos, pero la contrapartida es
-// 51101099 (no una cuenta "sin aplicar" separada) y nunca cobra diferencial
-// cambiario acá (ya se resolvió, si aplicaba, en saveConfirmarNC).
+// 51101099 (no una cuenta "sin aplicar" separada).
+//
+// FIX (29/Oct/2026, confirmado en pruebas — AS-2026-00039 / factura
+// A3025809324): antes comparaba nc.monto_gtq (QUETZALES) contra f.total y
+// monto_pagado (moneda NATIVA de la factura, USD en Keer America): una NC de
+// US$260 dejaba la factura con "pagado 2,002.00" sobre US$6,750. Ahora:
+//   · saldo y monto_pagado se calculan en la moneda nativa (nc.monto);
+//   · 51101099 se libera por los GTQ confirmados de la NC (nc.monto_gtq),
+//     que es exactamente lo que quedó parqueado tras saveConfirmarNC();
+//   · Cuentas por Pagar se debita al TC de la FACTURA (lo que está
+//     registrado de ese pasivo), igual que un pago en USD;
+//   · si ambos difieren (TC de confirmación de la NC ≠ TC de la factura),
+//     la diferencia va a Ganancia/Pérdida Cambiaria — misma regla que ya
+//     rige para pagos: "diferencias a la fecha de pago van a diferencial
+//     cambiario". En el mismo asiento, para que siempre cuadre.
 async function aplicarNotaCredito(ncId, facturaId, montoAplicar) {
-  const nc = (state.notasCreditoOC||[]).find(x => x.id === ncId);
-  const f  = (state.ocFacturas||[]).find(x => x.id === facturaId);
-  if (!nc || !f) { toast('NC o factura no encontrada','error'); return; }
-  if (nc.estado !== 'confirmada') { toast('Esa NC todavía no está confirmada','error'); return; }
-  if (nc.factura_id) { toast('Esa NC ya está aplicada a una factura','error'); return; }
-  if (f.status === 'cancelada') { toast('Esa factura está cancelada','error'); return; }
-  const oc = state.oc.find(o => o.id === f.oc_id);
-  if (oc?.proveedor_id && nc.proveedor_id && oc.proveedor_id !== nc.proveedor_id) {
-    toast('La NC y la factura son de proveedores distintos','error'); return;
-  }
-  const pagadoFactura = (state.pagosOC||[]).filter(x=>x.factura_id===facturaId).reduce((s,x)=>s+Number(x.monto||0),0);
-  const ncsAplicadas  = (state.notasCreditoOC||[]).filter(x=>x.factura_id===facturaId).reduce((s,x)=>s+Number(x.monto_gtq||0),0);
-  const saldoFactura  = Math.max(0, Number(f.total||0) - pagadoFactura - ncsAplicadas);
-  const monto = Math.min(Number(montoAplicar)||Number(nc.monto_gtq||0), Number(nc.monto_gtq||0), saldoFactura);
-  if (monto <= 0) { toast('No hay saldo pendiente que aplicar','error'); return; }
+  try {
+    const nc = (state.notasCreditoOC||[]).find(x => x.id === ncId);
+    const f  = (state.ocFacturas||[]).find(x => x.id === facturaId);
+    if (!nc || !f) { toast('NC o factura no encontrada','error'); return; }
+    if (nc.estado !== 'confirmada') { toast('Esa NC todavía no está confirmada','error'); return; }
+    if (nc.factura_id) { toast('Esa NC ya está aplicada a una factura','error'); return; }
+    if (f.status === 'cancelada') { toast('Esa factura está cancelada','error'); return; }
+    const oc = state.oc.find(o => o.id === f.oc_id);
+    if (oc?.proveedor_id && nc.proveedor_id && oc.proveedor_id !== nc.proveedor_id) {
+      toast('La NC y la factura son de proveedores distintos','error'); return;
+    }
+    const monedaFact = getMonedaOC(f.oc_id) || 'GTQ';
+    const monedaNC   = nc.moneda || 'GTQ';
+    if (monedaFact !== monedaNC) {
+      alert(`No se puede aplicar ${nc.numero}: la NC está en ${monedaNC} y la factura en ${monedaFact}.`);
+      return;
+    }
 
-  const prov = (state.proveedores||[]).find(x => x.id === nc.proveedor_id);
-  const ctaPorPagar  = ctaPorPagarOC(f.oc_id);
-  const cta51101099  = _cta51101099();
-  await crearAsiento({
-    diario: 'BANCOS', fecha: today(),
-    descripcion: `Aplicación NC ${nc.numero} — ${f.serie||''}${f.numero} — ${prov?.name||''}`,
-    referencia: `APLICA-NC-${nc.numero}`, referencia_id: nc.id,
-    moneda: 'GTQ', tipo_cambio: 1,
-    lineas: [
-      { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: monto, haber: 0, descripcion: `NC ${nc.numero} aplicada a ${f.serie||''}${f.numero}` },
-      { cuenta_id: cta51101099?.id||null, cuenta_codigo: cta51101099?.codigo||'51101099', cuenta_nombre: cta51101099?.nombre||'Devoluciones y rebajas sobre compras', debe: 0, haber: monto, descripcion: `NC ${nc.numero} aplicada` },
-    ],
-  });
+    const ncNativo = Number(nc.monto||0);
+    const ncGTQ    = Number(nc.monto_gtq||0);
+    const saldoFactura = Number(Math.max(0, Number(f.total||0) - pagadoFacturaOC(facturaId)).toFixed(2));
+    const montoNativo  = Number(Math.min(Number(montoAplicar)||ncNativo, ncNativo, saldoFactura).toFixed(2));
+    if (montoNativo <= 0) { toast('No hay saldo pendiente que aplicar','error'); return; }
 
-  if (monto < Number(nc.monto_gtq||0)) {
-    const remanente = Number(nc.monto_gtq||0) - monto;
-    await sb.from('erp_oc_notas_credito').update({ factura_id: facturaId, monto_gtq: monto }).eq('id', ncId);
-    await sb.from('erp_oc_notas_credito').insert({
-      numero: nc.numero, estado: 'confirmada', proveedor_id: nc.proveedor_id,
-      oc_id: nc.oc_id, recepcion_id: nc.recepcion_id, recepcion_item_id: nc.recepcion_item_id,
-      numero_devolucion: nc.numero_devolucion, moneda: nc.moneda, monto: nc.monto,
-      monto_gtq: remanente, documento_proveedor: nc.documento_proveedor,
-      fecha_confirmacion: nc.fecha_confirmacion, tc_confirmacion: nc.tc_confirmacion,
-      notas: `Remanente sin aplicar de ${nc.numero}`,
+    const esTotal = Math.abs(montoNativo - ncNativo) < 0.005;
+    const esUSD   = monedaFact === 'USD';
+    // GTQ que se liberan de 51101099: todo lo confirmado si se aplica
+    // completa (sin redondeos acumulados); proporcional si es parcial.
+    const gtq51101099 = esTotal ? Number(ncGTQ.toFixed(2)) : Number((ncGTQ * montoNativo / ncNativo).toFixed(2));
+    // GTQ con que se cancela el pasivo: al TC con que se registró la factura.
+    const tcFactura = esUSD ? (Number(f.tc) || getTCFecha(f.fecha)) : 1;
+    const gtqCxP    = esUSD ? Number((montoNativo * tcFactura).toFixed(2)) : gtq51101099;
+    const diffTC    = Number((gtq51101099 - gtqCxP).toFixed(2));
+
+    const prov = (state.proveedores||[]).find(x => x.id === nc.proveedor_id);
+    const ctaPorPagar  = ctaPorPagarOC(f.oc_id);
+    const cta51101099  = _cta51101099();
+    const refFact = `${f.serie||''}${f.numero}`;
+    const lineas = [
+      { cuenta_id: ctaPorPagar?.id||null, cuenta_codigo: ctaPorPagar?.codigo||'CXP', cuenta_nombre: ctaPorPagar?.nombre||'Cuentas x Pagar', debe: gtqCxP, haber: 0,
+        descripcion: `NC ${nc.numero} aplicada a ${refFact}${esUSD?` — ${monedaFact} ${montoNativo.toFixed(2)} × ${tcFactura.toFixed(4)}`:''}` },
+      { cuenta_id: cta51101099?.id||null, cuenta_codigo: cta51101099?.codigo||'51101099', cuenta_nombre: cta51101099?.nombre||'Devoluciones y rebajas sobre compras', debe: 0, haber: gtq51101099,
+        descripcion: `NC ${nc.numero} aplicada` },
+    ];
+    if (Math.abs(diffTC) >= 0.01) {
+      // diffTC > 0: la NC libera más GTQ de los que vale el pasivo que
+      // cancela → falta Debe → Pérdida Cambiaria. diffTC < 0 → Ganancia.
+      const esGanancia = diffTC < 0;
+      const ctaGanPer  = ctaCambiaria(esGanancia);
+      const descTC = `Diferencial TC — factura ${tcFactura.toFixed(4)} vs. NC ${Number(nc.tc_confirmacion||0).toFixed(4)}`;
+      lineas.push(esGanancia
+        ? { cuenta_id: ctaGanPer?.id||null, cuenta_codigo: CTA_GANANCIA_CAMBIARIA, cuenta_nombre: ctaGanPer?.nombre||'Ganancia Cambiaria', debe: 0, haber: Math.abs(diffTC), descripcion: descTC }
+        : { cuenta_id: ctaGanPer?.id||null, cuenta_codigo: CTA_PERDIDA_CAMBIARIA, cuenta_nombre: ctaGanPer?.nombre||'Pérdida Cambiaria', debe: Math.abs(diffTC), haber: 0, descripcion: descTC });
+    }
+
+    const asientoId = await crearAsiento({
+      diario: 'BANCOS', fecha: today(),
+      descripcion: `Aplicación NC ${nc.numero} — ${refFact} — ${prov?.name||''}`,
+      referencia: `APLICA-NC-${nc.numero}`, referencia_id: nc.id,
+      moneda: 'GTQ', tipo_cambio: 1,
+      lineas,
     });
-  } else {
-    await sb.from('erp_oc_notas_credito').update({ factura_id: facturaId }).eq('id', ncId);
+    if (!asientoId) { alert(`No se pudo registrar el asiento de aplicación de ${nc.numero}. La NC NO se aplicó.`); return; }
+
+    if (!esTotal) {
+      // Parcial: la fila original queda con la porción aplicada y el
+      // remanente se separa en una fila nueva sin aplicar — ambas con su
+      // monto NATIVO y GTQ proporcionales (antes las dos conservaban el
+      // monto nativo completo).
+      const { error: e1 } = await sb.from('erp_oc_notas_credito')
+        .update({ factura_id: facturaId, monto: montoNativo, monto_gtq: gtq51101099 }).eq('id', ncId);
+      if (e1) { alert(`Asiento registrado pero no se pudo marcar ${nc.numero} como aplicada:\n${e1.message}\n\nRevisar manualmente.`); await loadAll(); return; }
+      const { error: e2 } = await sb.from('erp_oc_notas_credito').insert({
+        numero: nc.numero, estado: 'confirmada', proveedor_id: nc.proveedor_id,
+        oc_id: nc.oc_id, recepcion_id: nc.recepcion_id, recepcion_item_id: nc.recepcion_item_id,
+        numero_devolucion: nc.numero_devolucion, moneda: nc.moneda,
+        monto: Number((ncNativo - montoNativo).toFixed(2)),
+        monto_gtq: Number((ncGTQ - gtq51101099).toFixed(2)),
+        tc_devolucion: nc.tc_devolucion, documento_proveedor: nc.documento_proveedor,
+        fecha_confirmacion: nc.fecha_confirmacion, tc_confirmacion: nc.tc_confirmacion,
+        notas: `Remanente sin aplicar de ${nc.numero}`,
+      });
+      if (e2) { alert(`No se pudo crear el remanente de ${nc.numero}:\n${e2.message}\n\nRevisar manualmente.`); }
+    } else {
+      const { error: e1 } = await sb.from('erp_oc_notas_credito').update({ factura_id: facturaId }).eq('id', ncId);
+      if (e1) { alert(`Asiento registrado pero no se pudo marcar ${nc.numero} como aplicada:\n${e1.message}\n\nRevisar manualmente.`); await loadAll(); return; }
+    }
+
+    await loadAll();
+    // Recalcular desde la fuente única ya con la NC marcada (moneda nativa).
+    const nuevoPagado = pagadoFacturaOC(facturaId);
+    const { error: eF } = await sb.from('erp_oc_facturas').update({
+      monto_pagado: nuevoPagado,
+      estado_pago: nuevoPagado >= Number(f.total||0) - 0.005 ? 'pagado' : (nuevoPagado > 0 ? 'parcial' : 'pendiente'),
+    }).eq('id', facturaId);
+    if (eF) alert('NC aplicada, pero no se pudo actualizar el estado de pago de la factura:\n' + eF.message);
+
+    await loadAll();
+    // Refresca el panel de la OC si es el que está abierto (de ahí se llega
+    // al modal de pago), para que el saldo nuevo se vea sin recargar.
+    if (oc && typeof currentOCId !== 'undefined' && currentOCId === oc.id) showOCPanel(oc.id);
+    toast(`✓ NC ${nc.numero} aplicada a ${refFact} — ${fmtMoney(montoNativo, monedaFact)}`);
+  } catch(e) {
+    alert('Error inesperado en aplicarNotaCredito:\n\n' + e.message + '\n\n' + e.stack);
   }
-
-  const nuevoPagado = pagadoFactura + ncsAplicadas + monto;
-  await sb.from('erp_oc_facturas').update({
-    monto_pagado: nuevoPagado,
-    estado_pago: nuevoPagado >= Number(f.total||0) ? 'pagado' : 'parcial',
-  }).eq('id', facturaId);
-
-  toast(`✓ NC aplicada a ${f.serie||''}${f.numero}`);
-  await loadAll();
 }
 
 // Bloque de "NC disponibles" dentro del modal de Pago a Proveedor — mismo
