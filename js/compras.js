@@ -1857,6 +1857,10 @@ async function desasignarPagoOC(pagoId) {
 
   toast(`Pago ${p.num_pago||''} desasignado — disponible para aplicar a otra factura`);
   await loadAll();
+  // Refresca la lista de Pagos (30/Oct/2026, reportado en vivo: había que
+  // salir y volver a entrar para ver el pago como "Sin Aplicar").
+  // confirmarAplicarPago() ya lo hacía; desasignar no.
+  if (typeof renderPagos === 'function') renderPagos();
 }
 
 // Aplica un pago sin aplicar (o su remanente) a una factura — `monto`
