@@ -71,6 +71,14 @@ function _pagoCtaOptsProveedor(provId) {
 // que ya quedó grabado en el Libro de Compras al generar la factura —
 // misma fuente que usa asientoFacturaCompra(), nunca se recalcula el IVA
 // de nuevo aquí).
+//
+// RETENCIÓN PENDIENTE (30/Oct/2026, confirmado en pruebas y regla dada por
+// Oliver: "siempre se hace el pago de la retención en el primer abono").
+// Devuelve lo que FALTA retener: la retención total de la factura menos lo ya
+// retenido en sus pagos anteriores. Antes devolvía siempre el total, y un
+// segundo abono volvía a sugerir Q669.64 → retención doble. Lo ya retenido se
+// lee de los asientos de los pagos de la factura (cuenta 21104002) —
+// erp_pagos_oc no guarda la retención por pago.
 function retencionISRFactura(facturaId) {
   const f = (state.ocFacturas||[]).find(x => x.id === facturaId);
   if (!f || !f.sujeto_retencion_isr) return 0;
@@ -79,7 +87,20 @@ function retencionISRFactura(facturaId) {
   if (prov?.regimen_isr !== 'opcional_simplificado') return 0;
   const compra = (state.compras||[]).find(c => c.factura_id === facturaId);
   const neto   = compra ? Number(compra.valor_neto||0) : 0;
-  return calcRetencionISR(neto);
+  const total  = calcRetencionISR(neto);
+  return round2(Math.max(0, total - retencionISRYaAplicada(facturaId)));
+}
+
+// Retención ISR ya registrada en los pagos de una factura de OC: saldo
+// acreedor de 21104002 en los asientos de esos pagos (vía asientosDePago).
+function retencionISRYaAplicada(facturaId) {
+  const ctaRet  = ctaRetencionISR();
+  const codigo  = ctaRet?.codigo || '21104002';
+  const pagos   = (state.pagosOC||[]).filter(p => p.factura_id === facturaId);
+  const asiIds  = new Set(pagos.flatMap(p => asientosDePago(p)).map(a => a.id));
+  return round2((state.asientoLineas||[])
+    .filter(l => asiIds.has(l.asiento_id) && l.cuenta_codigo === codigo)
+    .reduce((s,l) => s + Number(l.haber_gtq ?? l.haber ?? 0) - Number(l.debe_gtq ?? l.debe ?? 0), 0));
 }
 
 // (COMPRAS — solo proveedores tienen retención ISR.)
@@ -564,6 +585,11 @@ async function savePago() {
         const f    = state.ocFacturas.find(x=>x.id===d.factura_id);
         const ocF  = state.oc.find(o=>o.id===f?.oc_id);
         const provF = state.proveedores.find(p=>p.id===ocF?.proveedor_id);
+        // Retención ISR pendiente de ESTA factura (30/Oct/2026). Antes el modo
+        // múltiple la mostraba en la previsualización (buildLineasPago) pero
+        // el asiento real NO la registraba: se pagaba el 100% al proveedor.
+        // Se calcula ANTES de insertar el pago, con el estado previo.
+        const retD = Math.min(retencionISRFactura(d.factura_id), d.monto);
         // Pagos a proveedores (OC) van a erp_pagos_oc, no a erp_pagos (ver
         // nota en el modo single arriba). Antes este insert tampoco
         // revisaba si fallaba — seguía de largo marcando la factura como
@@ -593,7 +619,8 @@ async function savePago() {
           referencia: referencia||`PAGO-${f?.serie||''}${f?.numero||''}`, referencia_id: pagoMultiRow?.id||null, moneda,
           lineas: [
             { cuenta_id: ctaPorPagarF?.id||null, cuenta_codigo: ctaPorPagarF?.codigo||'CXP', cuenta_nombre: ctaPorPagarF?.nombre||'Cuentas x Pagar', debe: d.monto, haber: 0, descripcion: descCxP },
-            { cuenta_id: ctaTransitoriaMulti?.id||null, cuenta_codigo: ctaTransitoriaMulti?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoriaMulti?.nombre||'Pagos Pendientes', debe: 0, haber: d.monto, descripcion: `Pendiente de confirmar — ${cuentaBancariaMulti?.name||''}` },
+            ...(retD > 0 ? [(() => { const cr = ctaRetencionISR(); return { cuenta_id: cr?.id||null, cuenta_codigo: cr?.codigo||'21104002', cuenta_nombre: cr?.nombre||'Retenciones ISR por Pagar', debe: 0, haber: retD, descripcion: `Retención ISR — ${descCxP}` }; })()] : []),
+            { cuenta_id: ctaTransitoriaMulti?.id||null, cuenta_codigo: ctaTransitoriaMulti?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoriaMulti?.nombre||'Pagos Pendientes', debe: 0, haber: round2(d.monto - retD), descripcion: `Pendiente de confirmar — ${cuentaBancariaMulti?.name||''}` },
           ],
         });
 
