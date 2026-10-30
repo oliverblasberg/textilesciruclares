@@ -499,22 +499,23 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 /* ── PRINT HINT ── */
 .ptr-hint { display: none; }
 
-/* ── TOAST ── */
-.toast-container {
-  position: fixed; bottom: 24px; right: 24px;
-  display: flex; flex-direction: column; gap: 8px; z-index: 2000;
-  pointer-events: none;
-}
-.toast {
-  padding: 11px 18px; border-radius: 8px;
+/* ── TOAST ──
+   FIX (29/Oct/2026): toast() escribe en <div id="toast"> con las clases
+   'show success' / 'show error', pero el CSS existente estaba escrito para
+   .toast-container/.toast-success/.toast-error, que nada usaba. Resultado:
+   el div no tenía estilo — quedaba como texto suelto al final de la página,
+   fuera de vista. NINGÚN toast del sistema se veía, incluidos los de error
+   de validación. Estas reglas apuntan al elemento y clases reales. */
+#toast {
+  position: fixed; bottom: 24px; right: 24px; z-index: 2000;
+  padding: 11px 18px; border-radius: 8px; max-width: 360px;
   font-family: inherit; font-size: 13.5px; font-weight: 500;
-  box-shadow: var(--shadow-md); pointer-events: all;
-  animation: toastIn 0.22s ease;
-  max-width: 360px;
+  background: #1E293B; color: #fff; box-shadow: var(--shadow-md);
+  opacity: 0; transform: translateY(8px); pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.22s ease;
 }
-.toast-success { background: #1E293B; color: #fff; }
-.toast-error   { background: var(--red); color: #fff; }
-@keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+#toast.show  { opacity: 1; transform: translateY(0); pointer-events: all; }
+#toast.error { background: var(--red); }
 
 /* ── HOME LAUNCHER ── */
 #home-launcher {
@@ -6359,11 +6360,16 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
 });
 
 // ═══ TOAST ═══
+// Un solo temporizador: si llega un toast nuevo antes de que se oculte el
+// anterior, se reinicia el conteo (antes el timer del primero ocultaba al
+// segundo antes de tiempo). Los de error duran más para poder leerlos.
+let _toastTimer = null;
 function toast(msg, type='success') {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.className = 'show ' + type;
-  setTimeout(() => t.className = '', 3000);
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.className = '', type === 'error' ? 5000 : 3000);
 }
 
 // ═══ AUDITORÍA (bitácora de acciones) ═══
@@ -9074,13 +9080,14 @@ function getFactLineas(ovId, monedaOV) {
     const prodId   = tr.dataset.productoId;
     const ovItemId = tr.dataset.ovItemId || null;
     const llevaIva = document.getElementById(`fact-iva-${idx}`)?.checked !== false;
-    const totalLn  = parseFloat((cantidad * precio).toFixed(4));
-    const neto     = llevaIva ? parseFloat((totalLn / 1.12).toFixed(4)) : totalLn;
+    // Montos a 2 decimales (29/Oct/2026, política de redondeo — round2 en utils.js).
+    const totalLn  = round2(cantidad * precio);
+    const neto     = llevaIva ? round2(totalLn / 1.12) : totalLn;
     out.push({
       producto_id: prodId, ov_item_id: ovItemId,
       unidad: 'kg',
       cantidad, precio_unit: precio, lleva_iva: llevaIva,
-      neto, iva: parseFloat((totalLn - neto).toFixed(4)), total: totalLn,
+      neto, iva: round2(totalLn - neto), total: totalLn,
       moneda: monedaOV,
       motivo_cantidad: null, motivo_precio: null,
       precio_ov: null, diferencia_precio: 0,
@@ -9642,7 +9649,7 @@ async function saveFactura() {
       );
       if (!motivo || !motivo.trim()) { toast('Se requiere una razón para facturar a un precio distinto','error'); return; }
       ln.motivo_precio = motivo.trim();
-      ln.diferencia_precio = parseFloat(difTot.toFixed(4));
+      ln.diferencia_precio = round2(difTot);
     }
   }
 
@@ -12143,7 +12150,7 @@ async function saveOP(estado = 'borrador') {
     bodega_entrada: document.getElementById('op-bodega-entrada').value||null,
     bodega_salida:  document.getElementById('op-bodega-salida').value||null,
     estado,
-    costo_total:    parseFloat((costoMPConMerma + costoConvTotal).toFixed(4)),
+    costo_total:    round2(costoMPConMerma + costoConvTotal),
     notas:          document.getElementById('op-notas').value.trim(),
     ov_id:          document.getElementById('op-ov')?.value || null,
   };
@@ -12210,7 +12217,7 @@ async function saveOP(estado = 'borrador') {
         op_id: opId,
         descripcion: 'Servicio de conversión', tipo: 'por_kg',
         monto: costoConvTotal, moneda: 'GTQ', tipo_cambio: 1,
-        monto_gtq: parseFloat(costoConvTotal.toFixed(4)),
+        monto_gtq: round2(costoConvTotal),
         proveedor_id: provConvOP?.id||null,
       }]);
       if (errCosto) {
@@ -12741,7 +12748,7 @@ async function confirmarRollo() {
 
   const ctaProceso = state.nomenclatura.find(n => n.codigo === CTA_INV_PROCESO);
   const ctaDestino = getCtaValoracionProducto(op.producto_id) || state.nomenclatura.find(n=>n.codigo===CTA_INV_TERMINADO);
-  const monto      = parseFloat((peso * costoUnit).toFixed(4));
+  const monto      = round2(peso * costoUnit);
   await crearAsiento({
     diario: DIARIO_MANUFACTURA, fecha: fechaMov,
     descripcion: `OP ${op.numero} — Recepción rollo ${numero} — ${fmtNum(peso)} kg`,
@@ -13190,7 +13197,7 @@ async function confirmarCompletarOP() {
     const cu = Number(c.costo_unitario||0);
     await sb.from('erp_op_consumos').update({
       cantidad_real: nuevoReal,
-      costo_total:   parseFloat((nuevoReal*cu).toFixed(4)),
+      costo_total:   round2(nuevoReal*cu),
       capturado_at:  new Date().toISOString(),
     }).eq('id', c.id);
 
@@ -13920,7 +13927,7 @@ async function confirmarScanFactura() {
         for (const {envio, item} of matches) {
           if (item?.id) {
             const pct   = totalKgs > 0 ? Number(item.cantidad||0) / totalKgs : 0;
-            const monto = parseFloat((totalFact * pct).toFixed(4));
+            const monto = round2(totalFact * pct);
             await sb.from('erp_oc_recepcion_items').update({
               estado:          'facturado',
               monto_asignado:  monto,
@@ -14163,7 +14170,7 @@ async function planificarFabricacion(prod, cantidad, fecha, origen_tipo, origen_
     numero, tipo: 'tejido_interno', receta_id: receta.id,
     producto_id: prod.id, fecha_inicio: fecha,
     cantidad_prog: cantidad, lote_produccion: loteOP,
-    estado: 'borrador', costo_total: parseFloat(costoMP.toFixed(4)),
+    estado: 'borrador', costo_total: round2(costoMP),
     ov_id: ovId,
     oc_id: (origen_tipo === 'OC-SUB' || origen_tipo === 'OC') ? origenRowId : null,
     notas: `Generado automáticamente desde ${formatOrigenCascada(origen_tipo, origen_id)}`,
@@ -14342,8 +14349,8 @@ async function planificarSubcontrato(prod, cantidad, fecha, origen_tipo, origen_
       cantidad, unidad: prod.unidad||'kg',
       precio_unit: precioServ, moneda: monedaServ, tc: tcServ,
       precio_unit_contable: precioServCta,
-      total_orig: parseFloat((precioServ * cantidad).toFixed(4)),
-      total_contable: parseFloat((precioServCta * cantidad).toFixed(4)),
+      total_orig: round2(precioServ * cantidad),
+      total_contable: round2(precioServCta * cantidad),
     });
     if (eLineaServ) console.error('Error creando línea de OC servicio:', eLineaServ);
     toast(`Borrador de OC Servicio → ${provSub?.name||'subcontratista'} | ${cantidad} kg (pendiente de confirmar)`);
@@ -15252,7 +15259,7 @@ async function confirmarAsignacionLotes(idx, insumoId) {
       const { error: cErr } = await sb.from('erp_op_consumos').insert({
         op_id: docId, insumo_id: insumoId,
         cantidad_prog: a.cantidad, cantidad_real: a.cantidad,
-        costo_unitario: a.costo, costo_total: parseFloat((a.cantidad*a.costo).toFixed(4)),
+        costo_unitario: a.costo, costo_total: round2(a.cantidad*a.costo),
         lote: a.lote, bodega_id: bodegaId,
         unidad: (state.productos||[]).find(p=>p.id===insumoId)?.unidad || 'kg',
       });
@@ -16199,7 +16206,7 @@ async function devolverReabastecimiento(numero) {
       const { error: cErr } = await sb.from('erp_op_consumos').insert({
         op_id: docId, insumo_id: r.insumo_id,
         cantidad_prog: 0, cantidad_real: -cantidad,
-        costo_unitario: r.costo_unitario, costo_total: -parseFloat((cantidad*r.costo_unitario).toFixed(4)),
+        costo_unitario: r.costo_unitario, costo_total: -round2(cantidad*r.costo_unitario),
         lote: r.lote, bodega_id: r.bodega_id,
         unidad: insumo?.unidad || 'kg',
         notas: `Devolución ${numeroDev} de ${numero}`,
