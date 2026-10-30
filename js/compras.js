@@ -4590,6 +4590,10 @@ async function aplicarNotaCredito(ncId, facturaId, montoAplicar) {
     // Refresca el panel de la OC si es el que está abierto (de ahí se llega
     // al modal de pago), para que el saldo nuevo se vea sin recargar.
     if (oc && typeof currentOCId !== 'undefined' && currentOCId === oc.id) showOCPanel(oc.id);
+    // El modal de pago queda ABIERTO (30/Oct/2026, a pedido explícito) y se
+    // vuelve a pintar con el saldo nuevo, la NC en el historial y la lista de
+    // NC disponibles actualizada — así se puede seguir pagando el resto.
+    if (document.getElementById('modal-pago')?.classList.contains('open')) await openPagoOC(facturaId);
     toast(`✓ NC ${nc.numero} aplicada a ${refFact} — ${fmtMoney(montoNativo, monedaFact)}`);
   } catch(e) {
     alert('Error inesperado en aplicarNotaCredito:\n\n' + e.message + '\n\n' + e.stack);
@@ -4613,7 +4617,7 @@ function _ncSinAplicarProveedor(proveedorId, facturaId) {
         <span style="color:var(--text2)">Devolución ${nc.numero_devolucion||''}</span>
         <strong style="font-family:'DM Mono',monospace;color:var(--green);margin-left:10px">${fmtMoney(nc.monto_gtq,'GTQ')}</strong>
       </div>
-      <button class="btn btn-sm btn-primary" onclick="closeModal('modal-pago');aplicarNotaCredito('${nc.id}','${facturaId}')">Usar esta NC</button>
+      <button class="btn btn-sm btn-primary" onclick="aplicarNotaCredito('${nc.id}','${facturaId}')">Usar esta NC</button>
     </div>`).join('');
 }
 
