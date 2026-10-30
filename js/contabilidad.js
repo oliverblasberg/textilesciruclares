@@ -329,7 +329,15 @@ async function crearAsiento({ diario, fecha, descripcion, referencia, referencia
     tc_aplicado: tcDisponible ? tcUsar : null,
   }).select().single();
 
-  if (error) { console.error('Error creando asiento:', error.message); return null; }
+  // FIX (30/Oct/2026): antes solo console.error — fallo silencioso. Se
+  // detectó en pruebas: un doble clic en "Registrar Pago" lanzó dos
+  // asientos con el mismo correlativo, el segundo fue rechazado y el pago
+  // quedó grabado SIN asiento sin que nadie se enterara.
+  if (error) {
+    console.error('Error creando asiento:', error.message);
+    alert(`ERROR CONTABLE — no se pudo registrar el asiento ${numero}\n\n${descripcion||''}\n\n${error.message}\n\nLa operación quedó SIN asiento contable. Avise para corregirlo antes de continuar.`);
+    return null;
+  }
 
   const lineasConId = lineasFinal.map(l => ({ ...l, asiento_id: asiento.id }));
   const { error: errLineas } = await sb.from('erp_asiento_lineas').insert(lineasConId);
