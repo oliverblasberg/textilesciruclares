@@ -235,9 +235,10 @@ function _pagoSinAplicarProveedor(proveedorId, facturaId) {
 
 function _pagoHistorial(facturaId) {
   const pagos = (state.pagosOC||[]).filter(p=>p.factura_id===facturaId);
+  const ncs   = ncsAplicadasFacturaOC(facturaId);
   const wrap  = document.getElementById('pago-historial-wrap');
   const hist  = document.getElementById('pago-historial');
-  if (pagos.length) {
+  if (pagos.length || ncs.length) {
     wrap.style.display = 'block';
     hist.innerHTML = pagos.map(p => {
       const cta = (state.nomenclatura||[]).find(n=>n.id===p.cuenta_id);
@@ -253,7 +254,15 @@ function _pagoHistorial(facturaId) {
         </div>
         <strong style="font-family:'DM Mono',monospace;color:var(--green)">${fmtGTQ(p.monto)}</strong>
       </div>`;
-    }).join('');
+    }).join('') + ncs.map(nc => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:7px;background:#EFF6FF;margin-bottom:6px;font-size:12px">
+        <div>
+          <span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);margin-right:8px">${nc.numero}</span>
+          <span style="font-weight:500">${nc.fecha_confirmacion?fmtDate(nc.fecha_confirmacion):'—'}</span>
+          <span style="color:var(--text2);margin:0 8px">·</span>
+          <span>Nota de Crédito — devolución ${nc.numero_devolucion||'—'}</span>
+        </div>
+        <strong style="font-family:'DM Mono',monospace;color:var(--green)">${fmtMoney(nc.monto, nc.moneda||'GTQ')}</strong>
+      </div>`).join('');
   } else { wrap.style.display = 'none'; }
 }
 
@@ -1349,13 +1358,14 @@ function getFocLineas(ocId, monedaOC) {
     const ocItemId= tr.dataset.ocItemId || null;
     const prod    = state.productos.find(p => p.id === prodId);
     const llevaIva= document.getElementById(`foc-iva-${idx}`)?.checked !== false;
-    const totalLn = parseFloat((cantidad * precio).toFixed(4));
-    const neto    = llevaIva ? parseFloat((totalLn / 1.12).toFixed(4)) : totalLn;
+    // Montos a 2 decimales (29/Oct/2026, política de redondeo — ver round2 en utils.js).
+    const totalLn = round2(cantidad * precio);
+    const neto    = llevaIva ? round2(totalLn / 1.12) : totalLn;
     out.push({
       producto_id: prodId, oc_item_id: ocItemId,
       unidad: prod?.unidad || tr.dataset.unidad || '',
       cantidad, precio_unit: precio, lleva_iva: llevaIva,
-      neto, iva: parseFloat((totalLn - neto).toFixed(4)), total: totalLn,
+      neto, iva: round2(totalLn - neto), total: totalLn,
       moneda: monedaOC,
       motivo_cantidad: null, motivo_precio: null,
       precio_oc: null, diferencia_precio: 0,
@@ -2080,8 +2090,10 @@ function asientosDeFactura(facturaId) {
   const pagos = (state.pagosOC||[]).filter(p => p.factura_id === facturaId);
   const directos = (state.asientos||[]).filter(a => a.referencia_id === facturaId);
   const dePagos   = pagos.flatMap(p => asientosDePago(p));
+  // NC aplicadas a esta factura (29/Oct/2026) — su asiento cancela CxP igual que un pago.
+  const deNCs     = ncsAplicadasFacturaOC(facturaId).flatMap(nc => asientosAplicacionNC(nc));
   const seen = new Set();
-  const todos = [...directos, ...dePagos].filter(a => {
+  const todos = [...directos, ...dePagos, ...deNCs].filter(a => {
     if (seen.has(a.id)) return false;
     seen.add(a.id); return true;
   });
@@ -2378,6 +2390,7 @@ function verFacturaOC(facturaId) {
   const oc     = state.oc.find(o => o.id === f.oc_id);
   const prov   = state.proveedores.find(p => p.id === oc?.proveedor_id);
   const pagos  = (state.pagosOC||[]).filter(p => p.factura_id === facturaId);
+  const ncsFact = ncsAplicadasFacturaOC(facturaId);
   const pagado = pagadoFacturaOC(facturaId);
   const total  = Number(f.total||0);
   const saldo  = Math.max(0, total - pagado);
@@ -2484,7 +2497,7 @@ function verFacturaOC(facturaId) {
 
     <div style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Pagos</div>
     <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px">
-      ${pagos.length ? pagos.map(p => {
+      ${(pagos.length || ncsFact.length) ? pagos.map(p => {
         const cta = state.cuentas.find(c => c.id === p.cuenta_id);
         return `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px">
           <div style="color:var(--text2);line-height:1.6">
@@ -2495,7 +2508,14 @@ function verFacturaOC(facturaId) {
           </div>
           <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--green);white-space:nowrap;margin-left:16px">${fmtMoney(p.monto, monedaOC)}</span>
         </div>`;
-      }).join('') : '<div style="padding:12px 16px;color:var(--text3);font-size:13px">Sin pagos registrados</div>'}
+      }).join('') + ncsFact.map(nc => `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px;background:#EFF6FF">
+          <div style="color:var(--text2);line-height:1.6">
+            <div><strong style="color:var(--text)">Nota de Crédito:</strong> ${nc.numero}${nc.documento_proveedor?` (doc. proveedor ${nc.documento_proveedor})`:''}</div>
+            <div><strong style="color:var(--text)">Fecha confirmación:</strong> ${nc.fecha_confirmacion?fmtDate(nc.fecha_confirmacion):'—'}</div>
+            <div><strong style="color:var(--text)">Devolución:</strong> ${nc.numero_devolucion||'—'}</div>
+          </div>
+          <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--green);white-space:nowrap;margin-left:16px">${fmtMoney(nc.monto, monedaOC)}</span>
+        </div>`).join('') : '<div style="padding:12px 16px;color:var(--text3);font-size:13px">Sin pagos registrados</div>'}
       <div style="display:flex;justify-content:flex-end;padding:10px 16px;background:var(--surface2);font-size:13px">
         <div style="display:flex;gap:20px">
           <span>Pagado: <strong style="color:var(--green)">${fmtMoney(pagado, monedaOC)}</strong></span>
@@ -2567,6 +2587,7 @@ function imprimirFacturaOC(facturaId) {
   const oc     = state.oc.find(o => o.id === f.oc_id);
   const prov   = state.proveedores.find(p => p.id === oc?.proveedor_id);
   const pagos  = (state.pagosOC||[]).filter(p => p.factura_id === facturaId);
+  const ncsFact = ncsAplicadasFacturaOC(facturaId);
   const pagado = pagadoFacturaOC(facturaId);
   const total  = Number(f.total||0);
   const saldo  = Math.max(0, total - pagado);
@@ -2601,7 +2622,7 @@ function imprimirFacturaOC(facturaId) {
     </tr>`;
   }).join('') || `<tr><td colspan="7" style="text-align:center;color:#9EA4B0">Sin líneas</td></tr>`;
 
-  const pagosRows = pagos.length ? pagos.map(p => {
+  const pagosRows = (pagos.length || ncsFact.length) ? pagos.map(p => {
     const cta = state.cuentas.find(c => c.id === p.cuenta_id);
     return `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 0;border-bottom:1px solid #F0F1F3;font-size:11px">
       <div style="color:#5E6470;line-height:1.6">
@@ -2612,7 +2633,14 @@ function imprimirFacturaOC(facturaId) {
       </div>
       <span style="font-weight:600;color:#16A34A;white-space:nowrap;margin-left:16px">${fmtMoney(p.monto, monedaOC)}</span>
     </div>`;
-  }).join('') : '<div style="color:#9EA4B0;font-size:11px">Sin pagos registrados</div>';
+  }).join('') + ncsFact.map(nc => `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 0;border-bottom:1px solid #F0F1F3;font-size:11px">
+      <div style="color:#5E6470;line-height:1.6">
+        <div><strong style="color:#1A1C21">Nota de Crédito:</strong> ${nc.numero}${nc.documento_proveedor?` (doc. proveedor ${nc.documento_proveedor})`:''}</div>
+        <div><strong style="color:#1A1C21">Fecha confirmación:</strong> ${nc.fecha_confirmacion?fmtDate(nc.fecha_confirmacion):'—'}</div>
+        <div><strong style="color:#1A1C21">Devolución:</strong> ${nc.numero_devolucion||'—'}</div>
+      </div>
+      <span style="font-weight:600;color:#16A34A;white-space:nowrap;margin-left:16px">${fmtMoney(nc.monto, monedaOC)}</span>
+    </div>`).join('') : '<div style="color:#9EA4B0;font-size:11px">Sin pagos registrados</div>';
 
   const win = window.open('','_blank','width=900,height=700');
   win.document.write(`<!DOCTYPE html><html><head>
@@ -3061,12 +3089,12 @@ function getOCLines() {
       moneda = provLine?.moneda || prod?.proveedores_compra?.[0]?.moneda || 'GTQ';
     }
 
-    const total_orig          = parseFloat((cantidad * precio_unit).toFixed(4));
+    const total_orig          = round2(cantidad * precio_unit);
     const tc                  = tcHoy() || 1;
     const precio_unit_contable = moneda === 'USD'
-      ? parseFloat((precio_unit * tc).toFixed(4))
+      ? round4(precio_unit * tc)
       : precio_unit;
-    const total_contable      = parseFloat((cantidad * precio_unit_contable).toFixed(4));
+    const total_contable      = round2(cantidad * precio_unit_contable);
 
     lines.push({
       producto_id:          prodId,
@@ -4226,8 +4254,11 @@ async function saveDevolucion() {
         recepcion_item_id: recItemDev?.id || null,
         numero_devolucion: numDev,
         moneda,
-        monto:             Number((cantidad * precioUnit).toFixed(2)),
-        monto_gtq:         Number(movDev?.costo_total_gtq || (cantidad * precioUnit)),
+        // A 2 decimales (29/Oct/2026): antes monto_gtq copiaba el costo del
+        // movimiento con 4 decimales (Q1,982.474) y dejaba Q0.004 colgado en
+        // 51101099 en cada ciclo de NC.
+        monto:             round2(cantidad * precioUnit),
+        monto_gtq:         round2(movDev?.costo_total_gtq || (cantidad * precioUnit)),
         tc_devolucion:     movDev?.tipo_cambio || null,
         notas:             `Generada automáticamente de la devolución ${numDev} — ${motivo}`,
       });
@@ -4356,13 +4387,13 @@ async function saveConfirmarNC() {
 
     const esUSD = (nc.moneda||'GTQ') === 'USD';
     const tc    = esUSD ? (parseFloat(document.getElementById('cnc-tc').value)||getTCFecha(fecha)) : 1;
-    const montoConfirmadoGTQ = esUSD ? Number((montoReal*tc).toFixed(2)) : montoReal;
+    const montoConfirmadoGTQ = esUSD ? round2(montoReal*tc) : round2(montoReal);
 
     // Diferencial cambiario contra 51101099 — solo aplica en USD, tal como
     // acordado explícitamente (en GTQ no hay ningún problema de TC). Nunca
     // toca Cuentas por Pagar acá.
     if (esUSD) {
-      const diff = Number((montoConfirmadoGTQ - Number(nc.monto_gtq||0)).toFixed(2));
+      const diff = round2(montoConfirmadoGTQ - Number(nc.monto_gtq||0));
       if (Math.abs(diff) >= 0.01) {
         // FIX (29/Oct/2026, confirmado en pruebas — AS-2026-00038): antes era
         // `diff < 0`, copiado de la lógica de PAGOS (pagar más quetzales =
@@ -4424,11 +4455,20 @@ function ncAplicadoFacturaOC(facturaId) {
     .filter(nc => nc.factura_id === facturaId)
     .reduce((s,nc) => s + Number(nc.monto||0), 0);
 }
+// Filas de NC aplicadas a una factura (para listarlas junto a los pagos).
+function ncsAplicadasFacturaOC(facturaId) {
+  return (state.notasCreditoOC||[]).filter(nc => nc.factura_id === facturaId);
+}
+// Asiento de aplicación de una NC — referencia_id apunta a la NC, no a la
+// factura, así que asientosDeFactura() no lo encontraba por sí solo.
+function asientosAplicacionNC(nc) {
+  return (state.asientos||[]).filter(a => a.referencia === `APLICA-NC-${nc.numero}` && a.referencia_id === nc.id);
+}
 function pagadoFacturaOC(facturaId) {
   const pagos = (state.pagosOC||[])
     .filter(p => p.factura_id === facturaId)
     .reduce((s,p) => s + Number(p.monto||0), 0);
-  return Number((pagos + ncAplicadoFacturaOC(facturaId)).toFixed(2));
+  return round2(pagos + ncAplicadoFacturaOC(facturaId));
 }
 
 // Aplica una NC ya confirmada contra una factura de OC no pagada — mismo
@@ -4469,19 +4509,19 @@ async function aplicarNotaCredito(ncId, facturaId, montoAplicar) {
 
     const ncNativo = Number(nc.monto||0);
     const ncGTQ    = Number(nc.monto_gtq||0);
-    const saldoFactura = Number(Math.max(0, Number(f.total||0) - pagadoFacturaOC(facturaId)).toFixed(2));
-    const montoNativo  = Number(Math.min(Number(montoAplicar)||ncNativo, ncNativo, saldoFactura).toFixed(2));
+    const saldoFactura = round2(Math.max(0, Number(f.total||0) - pagadoFacturaOC(facturaId)));
+    const montoNativo  = round2(Math.min(Number(montoAplicar)||ncNativo, ncNativo, saldoFactura));
     if (montoNativo <= 0) { toast('No hay saldo pendiente que aplicar','error'); return; }
 
     const esTotal = Math.abs(montoNativo - ncNativo) < 0.005;
     const esUSD   = monedaFact === 'USD';
     // GTQ que se liberan de 51101099: todo lo confirmado si se aplica
     // completa (sin redondeos acumulados); proporcional si es parcial.
-    const gtq51101099 = esTotal ? Number(ncGTQ.toFixed(2)) : Number((ncGTQ * montoNativo / ncNativo).toFixed(2));
+    const gtq51101099 = esTotal ? round2(ncGTQ) : round2(ncGTQ * montoNativo / ncNativo);
     // GTQ con que se cancela el pasivo: al TC con que se registró la factura.
     const tcFactura = esUSD ? (Number(f.tc) || getTCFecha(f.fecha)) : 1;
-    const gtqCxP    = esUSD ? Number((montoNativo * tcFactura).toFixed(2)) : gtq51101099;
-    const diffTC    = Number((gtq51101099 - gtqCxP).toFixed(2));
+    const gtqCxP    = esUSD ? round2(montoNativo * tcFactura) : gtq51101099;
+    const diffTC    = round2(gtq51101099 - gtqCxP);
 
     const prov = (state.proveedores||[]).find(x => x.id === nc.proveedor_id);
     const ctaPorPagar  = ctaPorPagarOC(f.oc_id);
@@ -4525,8 +4565,8 @@ async function aplicarNotaCredito(ncId, facturaId, montoAplicar) {
         numero: nc.numero, estado: 'confirmada', proveedor_id: nc.proveedor_id,
         oc_id: nc.oc_id, recepcion_id: nc.recepcion_id, recepcion_item_id: nc.recepcion_item_id,
         numero_devolucion: nc.numero_devolucion, moneda: nc.moneda,
-        monto: Number((ncNativo - montoNativo).toFixed(2)),
-        monto_gtq: Number((ncGTQ - gtq51101099).toFixed(2)),
+        monto: round2(ncNativo - montoNativo),
+        monto_gtq: round2(ncGTQ - gtq51101099),
         tc_devolucion: nc.tc_devolucion, documento_proveedor: nc.documento_proveedor,
         fecha_confirmacion: nc.fecha_confirmacion, tc_confirmacion: nc.tc_confirmacion,
         notas: `Remanente sin aplicar de ${nc.numero}`,
@@ -5835,14 +5875,15 @@ async function saveRecepcion() {
         const itemOCConv = state.ocItems.find(oi => oi.oc_id === oc.id && oi.producto_id === item.producto_id);
         const monedaConv = itemOCConv?.moneda || monedaOC || 'GTQ';
         const tcConv      = getTCFecha(fecha) || tcHoy() || 1;
-        const costoUnitConvGTQ = monedaConv === 'USD' ? parseFloat((item.costo_unit * tcConv).toFixed(4)) : item.costo_unit;
+        const costoUnitConvGTQ = monedaConv === 'USD' ? round4(item.costo_unit * tcConv) : item.costo_unit;
 
-        const montoMP    = parseFloat((item.cantidad * costoMPPorKgOC).toFixed(4));
-        const montoConv  = parseFloat((item.cantidad * costoUnitConvGTQ).toFixed(4));
-        const montoTotal = parseFloat((montoMP + montoConv).toFixed(4));
+        // Montos a 2 decimales (29/Oct/2026): son los que van al asiento.
+        const montoMP    = round2(item.cantidad * costoMPPorKgOC);
+        const montoConv  = round2(item.cantidad * costoUnitConvGTQ);
+        const montoTotal = round2(montoMP + montoConv);
         await crearMovimiento({
           tipo: 'entrada', producto_id: item.producto_id,
-          cantidad: item.cantidad, costo_unitario: parseFloat((costoMPPorKgOC + costoUnitConvGTQ).toFixed(4)),
+          cantidad: item.cantidad, costo_unitario: round4(costoMPPorKgOC + costoUnitConvGTQ),
           referencia_tipo: 'OC', referencia_id: numero,
           notas: `Recepción ${numero} — subcontrato: MP Q${montoMP.toFixed(2)} + conversión Q${montoConv.toFixed(2)}${item.lote?' | Lote:'+item.lote:''}`,
           fecha, lote: item.lote, poliza: item.poliza,
@@ -5936,7 +5977,7 @@ async function saveRecepcion() {
           conos:        c.conos,
           peso_bruto:   c.pb,
           peso_neto:    c.pn,
-          valor_total:  parseFloat((c.pn * item.costo_unit).toFixed(4)),
+          valor_total:  round2(c.pn * item.costo_unit),
           estado:       c.recibido ? 'recibido' : 'no_recibido',
         }));
         const { error:ePlC } = await sb.from('erp_oc_pl').insert(cajasRows);
@@ -6758,7 +6799,7 @@ async function saveFacturaOC() {
       );
       if (!motivo || !motivo.trim()) { toast('Se requiere una razón para facturar a un precio distinto','error'); return; }
       ln.motivo_precio = motivo.trim();
-      ln.diferencia_precio = parseFloat(difTot.toFixed(4));
+      ln.diferencia_precio = round2(difTot);
     }
   }
 
@@ -6826,7 +6867,7 @@ async function saveFacturaOC() {
         neto:        ln.neto,
         iva:         ln.iva,
         total:       ln.total,
-        total_gtq:   parseFloat((ln.total * (ln.moneda === 'USD' ? tc : 1)).toFixed(4)),
+        total_gtq:   round2(ln.total * (ln.moneda === 'USD' ? tc : 1)),
         motivo_cantidad:   ln.motivo_cantidad || null,
         motivo_precio:     ln.motivo_precio   || null,
         precio_oc:         ln.precio_oc,
