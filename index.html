@@ -9987,7 +9987,9 @@ function renderPagos() {
       : '';
     return `<tr>
       <td style="white-space:nowrap">${fmtDate(p.fecha)}</td>
-      <td class="td-mono" style="font-size:12px">${p.num_pago||'—'}</td>
+      <td class="td-mono" style="font-size:12px">${tab==='oc'
+        ? `<span onclick="verDetallePago('${p.id}')" title="Ver detalle del pago" style="cursor:pointer;color:var(--accent);font-weight:700;text-decoration:underline">${p.num_pago||'—'}</span>`
+        : (p.num_pago||'—')}</td>
       <td style="font-size:13px">${nombre}</td>
       <td><span class="badge badge-blue">${p.forma||'—'}</span></td>
       <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(p.monto, p.moneda||'GTQ')}${retPago>0?`<div style="font-size:10px;font-weight:400;color:var(--text3)">Ret. ISR ${fmtMoney(retPago,'GTQ')}</div>`:''}</td>

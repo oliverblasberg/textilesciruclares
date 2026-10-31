@@ -2322,8 +2322,11 @@ function verDetallePago(pagoId) {
   if (!p) { toast('Pago no encontrado','error'); return; }
   const f    = (state.ocFacturas||[]).find(x => x.id === p.factura_id);
   const oc   = f ? (state.oc||[]).find(o => o.id === f.oc_id) : null;
-  const prov = oc ? (state.proveedores||[]).find(pr => pr.id === oc.proveedor_id) : null;
+  // Proveedor: del pago mismo si está sin aplicar (no hay factura/OC de dónde
+  // sacarlo) — 31/Oct/2026, al abrir el detalle desde la lista de Pagos.
+  const prov = (state.proveedores||[]).find(pr => pr.id === (oc?.proveedor_id || p.proveedor_id)) || null;
   const cta  = (state.cuentas||[]).find(c => c.id === p.cuenta_id);
+  const retP = retencionISRDePago(p);
   const formaLabel = { transferencia:'Transferencia Bancaria', cheque:'Cheque', efectivo:'Efectivo', deposito:'Depósito' }[p.forma] || p.forma || '—';
 
   const html = `
@@ -2376,6 +2379,10 @@ function verDetallePago(pagoId) {
             <div style="font-family:'DM Mono',monospace">${p.referencia||'—'}</div></div>
           <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Orden de Compra</span>
             <div style="font-family:'DM Mono',monospace">${oc?.numero||'—'}</div></div>
+          <div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Estado</span>
+            <div>${f ? `<span class="badge badge-green">Aplicado a ${f.serie||''}${f.numero||''}</span>` : '<span class="badge badge-yellow">Sin Aplicar</span>'}</div></div>
+          ${retP > 0 ? `<div><span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Retención ISR · Salió del banco</span>
+            <div style="font-family:'DM Mono',monospace">${fmtMoney(retP,'GTQ')} · ${fmtMoney(round2(Number(p.monto||0)-retP), p.moneda||'GTQ')}</div></div>` : ''}
         </div>
         ${p.notas ? `<div style="padding:16px 24px">
           <span style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">Notas</span>
@@ -2426,7 +2433,9 @@ function imprimirPago(pagoId) {
   if (!p) { toast('Pago no encontrado','error'); return; }
   const f    = (state.ocFacturas||[]).find(x => x.id === p.factura_id);
   const oc   = f ? (state.oc||[]).find(o => o.id === f.oc_id) : null;
-  const prov = oc ? (state.proveedores||[]).find(pr => pr.id === oc.proveedor_id) : null;
+  // Proveedor: del pago mismo si está sin aplicar (no hay factura/OC de dónde
+  // sacarlo) — 31/Oct/2026, al abrir el detalle desde la lista de Pagos.
+  const prov = (state.proveedores||[]).find(pr => pr.id === (oc?.proveedor_id || p.proveedor_id)) || null;
   const cta  = (state.cuentas||[]).find(c => c.id === p.cuenta_id);
   const formaLabel = { transferencia:'Transferencia Bancaria', cheque:'Cheque', efectivo:'Efectivo', deposito:'Depósito' }[p.forma] || p.forma || '—';
 
