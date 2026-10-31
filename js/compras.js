@@ -184,7 +184,13 @@ function buildLineasPago() {
       const ctaRetIsr = ctaRetencionISR();
       lineas.push({ cuenta_id: ctaRetIsr?.id||null, cuenta_codigo: ctaRetIsr?.codigo||'21104002', cuenta_nombre: ctaRetIsr?.nombre||'Retenciones ISR por Pagar', debe: 0, haber: retencion, descripcion: `Retención ISR — ${descCxP}` });
     }
-    lineas.push({ cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: 0, haber: monto - retencion, descripcion: `Pendiente de confirmar — ${cuentaBancaria?.name||''}` });
+    // Un pago que es SOLO retención (efectivo = 0, ej. cubrir el saldo que dejó
+    // una retención anulada) no lleva línea de banco: antes quedaba una línea
+    // en cero contra Pagos Pendientes (30/Oct/2026).
+    const efectivo = round2(monto - retencion);
+    if (efectivo > 0) {
+      lineas.push({ cuenta_id: ctaTransitoria?.id||null, cuenta_codigo: ctaTransitoria?.codigo||'PAGOS-PEND', cuenta_nombre: ctaTransitoria?.nombre||'Pagos Pendientes', debe: 0, haber: efectivo, descripcion: `Pendiente de confirmar — ${cuentaBancaria?.name||''}` });
+    }
     return lineas;
   }
 
