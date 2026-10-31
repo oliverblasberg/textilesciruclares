@@ -265,7 +265,7 @@ function _pagoSinAplicarProveedor(proveedorId, facturaId) {
         <span>${p.forma||'—'}</span>
         <strong style="font-family:'DM Mono',monospace;color:var(--green);margin-left:10px">${fmtMoney(p.monto, p.moneda||'GTQ')}</strong>
       </div>
-      <button class="btn btn-sm btn-primary" onclick="closeModal('modal-pago');asignarPagoOC('${p.id}','${facturaId}')">Usar este pago</button>
+      <button class="btn btn-sm btn-primary" onclick="asignarPagoOC('${p.id}','${facturaId}')">Usar este pago</button>
     </div>`).join('');
 }
 
@@ -1973,7 +1973,16 @@ async function cancelarRetencionPago(pagoId, { sinConfirmar = false } = {}) {
 // queda ligada a la factura, y el remanente se separa en una fila nueva,
 // todavía sin aplicar — así una misma fila de erp_pagos_oc nunca queda
 // "parcialmente aplicada".
+// Guarda contra doble clic (31/Oct/2026) — ver _savingPago.
+let _savingAsignarPago = false;
 async function asignarPagoOC(pagoId, facturaId, montoAplicar) {
+  if (_savingAsignarPago) return;
+  _savingAsignarPago = true;
+  try { await _asignarPagoOC(pagoId, facturaId, montoAplicar); }
+  catch(e) { alert('Error inesperado en asignarPagoOC:\n\n' + e.message + '\n\n' + e.stack); }
+  finally { _savingAsignarPago = false; }
+}
+async function _asignarPagoOC(pagoId, facturaId, montoAplicar) {
   const p = (state.pagosOC||[]).find(x=>x.id===pagoId);
   const f = (state.ocFacturas||[]).find(x=>x.id===facturaId);
   if (!p || !f) { toast('Pago o factura no encontrados','error'); return; }
@@ -2036,8 +2045,14 @@ async function asignarPagoOC(pagoId, facturaId, montoAplicar) {
     estado_pago: nuevoPagado >= Number(f.total||0) ? 'pagado' : 'parcial',
   }).eq('id', facturaId);
 
-  toast(`✓ Pago aplicado a ${f.serie||''}${f.numero}`);
   await loadAll();
+  // El modal de pago queda ABIERTO y se repinta (31/Oct/2026, a pedido
+  // explícito, mismo criterio que aplicarNotaCredito): se ve el saldo nuevo y
+  // el pago en el historial; el usuario lo cierra cuando termina. También se
+  // refresca el panel de la OC que está debajo.
+  if (typeof currentOCId !== 'undefined' && currentOCId === f.oc_id) showOCPanel(f.oc_id);
+  if (document.getElementById('modal-pago')?.classList.contains('open')) await openPagoOC(facturaId);
+  toast(`✓ Pago aplicado a ${f.serie||''}${f.numero}`);
 }
 
 function imprimirOC() {
