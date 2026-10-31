@@ -802,67 +802,8 @@ async function asientoFacturaCompra(ocFacturaId) {
   });
 }
 
-// 4. PAGO PROVEEDOR — Anticipo OC con diferencial cambiario
-// moneda: monedaProv (la de la OC), no forzada a GTQ — misma razón que en
-// asientoFacturaVenta/asientoPagoVenta/buildLineasPago: la cuenta de Banco
-// (o de Anticipos) puede estar configurada en USD en la nomenclatura, y
-// necesita su monto real (moneda_orig/monto_orig) para poder conciliarse,
-// además del equivalente en GTQ que ya calcula crearAsiento() para el
-// balance general.
-//
-// NOTA — a diferencia de buildLineasPago()/asientoPagoVenta(), este asiento
-// SÍ sigue contabilizando directo contra el banco (no contra una cuenta
-// transitoria). Motivo: erp_extracto_bancario.pago_id solo referencia
-// erp_pagos, no erp_oc_anticipos — hoy no hay forma de vincular un anticipo
-// a una línea del extracto bancario, así que si se contabilizara contra la
-// transitoria, ese saldo nunca se limpiaría. Pendiente: extender la
-// conciliación bancaria para soportar anticipos y homologar este asiento.
-async function asientoAnticipoOC(anticipoId) {
-  const ant    = state.ocAnticipos.find(x => x.id === anticipoId);
-  if (!ant) return;
-  const oc     = state.oc.find(o => o.id === ant.oc_id);
-  const prov   = state.proveedores.find(p => p.id === oc?.proveedor_id);
-  const cuenta = state.cuentas.find(c => c.id === ant.cuenta_id);
-  const monedaProv = getMonedaOC(oc?.id);
-  const esUSD      = monedaProv === 'USD';
-  const montoOrig  = Number(ant.monto||0);
-
-  const ctaBanco    = bancoNomenclatura(ant.cuenta_id);
-  const ctaAnticipo = state.nomenclatura.find(n => n.codigo === '11204001')
-    || state.nomenclatura.find(n => (n.nombre||'').toLowerCase().includes('anticipo') && (n.nombre||'').toLowerCase().includes('proveedor'));
-
-  // Si hay factura previa de OC, calcular diferencial cambiario (desfase
-  // entre el TC vigente cuando se emitió la factura y el TC del día del
-  // anticipo) — independiente de la conversión GTQ que hace crearAsiento
-  // línea por línea.
-  const facturaOC = state.ocFacturas.find(f => f.oc_id === oc?.id);
-  if (esUSD && facturaOC?.fecha) {
-    const tcPago    = getTCFecha(ant.fecha);
-    const tcFactura = getTCFecha(facturaOC.fecha);
-    if (Math.abs(tcPago - tcFactura) > 0.0001) {
-      await asientoDiferencialCambiario({
-        montoUSD: montoOrig,
-        tcOriginal: tcFactura,
-        tcLiquidacion: tcPago,
-        fecha: ant.fecha,
-        referencia: `OC ${oc?.numero||''}`,
-        referencia_id: anticipoId,
-        tipo: 'pago',
-      });
-    }
-  }
-
-  await crearAsiento({
-    diario: 'PAGOS', fecha: ant.fecha,
-    descripcion: `Anticipo a ${prov?.name||'Proveedor'} — ${oc?.numero||''}`,
-    referencia: `Anticipo OC ${oc?.numero||''}`, referencia_id: anticipoId,
-    moneda: monedaProv,
-    lineas: [
-      { cuenta_id: ctaAnticipo?.id||null, cuenta_codigo: ctaAnticipo?.codigo||'ANTICIPOS', cuenta_nombre: ctaAnticipo?.nombre||'Anticipos a Proveedores', debe: montoOrig, haber: 0, descripcion: 'Anticipo' },
-      { cuenta_id: ctaBanco?.id||null,    cuenta_codigo: ctaBanco?.codigo||'BANCO',        cuenta_nombre: cuenta?.name||'Banco/Caja', debe: 0, haber: montoOrig, descripcion: 'Salida de banco' },
-    ],
-  });
-}
+// 4. (Retirado 30/Oct/2026) asientoAnticipoOC — los anticipos a proveedor ahora
+// se registran como "pago sin factura" (guardarPagoLibre en index.html).
 
 // 5. INVENTARIO — Al crear movimiento de inventario
 async function asientoMovInventarioManual(movId, cat, moneda='GTQ') {

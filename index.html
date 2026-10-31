@@ -4639,36 +4639,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
 </div>
 
 
-<!-- ANTICIPO MODAL -->
-<div class="modal-overlay" id="modal-anticipo">
-  <div class="modal">
-    <div class="modal-header">
-      <div class="modal-title">Registrar Anticipo</div>
-      <button class="modal-close" onclick="closeModal('modal-anticipo')">✕</button>
-    </div>
-    <div class="modal-body">
-      <input type="hidden" id="ant-oc-id"/>
-      <div class="form-grid form-grid-2">
-        <div class="field"><label>Fecha *</label><input type="date" id="ant-fecha"/></div>
-        <div class="field"><label>Monto *</label><input type="number" id="ant-monto" step="0.01" min="0" placeholder="0.00"/></div>
-        <div class="field"><label>Cuenta *</label><select id="ant-cuenta"><option value="">— Seleccionar cuenta —</option></select></div>
-        <div class="field"><label>Forma de Pago</label>
-          <select id="ant-forma">
-            <option value="transferencia">Transferencia bancaria</option>
-            <option value="cheque">Cheque</option>
-            <option value="efectivo">Efectivo</option>
-            <option value="deposito">Depósito</option>
-          </select>
-        </div>
-        <div class="field field-full"><label>Notas</label><textarea id="ant-notas" rows="2"></textarea></div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-primary" onclick="saveAnticipo()">Guardar Anticipo</button>
-      <button class="btn btn-ghost" onclick="closeModal('modal-anticipo')">Cancelar</button>
-    </div>
-  </div>
-</div>
+<!-- ANTICIPO MODAL — retirado 30/Oct/2026: el botón Anticipo de la OC abre "Nuevo pago sin factura" (modal-nuevo-pago-libre). -->
 
 <!-- NOMENCLATURA MODAL -->
 <div class="modal-overlay" id="modal-nomenclatura">
@@ -10108,6 +10079,9 @@ async function confirmarAplicarPago() {
 // directo contra el proveedor/cliente, sin necesidad de generarlo desde una
 // OC/factura primero) ──
 function abrirNuevoPagoLibre() {
+  // Origen OC (botón Anticipo, ver openAnticipo en compras.js) — se limpia
+  // en cada apertura; openAnticipo lo vuelve a poner.
+  delete document.getElementById('modal-nuevo-pago-libre').dataset.origenOc;
   document.getElementById('npl-tipo').value = pagosPageActiveTab === 'ov' ? 'ov' : 'oc';
   document.getElementById('npl-fecha').value = today();
   document.getElementById('npl-forma').value = '';
@@ -10138,7 +10112,14 @@ function onNplMonedaChange() {
       .map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
 }
 
+// Guarda contra doble clic (30/Oct/2026) — mismo patrón que _savingPago.
+let _savingPagoLibre = false;
 async function guardarPagoLibre() {
+  if (_savingPagoLibre) return;
+  _savingPagoLibre = true;
+  try { await _guardarPagoLibre(); } finally { _savingPagoLibre = false; }
+}
+async function _guardarPagoLibre() {
   const tipo      = document.getElementById('npl-tipo').value;
   const entidadId = document.getElementById('npl-entidad-id').value;
   const fecha     = document.getElementById('npl-fecha').value;
@@ -10195,9 +10176,12 @@ async function guardarPagoLibre() {
   }
 
   toast('✓ Pago registrado — disponible para aplicar a una factura');
+  const origenOc = document.getElementById('modal-nuevo-pago-libre').dataset.origenOc;
   closeModal('modal-nuevo-pago-libre');
   await loadAll();
   renderPagos();
+  // Abierto desde el botón Anticipo de una OC: refresca ese panel.
+  if (origenOc && typeof showOCPanel === 'function') showOCPanel(origenOc);
 }
 
 async function hardDeleteFactura(id) {

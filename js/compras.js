@@ -1430,10 +1430,6 @@ function getFocLineas(ocId, monedaOC) {
 function ocSaldoPorFacturar(ocId) {
   return ocValorRecibido(ocId) - ocFacturadoTotal(ocId);
 }
-function ocAnticipoTotal(ocId) {
-  return state.ocAnticipos.filter(a=>a.oc_id===ocId)
-    .reduce((s,a)=>s+Number(a.monto||0),0);
-}
 
 // ── SC RENDER ──
 function renderSC() {
@@ -7135,36 +7131,27 @@ async function saveFacturaOC() {
 }
 
 // ── ANTICIPO ──
+// UNIFICADO con "Pago sin factura" (30/Oct/2026, decisión de Oliver). Antes
+// el botón Anticipo guardaba en erp_oc_anticipos y su asiento nunca se
+// generaba (asientoAnticipoOC() buscaba el anticipo en state antes de
+// recargarlo), no había forma de aplicarlo a una factura y no era conciliable
+// con el banco. Ahora abre el mismo modal de Pagos → "Nuevo pago sin factura"
+// (guardarPagoLibre en index.html) con el proveedor, la moneda de la OC y la
+// referencia ya puestos: queda como Pago Sin Aplicar (21102071/72, vía Pagos
+// Pendientes → conciliable) y se aplica a la factura con "Usar este pago" o
+// desde Pagos → Aplicar, igual que cualquier pago sin aplicar.
 function openAnticipo() {
   if (!currentOCId) return;
-  document.getElementById('ant-oc-id').value=currentOCId;
-  document.getElementById('ant-fecha').value=today();
-  document.getElementById('ant-monto').value='';
-  document.getElementById('ant-notas').value='';
-  document.getElementById('ant-forma').value='transferencia';
-  const ctaOpts=state.cuentas.filter(c=>c.activa!==false)
-    .map(c=>`<option value="${c.id}">${c.name}${c.moneda?' ('+c.moneda+')':''}</option>`).join('');
-  document.getElementById('ant-cuenta').innerHTML='<option value="">— Seleccionar cuenta —</option>'+ctaOpts;
-  openModal('modal-anticipo');
-}
-
-async function saveAnticipo() {
-  const oc_id=document.getElementById('ant-oc-id').value;
-  const fecha=document.getElementById('ant-fecha').value;
-  const monto=parseFloat(document.getElementById('ant-monto').value);
-  const cuenta_id=document.getElementById('ant-cuenta').value;
-  if (!fecha||isNaN(monto)||monto<=0||!cuenta_id) { toast('Todos los campos son requeridos','error'); return; }
-  const {error}=await sb.from('erp_oc_anticipos').insert({
-    oc_id, fecha, monto, cuenta_id,
-    forma:document.getElementById('ant-forma').value,
-    notas:document.getElementById('ant-notas').value.trim(),
-  });
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  // Generar asiento contable automático
-  const {data:ant} = await sb.from('erp_oc_anticipos').select('id').order('created_at',{ascending:false}).limit(1);
-  if (ant?.length) await asientoAnticipoOC(ant[0].id);
-  toast('Anticipo registrado');
-  closeModal('modal-anticipo');
-  await loadAll();
-  showOCPanel(oc_id);
+  const oc = (state.oc||[]).find(o => o.id === currentOCId);
+  if (!oc) { toast('OC no encontrada','error'); return; }
+  abrirNuevoPagoLibre();
+  document.getElementById('npl-tipo').value = 'oc';
+  onNplTipoChange();
+  document.getElementById('npl-entidad-id').value = oc.proveedor_id || '';
+  document.getElementById('npl-moneda').value = getMonedaOC(oc.id) || 'GTQ';
+  onNplMonedaChange();
+  document.getElementById('npl-referencia').value = `ANTICIPO ${oc.numero||''}`.trim();
+  document.getElementById('npl-notas').value = `Anticipo sobre ${oc.numero||'OC'}`;
+  // Al guardar, guardarPagoLibre() refresca el panel de esta OC.
+  document.getElementById('modal-nuevo-pago-libre').dataset.origenOc = oc.id;
 }
