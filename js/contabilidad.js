@@ -949,9 +949,14 @@ function renderDiarioGeneral() {
   const mes = document.getElementById('filter-dg-mes')?.value||'';
 
   // Filter asientos
+  // De más nuevo a más viejo (31/Oct/2026, a pedido explícito: había que
+  // bajar hasta el final para ver los asientos recientes). Fecha DESC y, en
+  // la misma fecha, número DESC. Las líneas de cada asiento conservan su
+  // orden. La impresión (imprimirDiarioGeneral) sigue en orden cronológico,
+  // como un libro.
   let asientos = [...state.asientos].sort((a,b) => {
-    const dc = (a.fecha||'').localeCompare(b.fecha||'');
-    return dc !== 0 ? dc : (a.numero||'').localeCompare(b.numero||'');
+    const dc = (b.fecha||'').localeCompare(a.fecha||'');
+    return dc !== 0 ? dc : (b.numero||'').localeCompare(a.numero||'');
   });
   asientos = asientos.filter(a =>
     (!dj  || a.diario === dj) &&
