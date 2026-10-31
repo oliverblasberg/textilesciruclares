@@ -31,10 +31,29 @@ let _extParsedRows = [];
 // Determina el signo real de un pago (erp_pagos): + si es un cobro de venta
 // (OV, dinero entra al banco), - si es un pago a proveedor (OC, dinero sale).
 function signedPagoMonto(pago) {
-  const monto = Number(pago.monto||0);
+  const monto = montoBancoPago(pago);
+  // Pago a proveedor (erp_pagos_oc) — sale dinero, esté o no aplicado a una
+  // factura (30/Oct/2026: antes un pago SIN APLICAR, factura_id null, caía al
+  // default "abono" y se buscaba con signo positivo en el extracto).
+  if ((state.pagosOC||[]).some(p=>p.id===pago.id)) return -monto;
   if ((state.ocFacturas||[]).some(f=>f.id===pago.factura_id)) return -monto;
   if ((state.facturas||[]).some(f=>f.id===pago.factura_id)) return monto;
   return monto; // no se pudo determinar la dirección — se asume abono
+}
+
+// Monto que REALMENTE se movió en el banco por un pago (30/Oct/2026).
+// Para un pago a proveedor con retención ISR, pago.monto es el bruto que
+// extingue Cuentas x Pagar (ej. Q5,000), pero del banco sale el neto
+// (Q4,330.36): la retención se queda para pagarla a la SAT. Antes la
+// conciliación buscaba el bruto en el extracto (nunca coincidía) y la
+// confirmación bancaria movía de "Pagos Pendientes" más de lo que el pago le
+// había cargado. retencionISRDePago() vive en compras.js (script cargado
+// después de este, pero se llama solo en tiempo de ejecución).
+function montoBancoPago(pago) {
+  const bruto = Number(pago?.monto||0);
+  const esPagoOC = (state.pagosOC||[]).some(p => p.id === pago?.id);
+  if (!esPagoOC || typeof retencionISRDePago !== 'function') return bruto;
+  return round2(bruto - retencionISRDePago(pago));
 }
 
 function _concCuentaOpts(selectedId) {
@@ -101,7 +120,7 @@ function renderConciliacion() {
       : l.estado==='ignorado' ? '<span class="badge badge-gray">Ignorado</span>'
       : '<span class="badge badge-yellow">Pendiente</span>';
     const conciliadoInfo = pago
-      ? `${pago.num_pago||''} ${fmtDate(pago.fecha)} — ${fmtGTQ(pago.monto)}${l.match_tipo==='auto'?' <span style="color:var(--text3);font-size:10px">(auto)</span>':''}`
+      ? `${pago.num_pago||''} ${fmtDate(pago.fecha)} — ${fmtGTQ(montoBancoPago(pago))}${l.match_tipo==='auto'?' <span style="color:var(--text3);font-size:10px">(auto)</span>':''}`
       : (l.estado==='ignorado' ? (l.motivo_ignorado||'—') : '—');
     const montoOk = Number(l.monto||0) >= 0;
     return `<tr>
@@ -348,6 +367,8 @@ function openConciliarManual(extractoId) {
 // dinero entra). null si no se puede determinar (no debería pasar en datos
 // sanos, pero se contempla por seguridad). Mismo criterio que signedPagoMonto().
 function _direccionPago(pago) {
+  // Pago a proveedor aunque esté sin aplicar (factura_id null) — 30/Oct/2026.
+  if ((state.pagosOC||[]).some(p => p.id === pago.id)) return 'egreso';
   if ((state.ocFacturas||[]).some(f => f.id === pago.factura_id)) return 'egreso';
   if ((state.facturas||[]).some(f => f.id === pago.factura_id)) return 'ingreso';
   return null;
@@ -397,7 +418,7 @@ async function asientoConfirmacionBancaria(pagoId, fechaConfirmacion) {
 
   const cuenta = (state.cuentas||[]).find(c => c.id === pago.cuenta_id);
   const moneda = cuenta?.moneda || 'GTQ';
-  const monto  = Number(pago.monto||0);
+  const monto  = montoBancoPago(pago);   // neto de retención ISR (30/Oct/2026)
   if (!monto) return;
 
   const esEgreso       = direccion === 'egreso';
@@ -428,7 +449,7 @@ async function reversoConfirmacionBancaria(pagoId, fecha) {
 
   const cuenta = (state.cuentas||[]).find(c => c.id === pago.cuenta_id);
   const moneda = cuenta?.moneda || 'GTQ';
-  const monto  = Number(pago.monto||0);
+  const monto  = montoBancoPago(pago);   // neto de retención ISR (30/Oct/2026)
   if (!monto) return;
 
   const esEgreso       = direccion === 'egreso';
