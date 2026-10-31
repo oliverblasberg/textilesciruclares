@@ -94,10 +94,19 @@ function retencionISRFactura(facturaId) {
 // Retención ISR ya registrada en los pagos de una factura de OC: saldo
 // acreedor de 21104002 en los asientos de esos pagos (vía asientosDePago).
 function retencionISRYaAplicada(facturaId) {
-  const ctaRet  = ctaRetencionISR();
-  const codigo  = ctaRet?.codigo || '21104002';
-  const pagos   = (state.pagosOC||[]).filter(p => p.factura_id === facturaId);
-  const asiIds  = new Set(pagos.flatMap(p => asientosDePago(p)).map(a => a.id));
+  return round2((state.pagosOC||[])
+    .filter(p => p.factura_id === facturaId)
+    .reduce((s,p) => s + retencionISRDePago(p), 0));
+}
+
+// Retención ISR VIGENTE de un pago (en GTQ): saldo acreedor de 21104002 en
+// los asientos ligados a ese pago (asientosDePago). Una cancelación de
+// retención (cancelarRetencionPago) agrega un débito a 21104002 con
+// referencia_id = pago, así que la deja en 0 sin borrar nada.
+function retencionISRDePago(p) {
+  if (!p) return 0;
+  const codigo = ctaRetencionISR()?.codigo || '21104002';
+  const asiIds = new Set(asientosDePago(p).map(a => a.id));
   return round2((state.asientoLineas||[])
     .filter(l => asiIds.has(l.asiento_id) && l.cuenta_codigo === codigo)
     .reduce((s,l) => s + Number(l.haber_gtq ?? l.haber ?? 0) - Number(l.debe_gtq ?? l.debe ?? 0), 0));
@@ -1809,6 +1818,22 @@ async function desasignarPagoOC(pagoId) {
   const prov = (state.proveedores||[]).find(x=>x.id===p.proveedor_id);
   if (!confirm(`¿Desasignar el pago ${p.num_pago||''} (${fmtMoney(p.monto, p.moneda||'GTQ')}) de la factura ${f?.num_interno||f?.numero||''}?\n\nEl monto quedará disponible para aplicarlo a otra factura del mismo proveedor.`)) return;
 
+  // Pago con retención ISR (30/Oct/2026, regla de Oliver): al revertir se
+  // pregunta si también se cancela la retención. Sí → se desasigna y se
+  // anula la retención (el pago sin aplicar queda por el efectivo que salió
+  // del banco). No → se desasigna y la retención sigue vigente, ligada al
+  // pago (útil cuando solo se aplicó a la factura equivocada).
+  const retPago = retencionISRDePago(p);
+  let cancelarRet = false;
+  if (retPago > 0) {
+    cancelarRet = confirm(
+      `Este pago tiene una retención ISR de ${fmtMoney(retPago,'GTQ')}.\n\n` +
+      `Al revertir este pago, ¿vas a querer también cancelar la retención?\n\n` +
+      `Aceptar = SÍ, revertir el pago y cancelar la retención.\n` +
+      `Cancelar = NO, revertir el pago y mantener la retención.`
+    );
+  }
+
   const ctaPorPagar   = ctaPorPagarOC(f?.oc_id);
   const ctaSinAplicar = sinAplicarNomenclatura(p.moneda||'GTQ', 'pago');
 
@@ -1857,10 +1882,86 @@ async function desasignarPagoOC(pagoId) {
 
   toast(`Pago ${p.num_pago||''} desasignado — disponible para aplicar a otra factura`);
   await loadAll();
+  if (cancelarRet) await cancelarRetencionPago(pagoId, { sinConfirmar: true });
   // Refresca la lista de Pagos (30/Oct/2026, reportado en vivo: había que
   // salir y volver a entrar para ver el pago como "Sin Aplicar").
   // confirmarAplicarPago() ya lo hacía; desasignar no.
   if (typeof renderPagos === 'function') renderPagos();
+}
+
+// Cancela (anula) la retención ISR de un pago — operación independiente
+// (30/Oct/2026, regla de Oliver), también usada por desasignarPagoOC() cuando
+// se responde "Sí". Nunca borra el asiento original: registra uno nuevo
+//   Debe 21104002 Retenciones ISR por pagar / Haber contrapartida
+// donde la contrapartida es Cuentas por Pagar si el pago está aplicado a una
+// factura (ese monto vuelve a quedar como saldo de la factura) o Pagos Sin
+// Aplicar si está libre. El monto del pago baja al efectivo que realmente
+// salió del banco (monto − retención).
+// Solo pagos en GTQ: la retención ISR de Régimen Opcional Simplificado es de
+// proveedores locales; en USD el monto en quetzales de la retención no
+// coincidiría al TC de hoy.
+let _savingCancelarRet = false;
+async function cancelarRetencionPago(pagoId, { sinConfirmar = false } = {}) {
+  if (_savingCancelarRet) return;
+  _savingCancelarRet = true;
+  try {
+    const p = (state.pagosOC||[]).find(x => x.id === pagoId);
+    if (!p) { toast('Pago no encontrado','error'); return; }
+    const ret = retencionISRDePago(p);
+    if (ret <= 0) { toast('Este pago no tiene una retención ISR vigente','error'); return; }
+    if ((p.moneda||'GTQ') !== 'GTQ') {
+      alert(`No se puede cancelar automáticamente la retención del pago ${p.num_pago||''}: el pago está en ${p.moneda}. Hágalo con un asiento manual.`);
+      return;
+    }
+    const f = p.factura_id ? (state.ocFacturas||[]).find(x => x.id === p.factura_id) : null;
+    const refFact = f ? `${f.serie||''}${f.numero||''}` : '';
+    if (!sinConfirmar && !confirm(
+      `¿Cancelar la retención ISR de ${fmtMoney(ret,'GTQ')} del pago ${p.num_pago||''}?\n\n` +
+      `Se revierte de "Retenciones ISR por pagar" y ese monto vuelve a quedar a favor del proveedor` +
+      (f ? ` como saldo de la factura ${refFact}.` : `: el pago sin aplicar queda por el efectivo que salió del banco.`) +
+      `\n\nHágalo solo si la constancia de retención no se emitió o fue anulada ante la SAT.`
+    )) return;
+
+    const ctaRet = ctaRetencionISR();
+    const contra = f ? ctaPorPagarOC(f.oc_id) : sinAplicarNomenclatura('GTQ', 'pago');
+    const prov   = (state.proveedores||[]).find(x => x.id === p.proveedor_id);
+    const asientoId = await crearAsiento({
+      diario: 'BANCOS', fecha: today(),
+      descripcion: `Cancelación retención ISR — pago ${p.num_pago||''}${refFact?' — '+refFact:''} — ${prov?.name||''}`,
+      referencia: `CANCELA-RET-${p.num_pago||pagoId}`, referencia_id: p.id,
+      moneda: 'GTQ', tipo_cambio: 1,
+      lineas: [
+        { cuenta_id: ctaRet?.id||null, cuenta_codigo: ctaRet?.codigo||'21104002', cuenta_nombre: ctaRet?.nombre||'Retenciones ISR por Pagar', debe: ret, haber: 0, descripcion: `Anula retención — pago ${p.num_pago||''}` },
+        { cuenta_id: contra?.id||null, cuenta_codigo: contra?.codigo||(f?'CXP':'PAGOS-SIN-APLICAR'), cuenta_nombre: contra?.nombre||(f?'Cuentas x Pagar':'Pagos Sin Aplicar a Proveedor'), debe: 0, haber: ret,
+          descripcion: f ? `Reinstala saldo por retención anulada — ${refFact}` : `Pago ${p.num_pago||''} — retención anulada` },
+      ],
+    });
+    if (!asientoId) { alert(`No se registró el asiento de cancelación de la retención del pago ${p.num_pago||''}. No se hizo ningún cambio al pago.`); return; }
+
+    const nuevoMonto = round2(Number(p.monto||0) - ret);
+    const { error: eP } = await sb.from('erp_pagos_oc').update({
+      monto: nuevoMonto,
+      notas: [p.notas, `Retención ISR ${fmtMoney(ret,'GTQ')} cancelada el ${fmtDate(today())}`].filter(Boolean).join(' | '),
+    }).eq('id', p.id);
+    if (eP) { alert(`El asiento de cancelación se registró, pero no se pudo actualizar el monto del pago ${p.num_pago||''}:\n${eP.message}\n\nRevisar manualmente.`); await loadAll(); return; }
+
+    await loadAll();
+    if (f) {
+      const pagado = pagadoFacturaOC(f.id);
+      const { error: eF } = await sb.from('erp_oc_facturas').update({
+        monto_pagado: pagado,
+        estado_pago: pagado <= 0 ? 'pendiente' : (pagado >= Number(f.total||0) - 0.005 ? 'pagado' : 'parcial'),
+      }).eq('id', f.id);
+      if (eF) alert('Retención cancelada, pero no se pudo actualizar el estado de pago de la factura:\n' + eF.message);
+      await loadAll();
+    }
+    if (typeof renderPagos === 'function') renderPagos();
+    toast(`✓ Retención ISR de ${fmtMoney(ret,'GTQ')} cancelada — pago ${p.num_pago||''} queda en ${fmtMoney(nuevoMonto,'GTQ')}`);
+  } catch(e) {
+    alert('Error inesperado en cancelarRetencionPago:\n\n' + e.message + '\n\n' + e.stack);
+  } finally {
+    _savingCancelarRet = false;
+  }
 }
 
 // Aplica un pago sin aplicar (o su remanente) a una factura — `monto`

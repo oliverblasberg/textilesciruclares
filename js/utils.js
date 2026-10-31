@@ -55,7 +55,15 @@ function fmtMoney(n, moneda='GTQ') {
 function fmtGTQ(n) { return fmtMoney(n, 'GTQ'); }
 function fmtUSD(n) { return fmtMoney(n, 'USD'); }
 function fmtKg(n) { return Number(n||0).toLocaleString('es-GT',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' kg'; }
-function today() { return new Date().toISOString().split('T')[0]; }
+// FIX (30/Oct/2026): antes usaba toISOString(), que da la fecha en UTC — en
+// Guatemala (UTC-6), a partir de las 6:00 p.m. devolvía la fecha de MAÑANA
+// (se vio en pruebas: el Balance General salía "Al 2026-10-31" el 30/Oct por
+// la noche). Afectaba toda fecha por defecto: pagos, asientos, devoluciones,
+// recepciones. Ahora usa la fecha local del equipo.
+function today() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
 function fmtNum(n) {
   const num = Number(n || 0);
   return num % 1 === 0 ? num.toLocaleString('es-GT') : num.toFixed(2);
