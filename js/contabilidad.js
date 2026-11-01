@@ -1702,48 +1702,54 @@ function abrirLibroMayor(cuentaKey) {
   openModal('modal-libro-mayor');
 }
 
-// ── Exportación CSV (abre en Excel; para Robert y para los checkpoints de la migración) ──
-function _csvContable(nombreArchivo, filas) {
-  const esc = v => {
-    const s = v == null ? '' : String(v);
-    return /[",\n;]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
-  };
-  const csv = filas.map(f => f.map(esc).join(',')).join('\r\n');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = nombreArchivo;
-  a.click();
+// ── Exportación a Excel (.xlsx) — para Robert y para los checkpoints de la migración ──
+// (1/Nov/2026) Primero era CSV, pero Excel en español usa ";" como separador
+// de lista y abría todo en una sola columna. Se genera un .xlsx real con
+// SheetJS (ya cargado en index.html para importar extractos): columnas
+// separadas y montos como NÚMEROS con formato #,##0.00, sin importar la
+// configuración regional de la computadora.
+function _xlsxContable(nombreArchivo, nombreHoja, filas, anchos) {
+  if (typeof XLSX === 'undefined') { alert('No se pudo cargar la librería de Excel (XLSX). Recargá la página e intentá de nuevo.'); return; }
+  const ws = XLSX.utils.aoa_to_sheet(filas);
+  // Formato numérico a toda celda que sea número
+  Object.keys(ws).forEach(ref => {
+    if (ref[0] === '!') return;
+    if (ws[ref].t === 'n') ws[ref].z = '#,##0.00';
+  });
+  if (anchos) ws['!cols'] = anchos.map(w => ({ wch: w }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, nombreHoja.slice(0, 31));
+  XLSX.writeFile(wb, nombreArchivo);
 }
 
 function exportarBalanzaCSV() {
   if (!_bzUltima) renderBalanza();
   const b = _bzUltima;
   if (!b || !b.filas.length) { toast('Sin datos para exportar', 'error'); return; }
-  const n = v => round2(v).toFixed(2);   // solo para el texto del CSV, no se guarda
   const filas = [
-    ['Balanza de Comprobación', `Del ${b.desde} al ${b.hasta}`, 'GTQ'],
+    ['Balanza de Comprobación', `Del ${fmtDate(b.desde)} al ${fmtDate(b.hasta)}`, 'Montos en GTQ'],
+    [],
     ['Código','Cuenta','Saldo inicial deudor','Saldo inicial acreedor','Debe','Haber','Saldo final deudor','Saldo final acreedor'],
     ...b.filas.map(f => [f.codigo, f.nombre,
-      n(f.ini > 0 ? f.ini : 0), n(f.ini < 0 ? -f.ini : 0), n(f.debe), n(f.haber),
-      n(f.fin > 0 ? f.fin : 0), n(f.fin < 0 ? -f.fin : 0)]),
-    ['', 'TOTALES', n(b.tot.iniD), n(b.tot.iniA), n(b.tot.debe), n(b.tot.haber), n(b.tot.finD), n(b.tot.finA)],
+      f.ini > 0 ? f.ini : 0, f.ini < 0 ? -f.ini : 0, f.debe, f.haber,
+      f.fin > 0 ? f.fin : 0, f.fin < 0 ? -f.fin : 0]),
+    ['', 'TOTALES', b.tot.iniD, b.tot.iniA, b.tot.debe, b.tot.haber, b.tot.finD, b.tot.finA],
   ];
-  _csvContable(`balanza_${b.desde}_${b.hasta}.csv`, filas);
+  _xlsxContable(`balanza_${b.desde}_${b.hasta}.xlsx`, 'Balanza', filas, [12, 48, 16, 16, 16, 16, 16, 16]);
 }
 
 function exportarLibroMayorCSV() {
   const m = _lmUltimo;
   if (!m) { toast('Sin datos para exportar', 'error'); return; }
-  const n = v => round2(v).toFixed(2);
   const filas = [
-    ['Libro Mayor', m.nombreCta, `Del ${m.desde} al ${m.hasta}`, 'GTQ'],
-    ['Fecha','Asiento','Diario','Descripción','Detalle línea','Referencia','Debe','Haber','Saldo (+deudor / -acreedor)'],
-    ['', '', '', 'Saldo inicial', '', '', '', '', n(m.ini)],
-    ...m.filas.map(f => [f.fecha, f.numero, f.diario, f.desc, f.descLinea, f.ref, n(f.debe), n(f.haber), n(f.saldo)]),
-    ['', '', '', 'Totales / saldo final', '', '', n(m.totD), n(m.totH), n(m.fin)],
+    ['Libro Mayor', m.nombreCta, `Del ${fmtDate(m.desde)} al ${fmtDate(m.hasta)}`, 'Montos en GTQ · Saldo: + deudor / − acreedor'],
+    [],
+    ['Fecha','Asiento','Diario','Descripción','Detalle línea','Referencia','Debe','Haber','Saldo'],
+    ['', '', '', 'Saldo inicial', '', '', '', '', m.ini],
+    ...m.filas.map(f => [fmtDate(f.fecha), f.numero, f.diario, f.desc, f.descLinea, f.ref, f.debe, f.haber, f.saldo]),
+    ['', '', '', 'Totales / saldo final', '', '', m.totD, m.totH, m.fin],
   ];
-  _csvContable(`libro_mayor_${m.codigo}_${m.desde}_${m.hasta}.csv`, filas);
+  _xlsxContable(`libro_mayor_${m.codigo}_${m.desde}_${m.hasta}.xlsx`, `Mayor ${m.codigo}`, filas, [12, 15, 12, 50, 40, 24, 14, 14, 14]);
 }
 
 function renderEstadoResultados() {
