@@ -1402,6 +1402,44 @@ function ocFacturadoQty(ocId, productoId) {
     .reduce((s,li) => s + Number(li.cantidad||0), 0);
 }
 
+// Líneas de detalle de UNA factura de compra (1/Nov/2026). Fuente única para
+// verFacturaOC() e imprimirFacturaOC(): erp_oc_factura_items (cantidad y
+// precio FACTURADOS de esa factura). Antes se armaba con state.ocItems de la
+// OC x cantidad recibida NETA de devoluciones x precio de la OC, así que en
+// FACT/2026/09/0001 mostraba 2,195 kg @ $2.60 = $5,707 contra un total de
+// $6,750 (real: 2,500 kg @ $2.70). Respaldo para facturas anteriores a la
+// facturación por línea (30/Ago): el cálculo viejo.
+function lineasDetalleFacturaOC(facturaId) {
+  const f = (state.ocFacturas||[]).find(x => x.id === facturaId);
+  if (!f) return [];
+  const lineas = (state.ocFacturaItems||[]).filter(li => li.factura_id === facturaId);
+  if (lineas.length) {
+    return lineas.map(li => {
+      const total = round2(Number(li.total||0));
+      const iva   = round2(Number(li.iva||0));
+      return {
+        prod: (state.productos||[]).find(p => p.id === li.producto_id),
+        qty: Number(li.cantidad||0),
+        precioUnit: Number(li.precio_unit||0),
+        precioTotal: total,
+        neto: round2(Number(li.neto ?? (total - iva))),
+        iva,
+        total,
+      };
+    });
+  }
+  const ivaRatio = facturaIvaRatio(facturaId);
+  return (state.ocItems||[]).filter(i => i.oc_id === f.oc_id).map(i => {
+    const prod = (state.productos||[]).find(p => p.id === i.producto_id);
+    const qty = prod?.tipo === 'servicio' ? Number(i.cantidad||0) : ocRecibidoQty(f.oc_id, i.producto_id);
+    const precioUnit = Number(i.precio_unit||0);
+    const precioTotal = round2(qty * precioUnit);
+    // precioTotal YA incluye IVA (criterio Guatemala): se extrae el neto.
+    const neto = round2(ivaRatio > 0 ? precioTotal / (1 + ivaRatio) : precioTotal);
+    return { prod, qty, precioUnit, precioTotal, neto, iva: round2(precioTotal - neto), total: precioTotal };
+  });
+}
+
 // Cantidad que TODAVÍA se puede facturar: recibido menos ya facturado.
 // Nunca negativo — si se facturó de más (con justificación), el pendiente es
 // cero, no un número negativo que se leería como un crédito a favor.
@@ -2587,26 +2625,8 @@ function verFacturaOC(facturaId) {
   const tipoMap = { FC:'Factura cambiaria', FE:'Factura especial', FCAM:'Factura cambiaria' };
   const formaLabel = { transferencia:'Transferencia Bancaria', cheque:'Cheque', efectivo:'Efectivo', deposito:'Depósito' };
 
-  // Detalle por línea — fuente: state.ocItems de la OC (el esquema no
-  // separa items por factura cuando una OC se factura en partes). El IVA
-  // por línea usa la proporción REAL de la
-  // factura (facturaIvaRatio — respeta si la factura llevó IVA o no), no un
-  // 12% fijo: aplicar 12% a TODAS las líneas inflaba el Total de línea por
-  // encima del Total Factura real en facturas sin IVA (o con IVA parcial).
-  const ivaRatio = facturaIvaRatio(facturaId);
-  const items = (state.ocItems||[]).filter(i => i.oc_id === f.oc_id);
-  const itemsHtml = items.map(i => {
-    const prod = (state.productos||[]).find(p => p.id === i.producto_id);
-    const esServicio = prod?.tipo === 'servicio';
-    const qty = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(f.oc_id, i.producto_id);
-    const precioUnit = Number(i.precio_unit||0);
-    const precioTotal = qty * precioUnit;
-    // precioTotal YA incluye IVA (criterio Guatemala) — hay que EXTRAER
-    // el neto, no agregar IVA encima. ivaRatio=iva/neto (facturaIvaRatio),
-    // total=neto*(1+ivaRatio) -> neto=total/(1+ivaRatio).
-    const neto = ivaRatio > 0 ? precioTotal / (1 + ivaRatio) : precioTotal;
-    const iva  = precioTotal - neto;
-    const lineaTotal = precioTotal;
+  // Detalle por línea: lineasDetalleFacturaOC() (líneas facturadas reales).
+  const itemsHtml = lineasDetalleFacturaOC(facturaId).map(({prod, qty, precioUnit, precioTotal, neto, iva, total: lineaTotal}) => {
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 12px;font-size:13px">${prod?.description||'—'}</td>
       <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace">${qty.toFixed(3)}</td>
@@ -2779,22 +2799,8 @@ function imprimirFacturaOC(facturaId) {
   const tipoMap = { FC:'Factura cambiaria', FE:'Factura especial', FCAM:'Factura cambiaria' };
   const formaLabel = { transferencia:'Transferencia Bancaria', cheque:'Cheque', efectivo:'Efectivo', deposito:'Depósito' };
 
-  // Mismo criterio que verFacturaOC(): IVA por línea con la proporción real
-  // de la factura (facturaIvaRatio), no un 12% fijo — ver comentario ahí.
-  const ivaRatio = facturaIvaRatio(facturaId);
-  const items = (state.ocItems||[]).filter(i => i.oc_id === f.oc_id);
-  const itemsRows = items.map(i => {
-    const prod = (state.productos||[]).find(p => p.id === i.producto_id);
-    const esServicio = prod?.tipo === 'servicio';
-    const qty = esServicio ? Number(i.cantidad||0) : ocRecibidoQty(f.oc_id, i.producto_id);
-    const precioUnit = Number(i.precio_unit||0);
-    const precioTotal = qty * precioUnit;
-    // precioTotal YA incluye IVA (criterio Guatemala) — hay que EXTRAER
-    // el neto, no agregar IVA encima. ivaRatio=iva/neto (facturaIvaRatio),
-    // total=neto*(1+ivaRatio) -> neto=total/(1+ivaRatio).
-    const neto = ivaRatio > 0 ? precioTotal / (1 + ivaRatio) : precioTotal;
-    const iva  = precioTotal - neto;
-    const lineaTotal = precioTotal;
+  // Mismo detalle que verFacturaOC(): lineasDetalleFacturaOC().
+  const itemsRows = lineasDetalleFacturaOC(facturaId).map(({prod, qty, precioUnit, precioTotal, neto, iva, total: lineaTotal}) => {
     return `<tr>
       <td>${prod?.description||'—'}</td>
       <td class="num">${qty.toFixed(3)}</td>
@@ -2973,7 +2979,7 @@ function renderOCPanel(ocId) {
         <td class="td-mono" style="font-size:11px;color:var(--accent);padding:4px 8px">${lote}</td>
         <td style="font-size:11px;padding:4px 8px">${prodName(lineas[0]?.producto_id)}</td>
         <td style="font-size:11px;padding:4px 8px">${lineas[0]?.packing_num||'—'}</td>
-        <td class="td-mono" style="font-size:11px;padding:4px 8px">${qty.toFixed(3)} ${lineas[0]?.unidad||''}</td>
+        <td class="td-mono" style="font-size:11px;padding:4px 8px">${fmtNum(qty, 3)} ${lineas[0]?.unidad||''}</td>
       </tr>`;
     }).join('');
 
@@ -5203,7 +5209,7 @@ function imprimirRecepcion(recepcionId) {
       <td>${lote}</td>
       <td>${prodName(lineas[0]?.producto_id)}</td>
       <td>${lineas[0]?.packing_num||'—'}</td>
-      <td class="num">${qty.toFixed(3)} ${lineas[0]?.unidad||''}</td>
+      <td class="num">${fmtNum(qty, 3)} ${lineas[0]?.unidad||''}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="4" style="text-align:center;color:#9EA4B0">Sin lotes registrados</td></tr>`;
 
