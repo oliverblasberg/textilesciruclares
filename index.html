@@ -808,6 +808,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
     <div class="sidebar-section">
       <div class="sidebar-section-label">4. Contabilidad</div>
       <div class="nav-item" onclick="showPage('diario-general',this)">Diario Mayor General</div>
+      <div class="nav-item" onclick="showPage('balanza',this)">Balanza de Comprobación</div>
       <div class="nav-item" onclick="showPage('compras',this)">Libro de Compras</div>
       <div class="nav-item" onclick="showPage('notas-credito',this)">Notas de Crédito</div>
       <div class="nav-item" onclick="showPage('facturas',this)">Libro de Ventas</div>
@@ -1201,6 +1202,11 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <div class="sub-module-icon">📒</div>
             <div class="sub-module-name">Diario Mayor General</div>
             <div class="sub-module-desc">Todos los asientos contables</div>
+          </div>
+          <div class="sub-module-card" onclick="showPage('balanza',null)">
+            <div class="sub-module-icon">🧮</div>
+            <div class="sub-module-name">Balanza de Comprobación</div>
+            <div class="sub-module-desc">Saldos por cuenta y Libro Mayor</div>
           </div>
           <div class="sub-module-card" onclick="showPage('compras',null)">
             <div class="sub-module-icon">🗂️</div>
@@ -2202,6 +2208,27 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             </table>
           </div>
         </div>
+      </div>
+
+      <!-- BALANZA DE COMPROBACIÓN / LIBRO MAYOR (1/Nov/2026) -->
+      <div class="page" id="page-balanza">
+        <div class="filters-row">
+          <select class="filter-select" id="bz-periodo" onchange="renderBalanza()" style="max-width:180px">
+            <option value="mes">Este Mes</option>
+            <option value="trimestre">Este Trimestre</option>
+            <option value="anio">Este Año</option>
+            <option value="personalizado">Personalizado</option>
+          </select>
+          <input type="date" id="bz-desde" class="filter-select" style="max-width:160px;display:none" onchange="renderBalanza()"/>
+          <input type="date" id="bz-hasta" class="filter-select" style="max-width:160px;display:none" onchange="renderBalanza()"/>
+          <div class="search-box" style="max-width:240px"><span class="search-icon">⌕</span><input type="text" id="bz-buscar" placeholder="Buscar cuenta o código…" oninput="renderBalanza()"></div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="bz-todas" onchange="renderBalanza()"> Incluir cuentas sin saldo ni movimiento
+          </label>
+          <button class="btn btn-ghost" onclick="renderBalanza()">↻ Actualizar</button>
+          <button class="btn btn-ghost" onclick="exportarBalanzaCSV()">⬇ Exportar CSV</button>
+        </div>
+        <div class="card"><div class="card-body" id="bz-report" style="padding:0;overflow-x:auto"></div></div>
       </div>
 
       <!-- ESTADO DE RESULTADOS -->
@@ -5823,6 +5850,23 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
   </div>
 </div>
 
+<!-- LIBRO MAYOR de una cuenta (1/Nov/2026) — se abre desde la Balanza -->
+<div class="modal-overlay" id="modal-libro-mayor">
+  <div class="modal modal-lg" style="max-width:1100px;width:94vw;max-height:90vh">
+    <div class="modal-header">
+      <div class="modal-title" id="lm-title">Libro Mayor</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-sm btn-ghost" onclick="exportarLibroMayorCSV()">⬇ Exportar CSV</button>
+        <button class="modal-close" onclick="closeModal('modal-libro-mayor')">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" id="lm-body" style="padding:0;overflow-x:auto"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-libro-mayor')">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-op-detail">
   <div class="modal modal-lg" style="max-width:90vw;width:90vw;max-height:90vh">
     <div class="modal-header">
@@ -6263,6 +6307,7 @@ function showPage(name, bnav) {
     'op-lista':'Órdenes de Producción',
     recetas:'Recetas de Producción',
     'diario-general':'Diario Mayor General',
+    balanza:'Balanza de Comprobación',
     'estado-resultados':'Estado de Resultados',
     'balance-general':'Balance General',
     'flujo-caja':'Flujo de Caja',
@@ -6296,6 +6341,7 @@ function showPage(name, bnav) {
   // Trigger renders on navigation for pages that need it
   const pageRenders = {
     'diario-general':    () => renderDiarioGeneral(),
+    balanza:             () => renderBalanza(),
     'estado-resultados': () => renderEstadoResultados(),
     'balance-general':   () => { document.getElementById('bg-fecha').value = today(); renderBalanceGeneral(); },
     'flujo-caja':        () => renderFlujoCaja(),
@@ -15383,6 +15429,7 @@ const MODULE_META = {
   'inv-stock':        { label: 'Stock Actual',        parent: 'hub-inventario' },
   kardex:             { label: 'Kardex',              parent: 'hub-inventario' },
   'diario-general': { label: 'Diario General',      parent: 'hub-contabilidad' },
+  balanza:          { label: 'Balanza de Comprobación', parent: 'hub-contabilidad' },
   'estado-resultados':{ label: 'Estado de Resultados', parent: 'hub-contabilidad' },
   'balance-general':{ label: 'Balance General',     parent: 'hub-contabilidad' },
   'flujo-caja':     { label: 'Flujo de Caja',       parent: 'hub-contabilidad' },

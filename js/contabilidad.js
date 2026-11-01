@@ -1476,6 +1476,276 @@ async function deleteAsiento(id) {
 // ──────────────────────────────────────────────────
 // ESTADO DE RESULTADOS
 // ──────────────────────────────────────────────────
+// ═══ BALANZA DE COMPROBACIÓN Y LIBRO MAYOR ═══
+// (1/Nov/2026, a pedido de Oliver.) Balanza de sumas y saldos por cuenta:
+// saldo inicial, movimientos del período y saldo final, cada uno en columnas
+// Deudor / Acreedor (formato usual en Guatemala). Al hacer clic en una cuenta
+// se abre su Libro Mayor (cada línea con saldo acumulado) y desde ahí cada
+// asiento. Mismo patrón que el Trial Balance / General Ledger de Odoo y
+// Business Central. Es la base de los checkpoints de la migración: cada etapa
+// se concilia cuenta por cuenta contra la balanza de Odoo a la misma fecha.
+//
+// Fuente única: líneas de asientos PUBLICADOS, en GTQ (debe_gtq/haber_gtq).
+// Saldo con signo: positivo = deudor, negativo = acreedor.
+
+let _bzUltima = null;   // última balanza calculada (para exportar y para el Libro Mayor)
+let _lmUltimo = null;   // último Libro Mayor mostrado (para exportar)
+
+function _bzRango() {
+  const periodo = document.getElementById('bz-periodo')?.value || 'mes';
+  const pers = periodo === 'personalizado';
+  ['bz-desde','bz-hasta'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = pers ? '' : 'none';
+  });
+  if (!pers) return periodoFechas(periodo);
+  const desde = document.getElementById('bz-desde')?.value;
+  const hasta = document.getElementById('bz-hasta')?.value;
+  return (desde && hasta && desde <= hasta) ? { desde, hasta } : null;
+}
+
+// Cada línea a 2 decimales, igual que se ve en el Diario y en el asiento:
+// así la balanza, el Libro Mayor y el Diario dan exactamente el mismo saldo
+// aunque haya líneas viejas guardadas con 4 decimales.
+const _bzDebe  = l => round2(Number(l.debe_gtq  ?? l.debe  ?? 0));
+const _bzHaber = l => round2(Number(l.haber_gtq ?? l.haber ?? 0));
+
+// Saldos por cuenta en un rango: { cuentaKey: { ini, debe, haber } }.
+// La clave es cuenta_id; si una línea trae un id que no existe en la
+// nomenclatura (p. ej. data migrada), se agrupa por su código para no perderla.
+function saldosPorCuenta(desde, hasta) {
+  const publicados = new Map((state.asientos||[]).filter(a => a.estado === 'publicado').map(a => [a.id, a]));
+  const res = {};
+  (state.asientoLineas||[]).forEach(l => {
+    const a = publicados.get(l.asiento_id);
+    if (!a || a.fecha > hasta) return;
+    const key = l.cuenta_id || `cod:${l.cuenta_codigo||'?'}`;
+    const r = res[key] || (res[key] = { ini: 0, debe: 0, haber: 0, codigo: l.cuenta_codigo, nombre: l.cuenta_nombre });
+    if (a.fecha < desde) r.ini += _bzDebe(l) - _bzHaber(l);
+    else { r.debe += _bzDebe(l); r.haber += _bzHaber(l); }
+  });
+  // El saldo final se calcula con los montos SIN redondear y se redondea al
+  // final: redondear cada parte por separado podía correr un centavo en
+  // cuentas con líneas viejas de 4 decimales.
+  Object.values(res).forEach(r => { r.fin = round2(r.ini + r.debe - r.haber); r.ini = round2(r.ini); r.debe = round2(r.debe); r.haber = round2(r.haber); });
+  return res;
+}
+
+function _bzMonto(v) {
+  return Math.abs(v) >= 0.005 ? fmtGTQ(v) : '<span style="color:var(--text3)">—</span>';
+}
+
+function renderBalanza() {
+  const cont = document.getElementById('bz-report');
+  if (!cont) return;
+  const rango = _bzRango();
+  if (!rango) { cont.innerHTML = '<div style="padding:24px;color:var(--text3)">Elegí las fechas Desde y Hasta.</div>'; return; }
+  const { desde, hasta } = rango;
+  const q = (document.getElementById('bz-buscar')?.value || '').toLowerCase().trim();
+  const todas = !!document.getElementById('bz-todas')?.checked;
+
+  const saldos = saldosPorCuenta(desde, hasta);
+  const cuentas = [...(state.nomenclatura||[])].map(c => ({ key: c.id, codigo: c.codigo||'', nombre: c.nombre||'' }));
+  // Claves con movimiento que no existen en la nomenclatura
+  Object.keys(saldos).forEach(k => {
+    if (!cuentas.some(c => c.key === k)) cuentas.push({ key: k, codigo: saldos[k].codigo||'?', nombre: `${saldos[k].nombre||'Cuenta no encontrada'} ⚠ no está en la nomenclatura` });
+  });
+  cuentas.sort((a,b) => a.codigo.localeCompare(b.codigo));
+
+  const filas = [];
+  cuentas.forEach(c => {
+    const s = saldos[c.key] || { ini: 0, debe: 0, haber: 0, fin: 0 };
+    const fin = s.fin;
+    const conAlgo = Math.abs(s.ini) >= 0.005 || s.debe >= 0.005 || s.haber >= 0.005;
+    if (!todas && !conAlgo) return;
+    if (q && !c.codigo.toLowerCase().includes(q) && !c.nombre.toLowerCase().includes(q)) return;
+    filas.push({ ...c, ini: s.ini, debe: s.debe, haber: s.haber, fin });
+  });
+
+  const tot = { iniD: 0, iniA: 0, debe: 0, haber: 0, finD: 0, finA: 0 };
+  const sumar = (acc, f) => {
+    if (f.ini > 0) acc.iniD += f.ini; else acc.iniA -= f.ini;
+    acc.debe += f.debe; acc.haber += f.haber;
+    if (f.fin > 0) acc.finD += f.fin; else acc.finA -= f.fin;
+  };
+  const celdas = (o) => `
+      <td class="td-mono" style="text-align:right">${_bzMonto(o.iniD)}</td>
+      <td class="td-mono" style="text-align:right">${_bzMonto(o.iniA)}</td>
+      <td class="td-mono" style="text-align:right">${_bzMonto(o.debe)}</td>
+      <td class="td-mono" style="text-align:right">${_bzMonto(o.haber)}</td>
+      <td class="td-mono" style="text-align:right">${_bzMonto(o.finD)}</td>
+      <td class="td-mono" style="text-align:right">${_bzMonto(o.finA)}</td>`;
+
+  let body = '';
+  const grupos = (typeof NOM_GROUPS !== 'undefined' ? NOM_GROUPS : []);
+  const grupoDe = cod => grupos.find(g => g.prefix.includes(String(cod).charAt(0)));
+  let grupoActual = null, sub = null;
+  const cerrarGrupo = () => {
+    if (!grupoActual) return;
+    body += `<tr style="background:var(--surface2);font-weight:600"><td colspan="2" style="padding:6px 12px;font-size:12px">Total ${grupoActual.label}</td>${celdas(sub)}</tr>`;
+  };
+  filas.forEach(f => {
+    const g = grupoDe(f.codigo) || { key: '__otros__', label: 'Otras cuentas' };
+    if (!grupoActual || g.key !== grupoActual.key) {
+      cerrarGrupo();
+      grupoActual = g; sub = { iniD: 0, iniA: 0, debe: 0, haber: 0, finD: 0, finA: 0 };
+      body += `<tr><td colspan="8" style="padding:10px 12px 4px;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3)">${g.label}</td></tr>`;
+    }
+    const o = { iniD: f.ini > 0 ? f.ini : 0, iniA: f.ini < 0 ? -f.ini : 0, debe: f.debe, haber: f.haber, finD: f.fin > 0 ? f.fin : 0, finA: f.fin < 0 ? -f.fin : 0 };
+    sumar(sub, f); sumar(tot, f);
+    body += `<tr style="cursor:pointer" onclick="abrirLibroMayor('${f.key}')" title="Ver Libro Mayor de la cuenta">
+      <td class="td-mono" style="font-size:12px;padding-left:12px">${f.codigo}</td>
+      <td style="font-size:13px">${f.nombre}</td>${celdas(o)}</tr>`;
+  });
+  cerrarGrupo();
+  Object.keys(tot).forEach(k => tot[k] = round2(tot[k]));
+
+  // Cuadre: con el mayor cuadrado, total deudor = total acreedor en cada par.
+  const difIni = round2(tot.iniD - tot.iniA), difMov = round2(tot.debe - tot.haber), difFin = round2(tot.finD - tot.finA);
+  const cuadra = Math.abs(difIni) < 0.01 && Math.abs(difMov) < 0.01 && Math.abs(difFin) < 0.01;
+  const aviso = q
+    ? `<span style="color:var(--text3)">Búsqueda activa: los totales son solo de las cuentas mostradas.</span>`
+    : cuadra
+      ? `<span style="color:var(--green);font-weight:600">✓ Balanza cuadrada</span>`
+      : `<span style="color:var(--accent);font-weight:700">⚠ Descuadre — saldo inicial ${fmtGTQ(difIni)} · movimientos ${fmtGTQ(difMov)} · saldo final ${fmtGTQ(difFin)}</span>`;
+
+  _bzUltima = { desde, hasta, filas, tot };
+  cont.innerHTML = `
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--border)">
+      <div><strong>Balanza de Comprobación</strong> <span style="color:var(--text2);font-size:13px">del ${fmtDate(desde)} al ${fmtDate(hasta)} · ${filas.length} cuenta${filas.length!==1?'s':''} · en quetzales</span></div>
+      <div style="font-size:13px">${aviso}</div>
+    </div>
+    <table style="width:100%;min-width:980px">
+      <thead>
+        <tr>
+          <th rowspan="2" style="vertical-align:bottom">Código</th><th rowspan="2" style="vertical-align:bottom">Cuenta</th>
+          <th colspan="2" style="text-align:center">Saldo inicial</th>
+          <th colspan="2" style="text-align:center">Movimientos del período</th>
+          <th colspan="2" style="text-align:center">Saldo final</th>
+        </tr>
+        <tr>
+          <th style="text-align:right">Deudor</th><th style="text-align:right">Acreedor</th>
+          <th style="text-align:right">Debe</th><th style="text-align:right">Haber</th>
+          <th style="text-align:right">Deudor</th><th style="text-align:right">Acreedor</th>
+        </tr>
+      </thead>
+      <tbody>${body || '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:20px">Sin cuentas con saldo ni movimiento en el período</td></tr>'}</tbody>
+      <tfoot><tr style="background:var(--surface2);font-weight:700;border-top:2px solid var(--border)">
+        <td colspan="2" style="padding:10px 12px">TOTALES</td>${celdas(tot)}</tr></tfoot>
+    </table>`;
+}
+
+// ── Libro Mayor de una cuenta ──
+function abrirLibroMayor(cuentaKey) {
+  const rango = _bzUltima ? { desde: _bzUltima.desde, hasta: _bzUltima.hasta } : _bzRango();
+  if (!rango) return;
+  const { desde, hasta } = rango;
+  const cta = (state.nomenclatura||[]).find(n => n.id === cuentaKey);
+  const codigoFallback = cuentaKey.startsWith('cod:') ? cuentaKey.slice(4) : null;
+  const esDeLaCuenta = l => cta ? l.cuenta_id === cta.id : (!l.cuenta_id || !(state.nomenclatura||[]).some(n => n.id === l.cuenta_id)) && (l.cuenta_codigo||'?') === codigoFallback;
+
+  const publicados = new Map((state.asientos||[]).filter(a => a.estado === 'publicado').map(a => [a.id, a]));
+  let ini = 0;
+  const movs = [];
+  (state.asientoLineas||[]).forEach(l => {
+    if (!esDeLaCuenta(l)) return;
+    const a = publicados.get(l.asiento_id);
+    if (!a || a.fecha > hasta) return;
+    if (a.fecha < desde) { ini += _bzDebe(l) - _bzHaber(l); return; }
+    movs.push({ a, l });
+  });
+  ini = round2(ini);
+  movs.sort((x,y) => (x.a.fecha||'').localeCompare(y.a.fecha||'') || (x.a.numero||'').localeCompare(y.a.numero||''));
+
+  const fmtDA = v => Math.abs(v) < 0.005 ? fmtGTQ(0) : `${fmtGTQ(Math.abs(v))} ${v > 0 ? 'D' : 'A'}`;
+  let saldo = ini, totD = 0, totH = 0;
+  const filas = movs.map(({a, l}) => {
+    const d = round2(_bzDebe(l)), h = round2(_bzHaber(l));
+    saldo = round2(saldo + d - h); totD += d; totH += h;
+    return { fecha: a.fecha, numero: a.numero, asientoId: a.id, diario: a.diario, desc: a.descripcion||'', descLinea: l.descripcion||'', ref: a.referencia||'', debe: d, haber: h, saldo };
+  });
+  totD = round2(totD); totH = round2(totH);
+  const nombreCta = cta ? `${cta.codigo} — ${cta.nombre}` : `${codigoFallback} — (no está en la nomenclatura)`;
+  _lmUltimo = { nombreCta, codigo: cta?.codigo || codigoFallback, desde, hasta, ini, filas, totD, totH, fin: saldo };
+
+  document.getElementById('lm-title').textContent = `Libro Mayor — ${nombreCta}`;
+  document.getElementById('lm-body').innerHTML = `
+    <div style="padding:12px 16px;font-size:13px;color:var(--text2);border-bottom:1px solid var(--border)">
+      Del ${fmtDate(desde)} al ${fmtDate(hasta)} · ${filas.length} movimiento${filas.length!==1?'s':''} · en quetzales · D = deudor, A = acreedor
+    </div>
+    <table style="width:100%;min-width:900px">
+      <thead><tr>
+        <th>Fecha</th><th>Asiento</th><th>Diario</th><th>Descripción</th><th>Referencia</th>
+        <th style="text-align:right">Debe</th><th style="text-align:right">Haber</th><th style="text-align:right">Saldo</th>
+      </tr></thead>
+      <tbody>
+        <tr style="background:var(--surface2)"><td colspan="7" style="padding:8px 12px;font-weight:600">Saldo inicial al ${fmtDate(desde)}</td>
+          <td class="td-mono" style="text-align:right;font-weight:600">${fmtDA(ini)}</td></tr>
+        ${filas.map(f => `<tr>
+          <td style="white-space:nowrap">${fmtDate(f.fecha)}</td>
+          <td class="td-mono" style="font-size:12px;color:var(--accent);cursor:pointer;text-decoration:underline;white-space:nowrap" onclick="showAsientoDetail('${f.asientoId}')">${f.numero||'—'}</td>
+          <td style="font-size:11px;color:var(--text2)">${f.diario||'—'}</td>
+          <td style="font-size:12px">${f.desc}${f.descLinea && f.descLinea !== f.desc ? `<div style="font-size:11px;color:var(--text3)">${f.descLinea}</div>` : ''}</td>
+          <td class="td-mono" style="font-size:11px;color:var(--text2)">${f.ref}</td>
+          <td class="td-mono" style="text-align:right">${f.debe ? fmtGTQ(f.debe) : ''}</td>
+          <td class="td-mono" style="text-align:right">${f.haber ? fmtGTQ(f.haber) : ''}</td>
+          <td class="td-mono" style="text-align:right">${fmtDA(f.saldo)}</td>
+        </tr>`).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:16px">Sin movimientos en el período</td></tr>'}
+      </tbody>
+      <tfoot><tr style="background:var(--surface2);font-weight:700;border-top:2px solid var(--border)">
+        <td colspan="5" style="padding:10px 12px">Totales del período / Saldo final al ${fmtDate(hasta)}</td>
+        <td class="td-mono" style="text-align:right">${fmtGTQ(totD)}</td>
+        <td class="td-mono" style="text-align:right">${fmtGTQ(totH)}</td>
+        <td class="td-mono" style="text-align:right">${fmtDA(saldo)}</td>
+      </tr></tfoot>
+    </table>`;
+  openModal('modal-libro-mayor');
+}
+
+// ── Exportación CSV (abre en Excel; para Robert y para los checkpoints de la migración) ──
+function _csvContable(nombreArchivo, filas) {
+  const esc = v => {
+    const s = v == null ? '' : String(v);
+    return /[",\n;]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+  };
+  const csv = filas.map(f => f.map(esc).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = nombreArchivo;
+  a.click();
+}
+
+function exportarBalanzaCSV() {
+  if (!_bzUltima) renderBalanza();
+  const b = _bzUltima;
+  if (!b || !b.filas.length) { toast('Sin datos para exportar', 'error'); return; }
+  const n = v => round2(v).toFixed(2);   // solo para el texto del CSV, no se guarda
+  const filas = [
+    ['Balanza de Comprobación', `Del ${b.desde} al ${b.hasta}`, 'GTQ'],
+    ['Código','Cuenta','Saldo inicial deudor','Saldo inicial acreedor','Debe','Haber','Saldo final deudor','Saldo final acreedor'],
+    ...b.filas.map(f => [f.codigo, f.nombre,
+      n(f.ini > 0 ? f.ini : 0), n(f.ini < 0 ? -f.ini : 0), n(f.debe), n(f.haber),
+      n(f.fin > 0 ? f.fin : 0), n(f.fin < 0 ? -f.fin : 0)]),
+    ['', 'TOTALES', n(b.tot.iniD), n(b.tot.iniA), n(b.tot.debe), n(b.tot.haber), n(b.tot.finD), n(b.tot.finA)],
+  ];
+  _csvContable(`balanza_${b.desde}_${b.hasta}.csv`, filas);
+}
+
+function exportarLibroMayorCSV() {
+  const m = _lmUltimo;
+  if (!m) { toast('Sin datos para exportar', 'error'); return; }
+  const n = v => round2(v).toFixed(2);
+  const filas = [
+    ['Libro Mayor', m.nombreCta, `Del ${m.desde} al ${m.hasta}`, 'GTQ'],
+    ['Fecha','Asiento','Diario','Descripción','Detalle línea','Referencia','Debe','Haber','Saldo (+deudor / -acreedor)'],
+    ['', '', '', 'Saldo inicial', '', '', '', '', n(m.ini)],
+    ...m.filas.map(f => [f.fecha, f.numero, f.diario, f.desc, f.descLinea, f.ref, n(f.debe), n(f.haber), n(f.saldo)]),
+    ['', '', '', 'Totales / saldo final', '', '', n(m.totD), n(m.totH), n(m.fin)],
+  ];
+  _csvContable(`libro_mayor_${m.codigo}_${m.desde}_${m.hasta}.csv`, filas);
+}
+
 function renderEstadoResultados() {
   const periodo = document.getElementById('er-periodo')?.value||'mes';
   const isPers  = periodo === 'personalizado';
