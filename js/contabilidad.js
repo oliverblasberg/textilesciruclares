@@ -943,7 +943,9 @@ async function asientoMovInventario(movId, monedaParam = null) {
 // ──────────────────────────────────────────────────
 // DIARIO GENERAL — RENDER
 // ──────────────────────────────────────────────────
-function renderDiarioGeneral() {
+// Filas (asiento + línea) del Diario Mayor General con los filtros de pantalla.
+// Fuente única para la tabla y para la exportación a Excel (1/Nov/2026).
+function _filasDiarioGeneral() {
   const q   = (document.getElementById('search-dg')?.value||'').toLowerCase();
   const dj  = document.getElementById('filter-dg-diario')?.value||'';
   const mes = document.getElementById('filter-dg-mes')?.value||'';
@@ -980,6 +982,12 @@ function renderDiarioGeneral() {
       rows.push({ a, l });
     });
   });
+
+  return rows;
+}
+
+function renderDiarioGeneral() {
+  const rows = _filasDiarioGeneral();
 
   let sumDebe = 0, sumHaber = 0;
   const tbody = document.getElementById('tbl-dg');
@@ -1214,6 +1222,33 @@ function imprimirAsiento(id) {
 // Imprime exactamente lo que está filtrado/visible en pantalla — reusa
 // los mismos 3 filtros (búsqueda, diario, mes) que renderDiarioGeneral(),
 // para que el reporte impreso siempre coincida con lo que el usuario ve.
+// Exportar el Diario Mayor General a Excel con los mismos filtros de pantalla
+// (búsqueda, diario, mes), en orden cronológico como un libro.
+function exportarDiarioGeneralExcel() {
+  // Cronológico por asiento; sort estable, así las líneas de cada asiento conservan su orden.
+  const rows = _filasDiarioGeneral().slice().sort((x, y) =>
+    (x.a.fecha||'').localeCompare(y.a.fecha||'') || (x.a.numero||'').localeCompare(y.a.numero||''));
+  if (!rows.length) { toast('Sin asientos para exportar', 'error'); return; }
+  const dj  = document.getElementById('filter-dg-diario')?.value || 'Todos';
+  const mes = document.getElementById('filter-dg-mes')?.value || 'Todos los meses';
+  let totD = 0, totH = 0;
+  const filas = [
+    ['Diario Mayor General', `Diario: ${dj}`, `Mes: ${mes}`, 'Montos en GTQ'],
+    [],
+    ['Fecha','Asiento','Diario','Descripción','Referencia','Cuenta','Nombre cuenta','Detalle línea','Moneda orig.','Monto orig.','TC','Debe','Haber'],
+  ];
+  rows.forEach(({ a, l }) => {
+    const d = round2(Number(l.debe_gtq ?? l.debe ?? 0)), h = round2(Number(l.haber_gtq ?? l.haber ?? 0));
+    totD += d; totH += h;
+    filas.push([fmtDate(a.fecha), a.numero||'', a.diario||'', a.descripcion||'', a.referencia||'',
+      l.cuenta_codigo||'', l.cuenta_nombre||'', l.descripcion||'',
+      l.moneda_orig||l.moneda||'', l.monto_orig != null ? Number(l.monto_orig) : '', l.tipo_cambio != null ? Number(l.tipo_cambio) : '',
+      d, h]);
+  });
+  filas.push(['', '', '', '', '', '', '', '', '', '', 'TOTALES', round2(totD), round2(totH)]);
+  _xlsxContable(`diario_general_${mes}_${dj}.xlsx`.replace(/\s+/g,'_'), 'Diario', filas, [12, 15, 12, 50, 22, 11, 38, 38, 8, 14, 9, 14, 14]);
+}
+
 function imprimirDiarioGeneral() {
   const q   = (document.getElementById('search-dg')?.value||'').toLowerCase();
   const dj  = document.getElementById('filter-dg-diario')?.value||'';
