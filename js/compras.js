@@ -1240,7 +1240,12 @@ function renderCompras() {
                     (prov?.nit||'').toLowerCase().includes(q));
   });
 
-  let sumTotal = 0;
+  // Totales del libro SIEMPRE en quetzales (31/Oct/2026): antes se sumaba el
+  // total nativo de cada factura, mezclando USD y GTQ (ej. $6,750 + Q15,000 se
+  // mostraba como Q21,750). Las facturas en USD se convierten al TC de la
+  // factura (f.tc, el mismo con que se capitalizó); neto e IVA vienen de
+  // erp_compras (lo que el usuario aprobó al facturar).
+  let sumNetoQ = 0, sumIvaQ = 0, sumTotalQ = 0;
   const tbody = document.getElementById('tbl-compras');
   if (!tbody) return;
 
@@ -1258,9 +1263,13 @@ function renderCompras() {
     const esCancelada = c.estado === 'cancelada' || factura?.status === 'cancelada';
     const estadoColor = esCancelada ? 'badge-gray' : esPagado ? 'badge-green' : pagado>0 ? 'badge-yellow' : 'badge-blue';
     const estadoLabel = esCancelada ? 'Cancelada' : esPagado ? 'Pagada' : pagado>0 ? 'Parcialmente Pagada' : 'Generada';
+    const tcLibro = (c.moneda||'GTQ') === 'USD' ? (Number(factura?.tc) || getTCFecha(c.fecha) || 1) : 1;
+    const netoQ   = round2(Number(c.valor_neto||0) * tcLibro);
+    const ivaQ    = round2(Number(c.valor_iva||0)  * tcLibro);
+    const totalQ  = round2(total * tcLibro);
     // Las canceladas se muestran (es un libro fiscal: la anulación debe
     // verse) pero NO suman a los totales ni al IVA crédito fiscal.
-    if (!esCancelada) sumTotal += total;
+    if (!esCancelada) { sumNetoQ += netoQ; sumIvaQ += ivaQ; sumTotalQ += totalQ; }
     const fechaFmt = fmtDate(c.fecha);
     return `<tr id="compra-row-${c.id}">
       <td style="padding:8px 10px;text-align:center">
@@ -1287,7 +1296,9 @@ function renderCompras() {
       <td class="td-mono" style="font-size:12px">${prov?.nit||'—'}</td>
       <td style="font-size:13px">${prov?.name||'—'}</td>
       <td class="td-mono hide-mobile" style="font-size:11px">${oc?`<span class="badge badge-gray">${oc.numero||'Borrador'}</span>`:'—'}</td>
-      <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(total, c.moneda||'GTQ')}</td>
+      <td class="td-mono" style="text-align:right;${esCancelada?'text-decoration:line-through;color:var(--text3)':''}">${fmtGTQ(netoQ)}</td>
+      <td class="td-mono" style="text-align:right;${esCancelada?'text-decoration:line-through;color:var(--text3)':''}">${fmtGTQ(ivaQ)}</td>
+      <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(total, c.moneda||'GTQ')}${(c.moneda||'GTQ')==='USD'?`<div style="font-size:10px;font-weight:400;color:var(--text3)">${fmtGTQ(totalQ)} · TC ${tcLibro.toFixed(4)}</div>`:''}</td>
       <td class="td-mono" style="text-align:right;color:${esPagado?'var(--text3)':'var(--accent)'};font-weight:${esPagado?'400':'700'}">
         ${esPagado?'✓':fmtMoney(saldo, c.moneda||'GTQ')}
       </td>
@@ -1300,13 +1311,17 @@ function renderCompras() {
         ` : ''}
       </div></td>
     </tr>`;
-  }).join('') : '<tr><td colspan="13"><div class="empty-state"><div class="empty-icon">▣</div><p>Sin registros de compra</p></div></td></tr>';
+  }).join('') : '<tr><td colspan="15"><div class="empty-state"><div class="empty-icon">▣</div><p>Sin registros de compra</p></div></td></tr>';
 
-  // Totals row — colspan 9 covers checkbox..OC, then Total / Saldo / Vencimiento / Estado
+  // Totales — colspan 9 cubre checkbox..OC; luego Neto / IVA / Total (todo en
+  // GTQ, sin canceladas) / Saldo / Vencimiento / Estado. El IVA es el crédito
+  // fiscal del período filtrado.
   const tfoot = document.getElementById('tfoot-compras');
   if (tfoot) tfoot.innerHTML = data.length ? `<tr style="background:var(--surface2);font-weight:600">
-    <td colspan="9" style="padding:10px 14px;font-size:12px;color:var(--text2)">TOTALES (${data.length} registro${data.length!==1?'s':''})</td>
-    <td class="td-mono" style="text-align:right;padding:10px 14px">${fmtMoney(sumTotal)}</td>
+    <td colspan="9" style="padding:10px 14px;font-size:12px;color:var(--text2)">TOTALES EN QUETZALES (${data.length} registro${data.length!==1?'s':''}; las canceladas no suman)</td>
+    <td class="td-mono" style="text-align:right;padding:10px 14px">${fmtGTQ(sumNetoQ)}</td>
+    <td class="td-mono" style="text-align:right;padding:10px 14px" title="IVA crédito fiscal">${fmtGTQ(sumIvaQ)}</td>
+    <td class="td-mono" style="text-align:right;padding:10px 14px">${fmtGTQ(sumTotalQ)}</td>
     <td></td>
     <td></td>
     <td></td>
