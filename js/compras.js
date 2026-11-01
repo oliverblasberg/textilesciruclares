@@ -1304,9 +1304,9 @@ function renderCompras() {
       <td class="td-mono hide-mobile" style="font-size:11px">${oc?`<span class="badge badge-gray">${oc.numero||'Borrador'}</span>`:'—'}</td>
       <td class="td-mono" style="text-align:right;${esCancelada?'text-decoration:line-through;color:var(--text3)':''}">${fmtGTQ(netoQ)}</td>
       <td class="td-mono" style="text-align:right;${esCancelada?'text-decoration:line-through;color:var(--text3)':''}">${fmtGTQ(ivaQ)}</td>
-      <td class="td-mono" style="text-align:right;font-weight:600">${fmtMoney(total, c.moneda||'GTQ')}${(c.moneda||'GTQ')==='USD'?`<div style="font-size:10px;font-weight:400;color:var(--text3)">${fmtGTQ(totalQ)} · TC ${tcLibro.toFixed(4)}</div>`:''}</td>
-      <td class="td-mono" style="text-align:right;color:${esPagado?'var(--text3)':'var(--accent)'};font-weight:${esPagado?'400':'700'}">
-        ${esPagado?'✓':fmtMoney(saldo, c.moneda||'GTQ')}
+      <td class="td-mono" style="text-align:right;font-weight:600;${esCancelada?'text-decoration:line-through;color:var(--text3);font-weight:400':''}">${fmtMoney(total, c.moneda||'GTQ')}${(c.moneda||'GTQ')==='USD'?`<div style="font-size:10px;font-weight:400;color:var(--text3)">${fmtGTQ(totalQ)} · TC ${tcLibro.toFixed(4)}</div>`:''}</td>
+      <td class="td-mono" style="text-align:right;color:${esPagado||esCancelada?'var(--text3)':'var(--accent)'};font-weight:${esPagado||esCancelada?'400':'700'}">
+        ${esCancelada?'—':esPagado?'✓':fmtMoney(saldo, c.moneda||'GTQ')}
       </td>
       <td class="td-mono" style="white-space:nowrap;font-size:12px">${factura?.fecha_vencimiento?fmtDate(factura.fecha_vencimiento):'—'}</td>
       <td><div class="td-actions">
