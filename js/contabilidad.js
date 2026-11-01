@@ -1680,7 +1680,7 @@ function abrirLibroMayor(cuentaKey) {
       </tr></thead>
       <tbody>
         <tr style="background:var(--surface2)"><td colspan="7" style="padding:8px 12px;font-weight:600">Saldo inicial al ${fmtDate(desde)}</td>
-          <td class="td-mono" style="text-align:right;font-weight:600">${fmtDA(ini)}</td></tr>
+          <td class="td-mono" style="text-align:right;font-weight:600;white-space:nowrap">${fmtDA(ini)}</td></tr>
         ${filas.map(f => `<tr>
           <td style="white-space:nowrap">${fmtDate(f.fecha)}</td>
           <td class="td-mono" style="font-size:12px;color:var(--accent);cursor:pointer;text-decoration:underline;white-space:nowrap" onclick="showAsientoDetail('${f.asientoId}')">${f.numero||'—'}</td>
@@ -1689,14 +1689,14 @@ function abrirLibroMayor(cuentaKey) {
           <td class="td-mono" style="font-size:11px;color:var(--text2)">${f.ref}</td>
           <td class="td-mono" style="text-align:right">${f.debe ? fmtGTQ(f.debe) : ''}</td>
           <td class="td-mono" style="text-align:right">${f.haber ? fmtGTQ(f.haber) : ''}</td>
-          <td class="td-mono" style="text-align:right">${fmtDA(f.saldo)}</td>
+          <td class="td-mono" style="text-align:right;white-space:nowrap">${fmtDA(f.saldo)}</td>
         </tr>`).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:16px">Sin movimientos en el período</td></tr>'}
       </tbody>
       <tfoot><tr style="background:var(--surface2);font-weight:700;border-top:2px solid var(--border)">
         <td colspan="5" style="padding:10px 12px">Totales del período / Saldo final al ${fmtDate(hasta)}</td>
         <td class="td-mono" style="text-align:right">${fmtGTQ(totD)}</td>
         <td class="td-mono" style="text-align:right">${fmtGTQ(totH)}</td>
-        <td class="td-mono" style="text-align:right">${fmtDA(saldo)}</td>
+        <td class="td-mono" style="text-align:right;white-space:nowrap">${fmtDA(saldo)}</td>
       </tr></tfoot>
     </table>`;
   openModal('modal-libro-mayor');
