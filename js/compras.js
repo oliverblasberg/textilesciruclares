@@ -3026,7 +3026,13 @@ function renderOCPanel(ocId) {
       <td>${fmtDate(f.fecha)}</td>
       <td class="td-mono">${fmtMoney(f.total, monedaOCFacturas)}</td>
       <td class="td-mono" style="color:var(--green)">${pagado>0
-        ? (pagosF.filter(p=>p.num_pago).map(p=>`<span style="cursor:pointer;text-decoration:underline" onclick="verDetallePago('${p.id}')" title="Ver detalle del pago">${p.num_pago}</span>`).join(', ') || fmtMoney(pagado, monedaOCFacturas))
+        // Pagos Y notas de crédito aplicadas (1/Nov/2026): antes solo se
+        // listaban los pagos y la NC aplicada no aparecía, aunque sí sumaba
+        // al pagado (pagadoFacturaOC). Cada documento con su monto.
+        ? ([
+            ...pagosF.map(p=>`<div><span style="cursor:pointer;text-decoration:underline" onclick="verDetallePago('${p.id}')" title="Ver detalle del pago">${p.num_pago||'Pago'}</span> <span style="color:var(--text3)">${fmtMoney(p.monto, p.moneda||monedaOCFacturas)}</span></div>`),
+            ...ncsAplicadasFacturaOC(f.id).map(nc=>`<div><span style="cursor:pointer;text-decoration:underline" onclick="verFacturaOC('${f.id}')" title="Ver en el detalle de la factura">${nc.numero}</span> <span style="color:var(--text3)">${fmtMoney(nc.monto, nc.moneda||monedaOCFacturas)}</span></div>`),
+          ].join('') || fmtMoney(pagado, monedaOCFacturas))
         : '—'}</td>
       <td class="td-mono" style="color:${esCancelada||esPagada?'var(--text3)':'var(--accent)'};font-weight:${esPagada||esCancelada?'400':'700'}">${esCancelada||esPagada?'—':fmtMoney(saldo, monedaOCFacturas)}</td>
       <td><span class="badge ${statusColor}">${statusLabel}</span></td>
