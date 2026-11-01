@@ -564,8 +564,6 @@ function calcSaldoLibros(cuentaId, fechaCorte) {
   [...(state.pagos||[]), ...(state.pagosOC||[])]
     .filter(p=>p.cuenta_id===cuentaId && (!fechaCorte || p.fecha<=fechaCorte))
     .forEach(p => saldo += signedPagoMonto(p));
-  (state.ocAnticipos||[]).filter(a=>a.cuenta_id===cuentaId && (!fechaCorte || a.fecha<=fechaCorte))
-    .forEach(a => saldo -= Number(a.monto||0));
   return saldo;
 }
 

@@ -1691,10 +1691,8 @@ function renderBalanceGeneral() {
 // recibidos/realizados), este gráfico proyecta cuándo se DEBEN cancelar los
 // documentos ya emitidos — facturas de venta (ingresos) y facturas de
 // compra a proveedor (egresos) — según su fecha de vencimiento.
-// Para egresos: se excluye toda factura de compra con
-// erp_oc_facturas.estado_pago === 'pagado' (ya no representa una salida de
-// caja futura). Todo lo demás (pendiente, parcial, o sin estado_pago aún)
-// sí se proyecta, por el saldo pendiente (total - monto_pagado).
+// Para egresos: se proyecta toda factura de compra no cancelada con saldo
+// pendiente (total - pagadoFacturaOC), en GTQ al TC de la factura.
 //
 // Dos controles independientes:
 // - Plazo (fc-periodo): rango de fechas mostrado (mes/trimestre/año actual).
@@ -1733,12 +1731,14 @@ function computeFlujoCajaItems(desde, hasta, intervalo) {
 
   // Facturas de compra pendientes de pago — fuente: erp_oc_facturas.
   // Identificador: num_interno. Fecha: fecha_vencimiento. Monto: saldo
-  // pendiente (total - monto_pagado).
+  // pendiente vía pagadoFacturaOC() (pagos + NC, fuente única, 1/Nov/2026);
+  // antes leía las copias guardadas monto_pagado/estado_pago, que podían
+  // quedar desactualizadas.
   (state.ocFacturas || [])
-    .filter(f => f.status !== 'cancelada' && f.estado_pago !== 'pagado')
+    .filter(f => f.status !== 'cancelada')
     .forEach(f => {
       const venc  = f.fecha_vencimiento || f.fecha;
-      const saldo = Math.max(0, Number(f.total || 0) - Number(f.monto_pagado || 0));
+      const saldo = Math.max(0, Number(f.total || 0) - pagadoFacturaOC(f.id));
       if (saldo <= 0) return;
       const monedaOC = getMonedaOC(f.oc_id);
       const saldoGTQ = monedaOC === 'GTQ'
@@ -1864,17 +1864,22 @@ function renderFlujoCaja() {
   // Base caja: pagos reales recibidos y realizados.
   // Entradas = cobros de clientes (erp_pagos, state.pagos).
   // Salidas = pagos de facturas a proveedores (erp_pagos_oc, state.pagosOC)
-  // + anticipos a proveedores (erp_oc_anticipos, state.ocAnticipos). Antes
-  // solo se contaban los anticipos, así que el reporte se veía vacío para
-  // cualquier período sin anticipos aunque sí hubiera pagos de facturas
-  // reales — que son la salida de caja más común.
+  // Los anticipos ya son pagos sin factura dentro de erp_pagos_oc (31/Oct);
+  // la tabla erp_oc_anticipos se eliminó (1/Nov/2026).
+  // Cada salida se cuenta en QUETZALES y por lo que realmente salió del
+  // banco (1/Nov/2026): antes se sumaban dólares y quetzales como si fueran
+  // la misma moneda y el bruto del pago, incluida la retención ISR que se
+  // queda en la empresa.
   const cobros    = state.pagos.filter(p => p.fecha>=desde && p.fecha<=hasta);
   const pagosProv = (state.pagosOC||[]).filter(p => p.fecha>=desde && p.fecha<=hasta);
-  const anticipos = state.ocAnticipos.filter(a => a.fecha>=desde && a.fecha<=hasta);
+  const salidaGTQ = p => {
+    const neto = montoBancoPago(p);
+    return (p.moneda||'GTQ') === 'USD' ? round2(neto * (getTCFecha(p.fecha) || 1)) : neto;
+  };
 
   // Group by week
   const totalCobros   = cobros.reduce((s,p)=>s+Number(p.monto||0),0);
-  const totalPagos    = pagosProv.reduce((s,p)=>s+Number(p.monto||0),0) + anticipos.reduce((s,a)=>s+Number(a.monto||0),0);
+  const totalPagos    = pagosProv.reduce((s,p)=>s+salidaGTQ(p),0);
   const flujoNeto     = totalCobros - totalPagos;
 
   // Monthly breakdown from pagos
@@ -1887,12 +1892,7 @@ function renderFlujoCaja() {
   pagosProv.forEach(p => {
     const mes = (p.fecha||'').slice(0,7);
     if (!porMes[mes]) porMes[mes] = {cobros:0, pagos:0};
-    porMes[mes].pagos += Number(p.monto||0);
-  });
-  anticipos.forEach(a => {
-    const mes = (a.fecha||'').slice(0,7);
-    if (!porMes[mes]) porMes[mes] = {cobros:0, pagos:0};
-    porMes[mes].pagos += Number(a.monto||0);
+    porMes[mes].pagos += salidaGTQ(p);
   });
 
   const filas = Object.entries(porMes).sort().map(([mes,v]) => {

@@ -3403,7 +3403,8 @@ async function generarOCdesdeSC(scId) {
     ? state.scItems.filter(i=>i.sc_id===scId)
     : (await sb.from('erp_sc_items').select('*').eq('sc_id',scId)).data||[];
   // Create OC
-  const numero=nextCorrelativo('OC',state.oc,'numero');
+  // Correlativo consultado a Supabase (1/Nov/2026); antes salía de state.
+  const numero=await nextOCNum();
   const {data:ocData,error}=await sb.from('erp_oc').insert({
     numero, proveedor_id:sc.proveedor_id, fecha:today(),
     entrega:sc.entrega||null, sc_id:scId, status:'confirmada', notas:sc.notas||'',
@@ -4352,6 +4353,31 @@ function openDevolucion(itemId, recepcionId, ocId) {
 // doble clic en "Registrar Pago" grabó NP-2026-10-001 dos veces, y el segundo
 // asiento chocó por correlativo y se perdió). Mismo patrón que _savingRecepcion.
 let _savingDevolucion = false;
+// ═══ CORRELATIVOS DEV / NC DE COMPRA ═══
+// (1/Nov/2026) Se consultan a Supabase en el momento, como manda la regla de
+// correlativos: antes salían de state (nextCorrelativo sobre la lista en
+// memoria) y dos usuarios —o una pestaña sin recargar— podían generar el
+// mismo número. La DEV de compra sigue con su propia secuencia, separada de
+// la DEV de despacho (decisión del 22/Ago: "no hace falta unificarlas").
+// Si la consulta falla se lanza error: mejor no guardar que numerar mal.
+async function nextDevOCNum() {
+  const y = new Date().getFullYear();
+  const { data, error } = await sb.from('erp_oc_recepcion_items')
+    .select('numero_devolucion').ilike('numero_devolucion', `DEV-${y}-%`);
+  if (error) throw new Error('No se pudo obtener el correlativo de devolución: ' + error.message);
+  const nums = (data||[]).map(r => parseInt((r.numero_devolucion||'').slice(-4))||0);
+  return `DEV-${y}-${String((nums.length ? Math.max(...nums) : 0) + 1).padStart(4,'0')}`;
+}
+
+async function nextNCNum() {
+  const y = new Date().getFullYear();
+  const { data, error } = await sb.from('erp_oc_notas_credito')
+    .select('numero').ilike('numero', `NC-${y}-%`);
+  if (error) throw new Error('No se pudo obtener el correlativo de nota de crédito: ' + error.message);
+  const nums = (data||[]).map(r => parseInt((r.numero||'').slice(-4))||0);
+  return `NC-${y}-${String((nums.length ? Math.max(...nums) : 0) + 1).padStart(4,'0')}`;
+}
+
 async function saveDevolucion() {
   if (_savingDevolucion) return;   // evita doble ejecución (doble clic) — ver nota en _savingDevolucion
   _savingDevolucion = true;
@@ -4396,9 +4422,10 @@ async function saveDevolucion() {
       return;
     }
 
-    // Generate DEV correlativo — based on existing devolucion lines
-    const devLines = (state.ocRecepcionItems||[]).filter(x => x.estado === 'devuelto' && x.numero_devolucion);
-    const numDev   = nextCorrelativo('DEV', devLines, 'numero_devolucion');
+    // Correlativo DEV — consultado a Supabase (nextDevOCNum)
+    let numDev;
+    try { numDev = await nextDevOCNum(); }
+    catch (eNum) { alert(eNum.message + '\n\nNo se registró la devolución.'); return; }
 
     // 1. Nueva línea en erp_oc_recepcion_items (cantidad negativa = devolución)
     const { data:recItemDev, error:e1 } = await sb.from('erp_oc_recepcion_items').insert({
@@ -4451,8 +4478,7 @@ async function saveDevolucion() {
     try {
       const movDev  = (state.movimientos||[]).find(m => m.mov_id === movIdDev);
       const ocDev   = (state.oc||[]).find(o => o.id === (rec?.oc_id || ocId));
-      const ncLines = (state.notasCreditoOC||[]);
-      const numNC   = nextCorrelativo('NC', ncLines, 'numero');
+      const numNC   = await nextNCNum();
       const { error:eNC } = await sb.from('erp_oc_notas_credito').insert({
         numero:            numNC,
         estado:            'borrador',
@@ -4664,7 +4690,7 @@ async function saveConfirmarNC() {
 
     await loadAll();
     closeModal('modal-confirmar-nc');
-    toast(`✓ NC ${nc.numero} confirmada — ${fmtMoney(montoConfirmadoGTQ,'GTQ')} disponibles para aplicar`);
+    toast(`✓ NC ${nc.numero} confirmada — ${fmtMoney(montoReal, nc.moneda||'GTQ')} disponibles para aplicar`);
   } catch(e) {
     alert('Error inesperado en saveConfirmarNC:\n\n' + e.message + '\n\n' + e.stack);
   } finally {

@@ -5948,7 +5948,7 @@ let state = {
   sc: [], scItems: [],
   oc: [], ocItems: [],
   ocRecepciones: [], ocRecepcionItems: [],
-  ocFacturas: [], ocFacturaItems: [], ocAnticipos: [],
+  ocFacturas: [], ocFacturaItems: [],
   asientos: [], asientoLineas: [],
   diarios: [],
   bodegas: [],
@@ -6025,7 +6025,7 @@ function enterModule(hub) {
 // ═══ DATA LOAD ═══
 async function loadAll() {
   const [c, t, p, pI, f, pl, pb, cta, pag, hil, prc, prov, cmp, prod, catg, mov, nom,
-         sc, scI, oc, ocI, ocR, ocRI, plC, ocF, ocFI, pagosOC, ocA, asi, asiL, dj, bod, tc,
+         sc, scI, oc, ocI, ocR, ocRI, plC, ocF, ocFI, pagosOC, asi, asiL, dj, bod, tc,
          rec, recL, op_, opC, opCo, reab, extL, extB, envT, envTI, roll, reabDev, ovFI, ship, clB, despDev, ncOC] = await Promise.all([
     sb.from('erp_customers').select('*').order('code'),
     sb.from('erp_fabrics').select('*').order('code'),
@@ -6054,7 +6054,6 @@ async function loadAll() {
     sb.from('erp_oc_facturas').select('*').order('fecha',{ascending:false}),
     sb.from('erp_oc_factura_items').select('*'),
     sb.from('erp_pagos_oc').select('*').order('fecha',{ascending:false}),
-    sb.from('erp_oc_anticipos').select('*').order('fecha',{ascending:false}),
     sb.from('erp_asientos').select('*').order('fecha',{ascending:false}),
     sb.from('erp_asiento_lineas').select('*'),
     sb.from('erp_diarios').select('*').order('nombre'),
@@ -6117,7 +6116,7 @@ async function loadAll() {
     erp_sc:sc, erp_sc_items:scI, erp_oc:oc, erp_oc_items:ocI, erp_oc_recepciones:ocR,
     erp_oc_recepcion_items:ocRI, erp_oc_pl:plC, erp_oc_facturas:ocF,
     erp_oc_factura_items:ocFI, erp_pagos_oc:pagosOC,
-    erp_oc_anticipos:ocA, erp_asientos:asi, erp_asiento_lineas:asiL, erp_diarios:dj,
+    erp_asientos:asi, erp_asiento_lineas:asiL, erp_diarios:dj,
     erp_bodegas:bod, erp_tipos_cambio:tc, erp_recetas:rec, erp_receta_lineas:recL,
     erp_op:op_, erp_op_consumos:opC, erp_op_costos:opCo, erp_reabastecimiento:reab,
     erp_extracto_lotes:extL, erp_extracto_bancario:extB, erp_envios_terceros:envT,
@@ -6168,7 +6167,6 @@ async function loadAll() {
   // permite validar cantidad facturada contra cantidad recibida.
   state.ocFacturaItems     = ocFI.data     || [];
   state.pagosOC            = pagosOC.data  || [];
-  state.ocAnticipos        = ocA.data  || [];
   state.asientos           = asi.data  || [];
   state.asientoLineas      = asiL.data || [];
   state.diarios            = dj.data   || [];
