@@ -1730,11 +1730,29 @@ function exportarBalanzaCSV() {
     ['Balanza de Comprobación', `Del ${fmtDate(b.desde)} al ${fmtDate(b.hasta)}`, 'Montos en GTQ'],
     [],
     ['Código','Cuenta','Saldo inicial deudor','Saldo inicial acreedor','Debe','Haber','Saldo final deudor','Saldo final acreedor'],
-    ...b.filas.map(f => [f.codigo, f.nombre,
-      f.ini > 0 ? f.ini : 0, f.ini < 0 ? -f.ini : 0, f.debe, f.haber,
-      f.fin > 0 ? f.fin : 0, f.fin < 0 ? -f.fin : 0]),
-    ['', 'TOTALES', b.tot.iniD, b.tot.iniA, b.tot.debe, b.tot.haber, b.tot.finD, b.tot.finA],
   ];
+  // Mismos títulos de clase y subtotales que en pantalla (1. Activos, 2. Pasivos…)
+  const grupos = (typeof NOM_GROUPS !== 'undefined' ? NOM_GROUPS : []);
+  const grupoDe = cod => grupos.find(g => g.prefix.includes(String(cod).charAt(0))) || { key: '__otros__', label: 'Otras cuentas' };
+  let gAct = null, sub = null;
+  const cerrar = () => {
+    if (!gAct) return;
+    filas.push(['', `Total ${gAct.label}`, ...['iniD','iniA','debe','haber','finD','finA'].map(k => round2(sub[k]))]);
+    filas.push([]);
+  };
+  b.filas.forEach(f => {
+    const g = grupoDe(f.codigo);
+    if (!gAct || g.key !== gAct.key) {
+      cerrar();
+      gAct = g; sub = { iniD: 0, iniA: 0, debe: 0, haber: 0, finD: 0, finA: 0 };
+      filas.push([g.label]);
+    }
+    const v = [f.ini > 0 ? f.ini : 0, f.ini < 0 ? -f.ini : 0, f.debe, f.haber, f.fin > 0 ? f.fin : 0, f.fin < 0 ? -f.fin : 0];
+    ['iniD','iniA','debe','haber','finD','finA'].forEach((k, i) => sub[k] += v[i]);
+    filas.push([f.codigo, f.nombre, ...v]);
+  });
+  cerrar();
+  filas.push(['', 'TOTALES', b.tot.iniD, b.tot.iniA, b.tot.debe, b.tot.haber, b.tot.finD, b.tot.finA]);
   _xlsxContable(`balanza_${b.desde}_${b.hasta}.xlsx`, 'Balanza', filas, [12, 48, 16, 16, 16, 16, 16, 16]);
 }
 
