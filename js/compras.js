@@ -276,8 +276,14 @@ function _pagoHistorial(facturaId) {
   const hist  = document.getElementById('pago-historial');
   if (pagos.length || ncs.length) {
     wrap.style.display = 'block';
+    // Moneda del pago = la de la transacción (1/Nov/2026): antes fmtGTQ()
+    // mostraba "Q500.00" en un anticipo de $500. La cuenta es la bancaria de
+    // origen (state.cuentas), igual que verDetallePago(); antes se buscaba en
+    // la nomenclatura, nunca coincidía y caía a las notas del pago.
+    const fFact = (state.ocFacturas||[]).find(x => x.id === facturaId);
+    const monedaFact = fFact ? (getMonedaOC(fFact.oc_id) || 'GTQ') : 'GTQ';
     hist.innerHTML = pagos.map(p => {
-      const cta = (state.nomenclatura||[]).find(n=>n.id===p.cuenta_id);
+      const cta = (state.cuentas||[]).find(c=>c.id===p.cuenta_id);
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:7px;background:var(--surface2);margin-bottom:6px;font-size:12px">
         <div>
           ${p.num_pago?`<span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);margin-right:8px">${p.num_pago}</span>`:''}
@@ -285,10 +291,10 @@ function _pagoHistorial(facturaId) {
           <span style="color:var(--text2);margin:0 8px">·</span>
           <span>${p.metodo||p.forma||'—'}</span>
           <span style="color:var(--text2);margin:0 8px">·</span>
-          <span>${cta?.codigo?cta.codigo+' '+cta.nombre:p.notas||'—'}</span>
+          <span>${cta?.name||p.notas||'—'}</span>
           ${p.referencia?`<span style="color:var(--text3);margin-left:8px;font-family:'DM Mono',monospace;font-size:11px">${p.referencia}</span>`:''}
         </div>
-        <strong style="font-family:'DM Mono',monospace;color:var(--green)">${fmtGTQ(p.monto)}</strong>
+        <strong style="font-family:'DM Mono',monospace;color:var(--green)">${fmtMoney(p.monto, p.moneda||monedaFact)}</strong>
       </div>`;
     }).join('') + ncs.map(nc => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:7px;background:#EFF6FF;margin-bottom:6px;font-size:12px">
         <div>
