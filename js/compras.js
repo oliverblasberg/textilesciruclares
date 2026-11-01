@@ -4509,6 +4509,18 @@ function _cta51101099() {
   return (state.nomenclatura||[]).find(n => n.codigo === '51101099');
 }
 
+// Monto de una NC para mostrar (1/Nov/2026, pedido de Oliver): la NC se
+// presenta en la MONEDA DE LA TRANSACCIÓN (la de su OC/factura); el
+// equivalente en quetzales es solo referencia contable, debajo y en gris
+// cuando la NC es en USD. Mismo criterio que el Libro de Compras.
+function _montoNCHtml(nc) {
+  const mon = nc.moneda || 'GTQ';
+  const nativo = fmtMoney(nc.monto, mon);
+  if (mon === 'GTQ') return nativo;
+  const tc = nc.tc_confirmacion || nc.tc_devolucion;
+  return `${nativo}<div style="font-size:10px;color:var(--text3);font-weight:400">${fmtMoney(nc.monto_gtq,'GTQ')}${tc ? ' · TC ' + Number(tc).toFixed(4) : ''}</div>`;
+}
+
 function renderNotasCredito() {
   const tbody = document.getElementById('tbl-notas-credito');
   if (!tbody) return;
@@ -4541,7 +4553,7 @@ function renderNotasCredito() {
       <td style="padding:8px 10px;font-family:'DM Mono',monospace;font-weight:700;color:var(--accent)">${nc.numero}</td>
       <td style="padding:8px 10px">${prov?.name||'—'}</td>
       <td style="padding:8px 10px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${nc.numero_devolucion||'—'}</td>
-      <td style="padding:8px 10px;text-align:right;font-family:'DM Mono',monospace">${fmtMoney(nc.monto_gtq, 'GTQ')}</td>
+      <td style="padding:8px 10px;text-align:right;font-family:'DM Mono',monospace">${_montoNCHtml(nc)}</td>
       <td style="padding:8px 10px"><span class="badge ${estadoClass}">${estadoLabel}</span></td>
       <td style="padding:8px 10px;text-align:right">${accion}</td>
     </tr>`;
@@ -4560,7 +4572,7 @@ function openConfirmarNC(ncId) {
   const prov = state.proveedores.find(p => p.id === nc.proveedor_id);
   document.getElementById('cnc-id').value = nc.id;
   document.getElementById('cnc-info').textContent =
-    `${nc.numero} — ${prov?.name||''} | Devolución ${nc.numero_devolucion||''} | Estimado: ${fmtMoney(nc.monto_gtq,'GTQ')}`;
+    `${nc.numero} — ${prov?.name||''} | Devolución ${nc.numero_devolucion||''} | Estimado: ${fmtMoney(nc.monto, nc.moneda||'GTQ')}${(nc.moneda||'GTQ')!=='GTQ' ? ' ('+fmtMoney(nc.monto_gtq,'GTQ')+')' : ''}`;
   document.getElementById('cnc-documento').value = '';
   document.getElementById('cnc-monto').value = Number(nc.monto||0).toFixed(2);
   document.getElementById('cnc-moneda').textContent = nc.moneda||'GTQ';
@@ -4829,7 +4841,7 @@ function _ncSinAplicarProveedor(proveedorId, facturaId) {
       <div>
         <span style="font-family:'DM Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);margin-right:8px">${nc.numero}</span>
         <span style="color:var(--text2)">Devolución ${nc.numero_devolucion||''}</span>
-        <strong style="font-family:'DM Mono',monospace;color:var(--green);margin-left:10px">${fmtMoney(nc.monto_gtq,'GTQ')}</strong>
+        <strong style="font-family:'DM Mono',monospace;color:var(--green);margin-left:10px">${fmtMoney(nc.monto, nc.moneda||'GTQ')}</strong>
       </div>
       <button class="btn btn-sm btn-primary" onclick="aplicarNotaCredito('${nc.id}','${facturaId}')">Usar esta NC</button>
     </div>`).join('');
