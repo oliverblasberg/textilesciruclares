@@ -4671,7 +4671,7 @@ async function saveConfirmarNC() {
         await crearAsiento({
           diario: DIARIO_CAMBIARIO, fecha,
           descripcion: `${esGanancia?'Ganancia':'Pérdida'} cambiaria — confirmación NC ${nc.numero}`,
-          referencia: `NC-${nc.numero}`, referencia_id: nc.id,
+          referencia: nc.numero, referencia_id: nc.id,   // nc.numero ya trae "NC-" (antes salía "NC-NC-2026-…")
           moneda: 'GTQ', tipo_cambio: 1,
           lineas: lineasFinal,
         });
@@ -4718,7 +4718,8 @@ function ncsAplicadasFacturaOC(facturaId) {
 // Asiento de aplicación de una NC — referencia_id apunta a la NC, no a la
 // factura, así que asientosDeFactura() no lo encontraba por sí solo.
 function asientosAplicacionNC(nc) {
-  return (state.asientos||[]).filter(a => a.referencia === `APLICA-NC-${nc.numero}` && a.referencia_id === nc.id);
+  // Acepta la referencia vieja "APLICA-NC-NC-…" (antes del 1/Nov/2026) y la nueva "APLICA-NC-…".
+  return (state.asientos||[]).filter(a => (a.referencia === `APLICA-${nc.numero}` || a.referencia === `APLICA-NC-${nc.numero}`) && a.referencia_id === nc.id);
 }
 function pagadoFacturaOC(facturaId) {
   const pagos = (state.pagosOC||[])
@@ -4809,7 +4810,7 @@ async function aplicarNotaCredito(ncId, facturaId, montoAplicar) {
     const asientoId = await crearAsiento({
       diario: 'BANCOS', fecha: today(),
       descripcion: `Aplicación NC ${nc.numero} — ${refFact} — ${prov?.name||''}`,
-      referencia: `APLICA-NC-${nc.numero}`, referencia_id: nc.id,
+      referencia: `APLICA-${nc.numero}`, referencia_id: nc.id,   // nc.numero ya trae "NC-"
       moneda: 'GTQ', tipo_cambio: 1,
       lineas,
     });
