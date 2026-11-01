@@ -809,6 +809,7 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
       <div class="sidebar-section-label">4. Contabilidad</div>
       <div class="nav-item" onclick="showPage('diario-general',this)">Diario Mayor General</div>
       <div class="nav-item" onclick="showPage('balanza',this)">Balanza de Comprobación</div>
+      <div class="nav-item" onclick="showPage('auxiliar-mayor',this)">Auxiliar contra Mayor</div>
       <div class="nav-item" onclick="showPage('compras',this)">Libro de Compras</div>
       <div class="nav-item" onclick="showPage('notas-credito',this)">Notas de Crédito</div>
       <div class="nav-item" onclick="showPage('facturas',this)">Libro de Ventas</div>
@@ -1207,6 +1208,11 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
             <div class="sub-module-icon">🧮</div>
             <div class="sub-module-name">Balanza de Comprobación</div>
             <div class="sub-module-desc">Saldos por cuenta y Libro Mayor</div>
+          </div>
+          <div class="sub-module-card" onclick="showPage('auxiliar-mayor',null)">
+            <div class="sub-module-icon">🔍</div>
+            <div class="sub-module-name">Auxiliar contra Mayor</div>
+            <div class="sub-module-desc">Documentos abiertos vs. saldo de cada cuenta de control</div>
           </div>
           <div class="sub-module-card" onclick="showPage('compras',null)">
             <div class="sub-module-icon">🗂️</div>
@@ -2230,6 +2236,15 @@ tfoot td { padding: 8px 12px; font-size: 12.5px; background: var(--bg); }
           <button class="btn btn-ghost" onclick="exportarBalanzaCSV()">⬇ Exportar Excel</button>
         </div>
         <div class="card"><div class="card-body" id="bz-report" style="padding:0;overflow-x:auto"></div></div>
+      </div>
+
+      <!-- AUXILIAR CONTRA MAYOR (1/Nov/2026) -->
+      <div class="page" id="page-auxiliar-mayor">
+        <div class="filters-row">
+          <button class="btn btn-ghost" onclick="renderAuxiliarMayor()">↻ Actualizar</button>
+          <button class="btn btn-ghost" onclick="exportarAuxiliarMayorExcel()">⬇ Exportar Excel</button>
+        </div>
+        <div class="card"><div class="card-body" id="am-report" style="padding:0;overflow-x:auto"></div></div>
       </div>
 
       <!-- ESTADO DE RESULTADOS -->
@@ -6309,6 +6324,7 @@ function showPage(name, bnav) {
     recetas:'Recetas de Producción',
     'diario-general':'Diario Mayor General',
     balanza:'Balanza de Comprobación',
+    'auxiliar-mayor':'Auxiliar contra Mayor',
     'estado-resultados':'Estado de Resultados',
     'balance-general':'Balance General',
     'flujo-caja':'Flujo de Caja',
@@ -6343,6 +6359,7 @@ function showPage(name, bnav) {
   const pageRenders = {
     'diario-general':    () => renderDiarioGeneral(),
     balanza:             () => renderBalanza(),
+    'auxiliar-mayor':    () => renderAuxiliarMayor(),
     'estado-resultados': () => renderEstadoResultados(),
     'balance-general':   () => { document.getElementById('bg-fecha').value = today(); renderBalanceGeneral(); },
     'flujo-caja':        () => renderFlujoCaja(),
@@ -15431,6 +15448,7 @@ const MODULE_META = {
   kardex:             { label: 'Kardex',              parent: 'hub-inventario' },
   'diario-general': { label: 'Diario General',      parent: 'hub-contabilidad' },
   balanza:          { label: 'Balanza de Comprobación', parent: 'hub-contabilidad' },
+  'auxiliar-mayor': { label: 'Auxiliar contra Mayor',   parent: 'hub-contabilidad' },
   'estado-resultados':{ label: 'Estado de Resultados', parent: 'hub-contabilidad' },
   'balance-general':{ label: 'Balance General',     parent: 'hub-contabilidad' },
   'flujo-caja':     { label: 'Flujo de Caja',       parent: 'hub-contabilidad' },

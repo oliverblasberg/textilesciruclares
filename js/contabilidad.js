@@ -1671,8 +1671,8 @@ function renderBalanza() {
 }
 
 // ── Libro Mayor de una cuenta ──
-function abrirLibroMayor(cuentaKey) {
-  const rango = _bzUltima ? { desde: _bzUltima.desde, hasta: _bzUltima.hasta } : _bzRango();
+function abrirLibroMayor(cuentaKey, rangoOpt) {
+  const rango = rangoOpt || (_bzUltima ? { desde: _bzUltima.desde, hasta: _bzUltima.hasta } : _bzRango());
   if (!rango) return;
   const { desde, hasta } = rango;
   const cta = (state.nomenclatura||[]).find(n => n.id === cuentaKey);
@@ -1803,6 +1803,207 @@ function exportarLibroMayorCSV() {
     ['', '', '', 'Totales / saldo final', '', '', m.totD, m.totH, m.fin],
   ];
   _xlsxContable(`libro_mayor_${m.codigo}_${m.desde}_${m.hasta}.xlsx`, `Mayor ${m.codigo}`, filas, [12, 15, 12, 50, 40, 24, 14, 14, 14]);
+}
+
+// ═══ AUXILIAR CONTRA MAYOR ═══
+// (1/Nov/2026, a pedido de Oliver.) Conciliación de auxiliares: para cada
+// cuenta de control compara la suma de los DOCUMENTOS abiertos (auxiliar)
+// contra el saldo de la cuenta en el mayor. Es el "subledger vs. GL
+// reconciliation" de SAP / Business Central / Odoo y el checkpoint T1 de la
+// migración: si cuadra, los saldos abiertos están completos y en la cuenta
+// correcta. Cada diferencia se puede abrir documento por documento.
+//
+// Estado ACTUAL: todos los documentos y todos los asientos publicados.
+// Signo: positivo = deudor, negativo = acreedor (igual que la balanza).
+//
+// Cuentas que se concilian:
+//   - Proveedores (CxP) por cuenta: saldo de cada factura de compra
+//     (total − pagadoFacturaOC) × TC de la factura.
+//   - Pagos sin aplicar a proveedores: pagos sin factura × TC del pago.
+//   - Pagos pendientes de confirmar por el banco (transitorias): pagos sin
+//     confirmación bancaria vigente, por lo que realmente sale del banco.
+//   - Devoluciones/NC sin aplicar (51101099): NC en borrador o confirmadas
+//     sin factura, en su valor GTQ.
+//   - Inventario por cuenta de valoración: entradas − salidas del Kardex.
+//   - Clientes (CxC): saldo de cada factura de venta (total − cobros).
+// Pendiente: bancos (saldo del banco contra su cuenta) y la transitoria de
+// recibido por facturar, que requieren reglas propias.
+
+let _amUltimo = null;
+
+function _amTC(fecha) { return getTCFecha(fecha) || 1; }
+
+function computarAuxiliarMayor() {
+  const mayor = saldosPorCuenta('0000-01-01', '9999-12-31');
+  const saldoMayor = cta => cta ? (mayor[cta.id]?.fin || 0) : 0;
+  const grupos = {};   // key cuenta.id -> { titulo, cta, docs: [] }
+  const add = (titulo, cta, doc) => {
+    if (!cta) cta = { id: '__sin_cuenta__', codigo: '?', nombre: 'Sin cuenta configurada' };
+    const k = titulo + '|' + cta.id;
+    (grupos[k] || (grupos[k] = { titulo, cta, docs: [] })).docs.push(doc);
+  };
+
+  // 1. Proveedores (CxP) — facturas de compra con saldo
+  (state.ocFacturas||[]).filter(f => f.status !== 'cancelada').forEach(f => {
+    const saldoNat = round2(Number(f.total||0) - pagadoFacturaOC(f.id));
+    if (Math.abs(saldoNat) < 0.005) return;
+    const mon = getMonedaOC(f.oc_id) || 'GTQ';
+    const tc  = mon === 'USD' ? (Number(f.tc) || _amTC(f.fecha)) : 1;
+    const prov = (state.proveedores||[]).find(p => p.id === (state.oc||[]).find(o => o.id === f.oc_id)?.proveedor_id);
+    add('Proveedores (Cuentas por pagar)', ctaPorPagarOC(f.oc_id), {
+      doc: f.num_interno || `${f.serie||''}${f.numero||''}`, detalle: `${f.serie||''}${f.numero||''} — ${prov?.name||''}`,
+      fecha: f.fecha, nativo: saldoNat, moneda: mon, gtq: -round2(saldoNat * tc), onclick: `verFacturaOC('${f.id}')` });
+  });
+
+  // 2. Pagos sin aplicar a proveedores (anticipos / desasignados)
+  (state.pagosOC||[]).filter(p => !p.factura_id).forEach(p => {
+    const mon = p.moneda || 'GTQ';
+    const tc  = mon === 'USD' ? _amTC(p.fecha) : 1;
+    const prov = (state.proveedores||[]).find(x => x.id === p.proveedor_id);
+    add('Pagos sin aplicar a proveedores', sinAplicarNomenclatura(mon, 'pago'), {
+      doc: p.num_pago || '—', detalle: `${prov?.name||''}${p.referencia ? ' · ' + p.referencia : ''}`,
+      fecha: p.fecha, nativo: Number(p.monto||0), moneda: mon, gtq: round2(Number(p.monto||0) * tc), onclick: `verDetallePago('${p.id}')` });
+  });
+
+  // 3. Pagos pendientes de confirmar por el banco (transitorias)
+  (state.pagosOC||[]).forEach(p => {
+    if (_saldoConfirmacionPago(p.id) > 0) return;
+    const cuenta = (state.cuentas||[]).find(c => c.id === p.cuenta_id);
+    const mon = cuenta?.moneda || p.moneda || 'GTQ';
+    const neto = montoBancoPago(p);
+    if (Math.abs(neto) < 0.005) return;
+    const tc = mon === 'USD' ? _amTC(p.fecha) : 1;
+    add('Pagos pendientes de confirmar por el banco', transitoriaNomenclatura(mon, 'pago'), {
+      doc: p.num_pago || '—', detalle: `${cuenta?.name||''} · ${p.forma||''}`,
+      fecha: p.fecha, nativo: neto, moneda: mon, gtq: -round2(neto * tc), onclick: `verDetallePago('${p.id}')` });
+  });
+
+  // 4. Notas de crédito sin aplicar (cuenta puente 51101099)
+  (state.notasCreditoOC||[]).filter(nc => !nc.factura_id && (nc.estado === 'borrador' || nc.estado === 'confirmada')).forEach(nc => {
+    const prov = (state.proveedores||[]).find(x => x.id === nc.proveedor_id);
+    add('Notas de crédito sin aplicar', _cta51101099(), {
+      doc: nc.numero, detalle: `${prov?.name||''} · ${nc.numero_devolucion||''} · ${nc.estado}`,
+      fecha: nc.fecha_confirmacion || (nc.created_at||'').slice(0,10), nativo: Number(nc.monto||0), moneda: nc.moneda || 'GTQ',
+      gtq: round2(Number(nc.monto_gtq||0)), onclick: `showPage('notas-credito',null)` });
+  });
+
+  // 5. Inventario por cuenta de valoración (Kardex: entradas − salidas, por producto)
+  const porProd = {};
+  (state.movimientos||[]).forEach(m => {
+    const ctaId = m.snap_cta_valoracion || getCtaValoracionProducto(m.producto_id)?.id;
+    const k = ctaId + '|' + m.producto_id;
+    const r = porProd[k] || (porProd[k] = { ctaId, producto_id: m.producto_id, cant: 0, gtq: 0 });
+    const sg = m.tipo === 'salida' ? -1 : 1;
+    r.cant += sg * Number(m.cantidad||0);
+    r.gtq  += sg * Number(m.costo_total_gtq||0);
+  });
+  Object.values(porProd).forEach(r => {
+    if (Math.abs(r.gtq) < 0.005 && Math.abs(r.cant) < 0.0005) return;
+    const prod = (state.productos||[]).find(p => p.id === r.producto_id);
+    add('Inventario (Kardex)', (state.nomenclatura||[]).find(n => n.id === r.ctaId), {
+      doc: prod?.codigo_interno || prod?.code || '—', detalle: `${prod?.description||''} · ${round3(r.cant)} ${prod?.unidad||''}`,
+      fecha: '', nativo: null, moneda: 'GTQ', gtq: round2(r.gtq), onclick: '' });
+  });
+
+  // 6. Clientes (CxC) — facturas de venta con saldo
+  (state.facturas||[]).filter(f => f.status !== 'cancelada' && f.status !== 'anulada').forEach(f => {
+    const cobrado = (state.pagos||[]).filter(p => p.factura_id === f.id).reduce((s,p) => s + Number(p.monto||0), 0);
+    const saldo = round2(Number(f.total||0) - cobrado);
+    if (Math.abs(saldo) < 0.005) return;
+    const cli = (state.clientes||[]).find(c => c.id === f.customer_id);
+    add('Clientes (Cuentas por cobrar)', ctaPorCobrarOV(), {
+      doc: f.serie ? `${f.serie}-${f.invoice_number}` : String(f.invoice_number||'—'), detalle: cli?.name || '',
+      fecha: f.date, nativo: saldo, moneda: 'GTQ', gtq: saldo, onclick: '' });
+  });
+  // Cuentas de control sin documentos abiertos pero con saldo en el mayor:
+  // también son diferencias (p. ej. CxC con saldo sin facturas).
+  const controles = [
+    ['Proveedores (Cuentas por pagar)', ['21101001','21101002','21102011']],
+    ['Pagos sin aplicar a proveedores', ['21102071','21102072']],
+    ['Pagos pendientes de confirmar por el banco', ['21102051','21102052']],
+    ['Notas de crédito sin aplicar', ['51101099']],
+  ];
+  controles.forEach(([titulo, cods]) => cods.forEach(cod => {
+    const cta = (state.nomenclatura||[]).find(n => n.codigo === cod);
+    if (cta && !grupos[titulo + '|' + cta.id] && Math.abs(saldoMayor(cta)) >= 0.005) grupos[titulo + '|' + cta.id] = { titulo, cta, docs: [] };
+  }));
+  (state.categorias||[]).forEach(c => {
+    const cta = (state.nomenclatura||[]).find(n => n.id === c.cta_valoracion);
+    if (cta && !Object.values(grupos).some(g => g.cta.id === cta.id) && Math.abs(saldoMayor(cta)) >= 0.005)
+      grupos['Inventario (Kardex)|' + cta.id] = { titulo: 'Inventario (Kardex)', cta, docs: [] };
+  });
+
+  const orden = ['Proveedores (Cuentas por pagar)','Pagos sin aplicar a proveedores','Pagos pendientes de confirmar por el banco','Notas de crédito sin aplicar','Inventario (Kardex)','Clientes (Cuentas por cobrar)'];
+  const filas = Object.values(grupos).map(g => {
+    const aux = round2(g.docs.reduce((s,d) => s + d.gtq, 0));
+    const may = round2(saldoMayor(g.cta));
+    return { ...g, aux, may, dif: round2(may - aux) };
+  }).sort((a,b) => orden.indexOf(a.titulo) - orden.indexOf(b.titulo) || (a.cta.codigo||'').localeCompare(b.cta.codigo||''));
+  return filas;
+}
+
+function renderAuxiliarMayor() {
+  const cont = document.getElementById('am-report');
+  if (!cont) return;
+  const filas = computarAuxiliarMayor();
+  _amUltimo = filas;
+  const fmtDA = v => Math.abs(v) < 0.005 ? fmtGTQ(0) : `${fmtGTQ(Math.abs(v))} ${v > 0 ? 'D' : 'A'}`;
+  const conDif = filas.filter(f => Math.abs(f.dif) >= 0.01).length;
+  let html = `<div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--border)">
+      <div><strong>Auxiliar contra Mayor</strong> <span style="color:var(--text2);font-size:13px">estado actual · ${filas.length} cuenta${filas.length!==1?'s':''} de control · en quetzales · D = deudor, A = acreedor</span></div>
+      <div style="font-size:13px">${conDif ? `<span style="color:var(--accent);font-weight:700">⚠ ${conDif} cuenta${conDif!==1?'s':''} con diferencia</span>` : '<span style="color:var(--green);font-weight:600">✓ Todos los auxiliares cuadran con el mayor</span>'}</div>
+    </div>
+    <table style="width:100%;min-width:900px">
+      <thead><tr><th>Auxiliar</th><th>Cuenta</th><th style="text-align:right">Documentos</th>
+        <th style="text-align:right">Saldo auxiliar</th><th style="text-align:right">Saldo mayor</th><th style="text-align:right">Diferencia</th><th></th></tr></thead><tbody>`;
+  filas.forEach((f, i) => {
+    const ok = Math.abs(f.dif) < 0.01;
+    html += `<tr style="cursor:pointer" onclick="toggleAuxDetalle(${i})">
+      <td style="font-size:13px">${f.titulo}</td>
+      <td style="font-size:13px"><span class="td-mono" style="font-size:11px;color:var(--text3);margin-right:6px">${f.cta.codigo}</span>${f.cta.nombre}</td>
+      <td class="td-mono" style="text-align:right">${f.docs.length}</td>
+      <td class="td-mono" style="text-align:right;white-space:nowrap">${fmtDA(f.aux)}</td>
+      <td class="td-mono" style="text-align:right;white-space:nowrap">${fmtDA(f.may)}</td>
+      <td class="td-mono" style="text-align:right;white-space:nowrap;font-weight:700;color:${ok?'var(--green)':'var(--accent)'}">${ok ? '✓' : fmtGTQ(f.dif)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();abrirLibroMayorDesde('${f.cta.id}')">Libro Mayor</button></td>
+    </tr>
+    <tr id="am-det-${i}" style="display:none"><td colspan="7" style="padding:0 16px 12px 32px;background:var(--surface2)">
+      ${f.docs.length ? `<table style="width:100%;font-size:12px"><thead><tr><th>Documento</th><th>Detalle</th><th>Fecha</th><th style="text-align:right">Saldo en su moneda</th><th style="text-align:right">Saldo GTQ</th></tr></thead><tbody>
+        ${f.docs.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(d => `<tr>
+          <td class="td-mono" style="${d.onclick?'color:var(--accent);cursor:pointer;text-decoration:underline':''}" ${d.onclick?`onclick="${d.onclick}"`:''}>${d.doc}</td>
+          <td>${d.detalle}</td><td>${d.fecha ? fmtDate(d.fecha) : ''}</td>
+          <td class="td-mono" style="text-align:right">${d.nativo != null ? fmtMoney(d.nativo, d.moneda) : ''}</td>
+          <td class="td-mono" style="text-align:right;white-space:nowrap">${fmtDA(d.gtq)}</td></tr>`).join('')}
+        </tbody></table>` : '<div style="padding:10px 0;color:var(--text3)">Sin documentos abiertos: todo el saldo del mayor es diferencia.</div>'}
+    </td></tr>`;
+  });
+  html += `</tbody></table>
+    <div style="padding:10px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)">
+      Diferencia = saldo mayor − saldo auxiliar. Clic en una fila para ver sus documentos. Todavía no incluye bancos (saldo del banco contra su cuenta) ni la transitoria de recibido por facturar.
+    </div>`;
+  cont.innerHTML = html;
+}
+
+function toggleAuxDetalle(i) {
+  const el = document.getElementById('am-det-' + i);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+// Libro Mayor de toda la historia de la cuenta (desde el reporte de auxiliares)
+function abrirLibroMayorDesde(ctaId) {
+  abrirLibroMayor(ctaId, { desde: '2000-01-01', hasta: '2099-12-31' });
+}
+
+function exportarAuxiliarMayorExcel() {
+  const filas0 = _amUltimo || computarAuxiliarMayor();
+  if (!filas0.length) { toast('Sin datos para exportar', 'error'); return; }
+  const filas = [['Auxiliar contra Mayor', `Estado al ${fmtDate(today())}`, 'Montos en GTQ · + deudor / − acreedor'], [],
+    ['Auxiliar','Cuenta','Nombre cuenta','Documentos','Saldo auxiliar','Saldo mayor','Diferencia']];
+  filas0.forEach(f => filas.push([f.titulo, f.cta.codigo, f.cta.nombre, f.docs.length, f.aux, f.may, f.dif]));
+  filas.push([], ['Detalle por documento'], ['Auxiliar','Cuenta','Documento','Detalle','Fecha','Moneda','Saldo en su moneda','Saldo GTQ']);
+  filas0.forEach(f => f.docs.forEach(d => filas.push([f.titulo, f.cta.codigo, d.doc, d.detalle, d.fecha ? fmtDate(d.fecha) : '', d.moneda, d.nativo != null ? d.nativo : '', d.gtq])));
+  _xlsxContable(`auxiliar_vs_mayor_${today()}.xlsx`, 'Auxiliar vs Mayor', filas, [38, 11, 40, 40, 16, 8, 16, 16]);
 }
 
 function renderEstadoResultados() {
